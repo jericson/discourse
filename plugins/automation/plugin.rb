@@ -138,7 +138,7 @@ after_initialize do
             "user" => user,
             "group" => group,
             "placeholders" => {
-              "group_name" => group.name,
+              "group_name" => group.full_name || group.name,
             },
           )
         end
@@ -159,7 +159,7 @@ after_initialize do
             "user" => user,
             "group" => group,
             "placeholders" => {
-              "group_name" => group.name,
+              "group_name" => group.full_name || group.name,
             },
           )
         end
