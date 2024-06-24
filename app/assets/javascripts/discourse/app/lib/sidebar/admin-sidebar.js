@@ -159,6 +159,13 @@ export function useAdminNavConfig(navMap) {
           moderator: true,
         },
         {
+          name: "admin_users",
+          route: "adminUsers",
+          label: "admin.community.sidebar_link.users",
+          icon: "users",
+          moderator: true,
+        },
+        {
           name: "admin_all_site_settings",
           route: "adminSiteSettings",
           label: "admin.advanced.sidebar_link.all_site_settings",
@@ -210,7 +217,10 @@ export function addAdminSidebarSectionLink(sectionName, link) {
   }
 
   // label must be valid, don't want broken [XYZ translation missing]
-  if (link.label && typeof I18n.lookup(link.label) !== "string") {
+  if (
+    link.label &&
+    I18n.t(link.label) === I18n.missingTranslation(link.label, null, {})
+  ) {
     // eslint-disable-next-line no-console
     console.debug(
       "[AdminSidebar]",

@@ -129,6 +129,27 @@ RSpec.describe User do
         ) { user.update(name: "Batman") }
       end
     end
+
+    describe "#refresh_user_directory" do
+      context "when bootstrap mode is enabled" do
+        before { SiteSetting.bootstrap_mode_enabled = true }
+
+        it "creates directory items for a new user for all periods" do
+          expect do user = Fabricate(:user) end.to change { DirectoryItem.count }.by(
+            DirectoryItem.period_types.count,
+          )
+          expect(DirectoryItem.where(user_id: user.id)).to exist
+        end
+      end
+
+      context "when bootstrap mode is disabled" do
+        before { SiteSetting.bootstrap_mode_enabled = false }
+
+        it "doesn't create directory items for a new user" do
+          expect do Fabricate(:user) end.not_to change { DirectoryItem.count }
+        end
+      end
+    end
   end
 
   describe "Validations" do
@@ -647,6 +668,30 @@ RSpec.describe User do
         expect(user.user_profile).to be_present
         expect(user.user_option.email_messages_level).to eq(UserOption.email_level_types[:always])
         expect(user.user_option.email_level).to eq(UserOption.email_level_types[:only_when_away])
+      end
+
+      context "with avatar" do
+        let(:user) { build(:user, uploaded_avatar_id: 99, username: "Sam") }
+
+        it "mark all the user's quoted posts as 'needing a rebake' when the avatar changes" do
+          topic = Fabricate(:topic, user: user)
+          quoted_post = create_post(user: user, topic: topic, post_number: 1, raw: "quoted post")
+          post = create_post(raw: <<~RAW)
+            Lorem ipsum
+
+            [quote="#{user.username}, post:1, topic:#{quoted_post.topic.id}"]
+            quoted post
+            [/quote]
+          RAW
+
+          expect(post.baked_version).not_to be_nil
+
+          user.update!(name: "Sam")
+          expect(post.reload.baked_version).not_to be_nil
+
+          user.update!(uploaded_avatar_id: 100)
+          expect(post.reload.baked_version).to be_nil
+        end
       end
     end
 
@@ -2725,7 +2770,7 @@ RSpec.describe User do
   end
 
   describe "#title=" do
-    fab!(:badge) { Fabricate(:badge, name: "Badge", allow_title: false) }
+    fab!(:badge) { Badge.find_by(name: "Welcome") }
 
     it "sets granted_title_badge_id correctly" do
       BadgeGranter.grant(badge, user)

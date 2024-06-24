@@ -6,13 +6,13 @@ source "https://rubygems.org"
 
 gem "bootsnap", require: false, platform: :mri
 
-gem "actionmailer", "< 7.1"
-gem "actionpack", "< 7.1"
-gem "actionview", "< 7.1"
-gem "activemodel", "< 7.1"
-gem "activerecord", "< 7.1"
-gem "activesupport", "< 7.1"
-gem "railties", "< 7.1"
+gem "actionmailer", "~> 7.1.0"
+gem "actionpack", "~> 7.1.0"
+gem "actionview", "~> 7.1.0"
+gem "activemodel", "~> 7.1.0"
+gem "activerecord", "~> 7.1.0"
+gem "activesupport", "~> 7.1.0"
+gem "railties", "~> 7.1.0"
 gem "sprockets-rails"
 
 gem "json"
@@ -267,6 +267,11 @@ gem "net-http"
 gem "cgi", ">= 0.3.6", require: false
 
 gem "tzinfo-data"
+gem "csv", require: false
+
+# TODO: Can be removed once we upgrade to Rails 7.1
+gem "mutex_m"
+gem "drb"
 
 # dependencies for the automation plugin
 gem "iso8601"

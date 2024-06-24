@@ -67,6 +67,7 @@ class StaticController < ApplicationController
       @title = "#{title_prefix} - #{SiteSetting.title}"
       @body = @topic.posts.first.cooked
       @faq_overridden = !SiteSetting.faq_url.blank?
+      @experimental_rename_faq_to_guidelines = SiteSetting.experimental_rename_faq_to_guidelines
 
       render :show, layout: !request.xhr?, formats: [:html]
       return
@@ -162,7 +163,7 @@ class StaticController < ApplicationController
 
               file&.read || ""
             rescue => e
-              AdminDashboardData.add_problem_message("dashboard.bad_favicon_url", 1800)
+              ProblemCheckTracker[:bad_favicon_url].problem!
               Rails.logger.debug("Failed to fetch favicon #{favicon.url}: #{e}\n#{e.backtrace}")
               ""
             ensure

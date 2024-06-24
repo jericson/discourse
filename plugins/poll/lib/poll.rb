@@ -211,7 +211,7 @@ class DiscoursePoll::Poll
       raise DiscoursePoll::Error.new I18n.t("poll.user_cant_post_in_topic")
     end
 
-    unless SiteSetting.poll_groupable_user_fields.split("|").include?(user_field_name)
+    if SiteSetting.poll_groupable_user_fields.split("|").exclude?(user_field_name)
       raise Discourse::InvalidParameters.new(:user_field_name)
     end
 
@@ -317,6 +317,9 @@ class DiscoursePoll::Poll
     # Poll Post handlers get called very early in the post
     # creation process. `raw` could be nil here.
     return [] if raw.blank?
+
+    # bail-out early if the post does not contain a poll
+    return [] if !raw.include?("[/poll]")
 
     # TODO: we should fix the callback mess so that the cooked version is available
     # in the validators instead of cooking twice
