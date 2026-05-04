@@ -11,8 +11,6 @@ RSpec.describe BookmarksController do
   describe "#create" do
     before { sign_in(current_user) }
 
-    use_redis_snapshotting
-
     it "rate limits creates" do
       SiteSetting.max_bookmarks_per_day = 1
       RateLimiter.enable
@@ -21,7 +19,7 @@ RSpec.describe BookmarksController do
            params: {
              bookmarkable_id: bookmark_post.id,
              bookmarkable_type: "Post",
-             reminder_at: (Time.zone.now + 1.day).iso8601,
+             reminder_at: 1.day.from_now.iso8601,
            }
 
       expect(response.status).to eq(200)
@@ -42,7 +40,7 @@ RSpec.describe BookmarksController do
              params: {
                bookmarkable_id: bookmark_post.id,
                bookmarkable_type: "Post",
-               reminder_at: (Time.zone.now + 1.day).iso8601,
+               reminder_at: 1.day.from_now.iso8601,
              }
         post "/bookmarks.json",
              params: {
@@ -73,7 +71,7 @@ RSpec.describe BookmarksController do
              params: {
                bookmarkable_id: bookmark_post.id,
                bookmarkable_type: "Post",
-               reminder_at: (Time.zone.now + 1.day).iso8601,
+               reminder_at: 1.day.from_now.iso8601,
              }
 
         expect(response.status).to eq(400)
@@ -85,7 +83,7 @@ RSpec.describe BookmarksController do
              params: {
                bookmarkable_id: bookmark_topic.id,
                bookmarkable_type: "Topic",
-               reminder_at: (Time.zone.now + 1.day).iso8601,
+               reminder_at: 1.day.from_now.iso8601,
              }
 
         expect(response.status).to eq(400)

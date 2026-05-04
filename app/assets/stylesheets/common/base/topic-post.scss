@@ -1,3 +1,5 @@
+@use "lib/viewport";
+
 #main-outlet > .regular {
   background: var(--d-content-background);
 }
@@ -6,10 +8,12 @@
   span {
     background-color: var(--danger);
     color: var(--secondary);
-    border-radius: 10px;
-    padding: 0.25em 0.5em;
     display: inline-block;
-    font-size: 0.8em;
+    font-size: var(--font-down-2-rem);
+    border-radius: 1em;
+    height: 1rem;
+    width: 1rem;
+    line-height: 1rem;
   }
 }
 
@@ -20,10 +24,8 @@
   border-radius: 50%;
   position: relative;
   overflow: hidden;
-  &:before {
-    @media (prefers-reduced-motion: no-preference) {
-      animation: placeHolderShimmer 4s linear infinite forwards;
-    }
+
+  &::before {
     position: absolute;
     left: 0;
     content: "";
@@ -35,6 +37,10 @@
     );
     height: 45px;
     width: 700px;
+
+    @media (prefers-reduced-motion: no-preference) {
+      animation: placeHolderShimmer 4s linear infinite forwards;
+    }
   }
 }
 
@@ -50,46 +56,80 @@
   display: flex;
 }
 
+@include viewport.until(sm) {
+  .placeholder .topic-body {
+    width: 100%;
+  }
+}
+
 .names {
   flex: 1 1 auto;
   overflow: hidden;
+
   span.first {
     display: flex;
     align-items: baseline;
     font-weight: bold;
+
+    &.new-user:not(.staff) a {
+      color: var(--primary-low-mid);
+    }
   }
 
   > span {
     font-size: var(--font-0);
     margin-right: 0.33em;
     display: inline-block;
+
     @include ellipsis;
     vertical-align: middle;
+
     a {
       color: var(--primary-high-or-secondary-low);
       outline-offset: -1px;
     }
   }
+
   .fa {
     font-size: var(--font-down-1);
     color: var(--primary-med-or-secondary-med);
   }
+
   .svg-icon-title {
     margin-left: 3px;
-    margin-right: 0px;
+    margin-right: 0;
   }
+
   .new_user a,
   .user-title,
   .user-title a {
-    color: var(--primary-med-or-secondary-med);
+    color: var(--primary-medium);
   }
 }
 
 // global styles for the cooked HTML content in posts (and preview)
 .cooked,
 .d-editor-preview {
-  word-wrap: break-word;
+  overflow-wrap: break-word;
   line-height: 1.5;
+
+  video {
+    max-width: 100%;
+
+    @include viewport.from(sm) {
+      max-height: 500px;
+    }
+  }
+
+  img:not(.thumbnail, .ytp-thumbnail-image, .emoji) {
+    max-width: 100%;
+    height: auto;
+    display: inline-block; // Ensure dimensions are maintained even after load error
+  }
+
+  svg {
+    max-height: 2000px;
+  }
 
   > *:first-child {
     margin-top: 0;
@@ -103,27 +143,8 @@
   h6 {
     margin: 2rem 0 0.67rem;
     line-height: var(--line-height-medium);
-    a.anchor {
-      opacity: 0;
-      transition: opacity 0.25s;
-      &:before {
-        content: svg-uri(
-          '<svg xmlns="http://www.w3.org/2000/svg" width="16px" height="16px" viewBox="0 0 512 512" fill="#{$primary-medium}"><path d="M326.612 185.391c59.747 59.809 58.927 155.698.36 214.59-.11.12-.24.25-.36.37l-67.2 67.2c-59.27 59.27-155.699 59.262-214.96 0-59.27-59.26-59.27-155.7 0-214.96l37.106-37.106c9.84-9.84 26.786-3.3 27.294 10.606.648 17.722 3.826 35.527 9.69 52.721 1.986 5.822.567 12.262-3.783 16.612l-13.087 13.087c-28.026 28.026-28.905 73.66-1.155 101.96 28.024 28.579 74.086 28.749 102.325.51l67.2-67.19c28.191-28.191 28.073-73.757 0-101.83-3.701-3.694-7.429-6.564-10.341-8.569a16.037 16.037 0 0 1-6.947-12.606c-.396-10.567 3.348-21.456 11.698-29.806l21.054-21.055c5.521-5.521 14.182-6.199 20.584-1.731a152.482 152.482 0 0 1 20.522 17.197zM467.547 44.449c-59.261-59.262-155.69-59.27-214.96 0l-67.2 67.2c-.12.12-.25.25-.36.37-58.566 58.892-59.387 154.781.36 214.59a152.454 152.454 0 0 0 20.521 17.196c6.402 4.468 15.064 3.789 20.584-1.731l21.054-21.055c8.35-8.35 12.094-19.239 11.698-29.806a16.037 16.037 0 0 0-6.947-12.606c-2.912-2.005-6.64-4.875-10.341-8.569-28.073-28.073-28.191-73.639 0-101.83l67.2-67.19c28.239-28.239 74.3-28.069 102.325.51 27.75 28.3 26.872 73.934-1.155 101.96l-13.087 13.087c-4.35 4.35-5.769 10.79-3.783 16.612 5.864 17.194 9.042 34.999 9.69 52.721.509 13.906 17.454 20.446 27.294 10.606l37.106-37.106c59.271-59.259 59.271-155.699.001-214.959z"></path></svg>'
-        );
-        line-height: 1.4;
-        margin-left: -20px;
-        padding-right: 4px;
-        position: absolute;
-        z-index: 2;
-      }
-    }
 
-    // show when hovering where icon should be
-    // show when hovering header
-    .discourse-no-touch & a.anchor:hover,
-    .discourse-no-touch &:hover a.anchor {
-      opacity: 1;
-    }
+    @extend %heading-anchor;
   }
 
   h1 {
@@ -151,68 +172,60 @@
   }
 
   a {
-    word-wrap: break-word;
+    overflow-wrap: break-word;
   }
 
   mark {
     text-decoration: none;
+    background-color: var(--highlight);
   }
 
   ins {
     background-color: var(--success-low);
     text-decoration: underline;
   }
+
   del {
     background-color: var(--danger-low);
     text-decoration: line-through;
   }
-  mark {
-    background-color: var(--highlight);
-  }
+
   // Prevents users from breaking posts with tag nesting
   big {
     font-size: 1.5rem;
   }
+
   small {
     font-size: 0.75rem;
   }
+
   small small {
     font-size: 0.75em;
   }
+
   big big {
     font-size: 1em;
   }
+
+  sup sup,
+  sub sup,
+  sup sub,
+  sub sub {
+    top: 0;
+  }
+
   sub sub sub {
     bottom: 0;
   }
-  sup sup sup {
-    top: 0;
-  }
 }
 
-.cooked,
-.d-editor-preview {
-  video {
-    max-width: 100%;
-  }
-  sup sup {
-    top: 0;
-  }
-
-  img:not(.thumbnail):not(.ytp-thumbnail-image):not(.emoji) {
-    max-width: 100%;
-    height: auto;
-    display: inline-block; // Ensure dimensions are maintained even after load error
-
-    @supports not (aspect-ratio: 1) {
-      // (see javascripts/discourse/app/initializers/image-aspect-ratio.js)
-      height: var(--calculated-height);
-    }
-  }
-
-  svg {
-    max-height: 2000px;
-  }
+.cooked-selection-barrier {
+  height: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  overflow: hidden;
+  opacity: 0;
 }
 
 // add staff color
@@ -220,9 +233,11 @@
   .regular > .cooked {
     background-color: var(--highlight-bg);
   }
+
   .clearfix > .topic-meta-data > .names {
     span.user-title {
       color: var(--primary-high-or-secondary-low);
+
       a {
         background-color: var(--highlight-bg);
         padding-left: 4px;
@@ -236,8 +251,94 @@
   display: flex;
   align-items: flex-start;
 
+  @include viewport.until(sm) {
+    margin-left: 50px;
+    font-size: var(--font-down-1);
+  }
+
+  @include viewport.from(sm) {
+    align-items: center;
+    padding: 0 var(--topic-body-width-padding) var(--space-1)
+      var(--topic-body-width-padding);
+
+    &::after {
+      visibility: hidden;
+      display: block;
+      font-size: 0;
+      content: " ";
+      clear: both;
+      height: 0;
+    }
+  }
+
   .names {
     margin-right: auto;
+    display: flex;
+
+    @include viewport.from(sm) {
+      align-items: center;
+    }
+
+    @include viewport.until(sm) {
+      line-height: var(--line-height-medium);
+      flex-wrap: wrap;
+
+      .full-name {
+        font-weight: bold;
+      }
+
+      .first {
+        order: 1;
+      }
+
+      .poster-icon {
+        order: 2;
+      }
+
+      .user-status-message-wrap {
+        order: 2;
+      }
+
+      .second {
+        order: 3;
+        flex-basis: 100%;
+      }
+
+      .user-title {
+        order: 4;
+        flex-basis: 100%;
+      }
+
+      .user-badge-buttons {
+        order: 5;
+
+        .user-badge {
+          padding-top: 0;
+        }
+      }
+
+      span {
+        margin-right: 0.26em;
+      }
+    }
+
+    .first {
+      flex-shrink: 0;
+    }
+  }
+
+  .user-badge-buttons {
+    display: flex;
+    flex-shrink: 0;
+
+    a {
+      background: none;
+    }
+
+    .user-badge {
+      background: none;
+      border: none;
+    }
   }
 
   .post-infos {
@@ -246,8 +347,10 @@
     align-items: center;
   }
 
-  .user-status-message {
+  .user-status-message-wrap {
     display: flex;
+    flex-shrink: 0;
+
     img.emoji {
       width: 1em;
       height: 1em;
@@ -255,135 +358,330 @@
   }
 }
 
+:root {
+  --d-post-control-border-radius: var(--d-button-border-radius);
+  --d-post-control-text-color: var(--primary-low-mid);
+  --d-post-control-text-color--hover: var(--primary);
+  --d-post-control-icon-color: var(--primary-low-mid);
+  --d-post-control-icon-color--hover: var(--primary);
+  --d-post-control-background--hover: var(--primary-low);
+  --d-post-control-create-text-color: var(--primary-high);
+  --d-post-control-create-icon-color: var(--primary-high);
+  --d-post-control-sibling-text-color--hover: var(--primary-medium);
+}
+
 nav.post-controls {
   padding: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  color: var(--primary-low-mid);
+  color: var(--d-post-control-text-color);
+  user-select: none;
+  overflow-x: auto;
+
+  .fade-out {
+    .discourse-no-touch & {
+      opacity: 0.7;
+      transition:
+        background 0.25s,
+        opacity 0.7s ease-in-out;
+    }
+
+    .discourse-touch & {
+      opacity: 1;
+    }
+  }
+
+  @include viewport.until(sm) {
+    --control-space: 0.58em;
+    --control-space-small: calc(var(--control-space) / 2);
+    --control-space-large: calc(var(--control-space) * 1.3);
+  }
 
   .actions {
     display: inline-flex;
     text-align: right;
     margin-left: auto;
 
+    @include viewport.until(sm) {
+      // using an auto margin on first-child instead of justify-content on the parent
+      // because justify-content breaks overflow scrolling
+      :first-child {
+        margin-left: auto;
+      }
+    }
+
+    @include viewport.from(sm) {
+      gap: var(--space-1);
+    }
+
+    .post-action-menu {
+      &__like {
+        &.has-like .d-icon {
+          color: var(--love);
+        }
+
+        .discourse-no-touch & {
+          &:not(.has-like):hover {
+            --d-post-control-background--hover: var(--love-low);
+            --d-button-flat-icon-color--hover: var(--love);
+          }
+        }
+      }
+
+      &__double-button {
+        .discourse-no-touch & {
+          &:not(.has-liked):hover {
+            --d-post-control-background--hover: var(--love-low);
+            --d-button-flat-icon-color--hover: var(--love);
+          }
+        }
+      }
+    }
+
     // Some buttons can be doubled up, like likes or flags
     .double-button {
       display: inline-flex;
       flex: 0 1 auto;
-      align-items: center;
+      align-items: stretch; // should always be the same height
       white-space: nowrap;
-      button {
-        // It looks really confusing when one half a double button has an inner shadow on click.
-        &:active {
-          box-shadow: none;
-        }
-        &.my-likes,
-        &.read-indicator,
-        &.regular-likes {
-          // Like count on posts
-          .d-icon {
-            color: var(--primary-low-mid);
-            padding-left: 0.45em;
+
+      .discourse-no-touch & {
+        &:hover {
+          button {
+            background: var(--d-post-control-background--hover);
+            color: var(--d-post-control-sibling-text-color--hover);
           }
         }
+      }
+
+      button {
+        margin-inline: 0;
+
+        &:first-child {
+          border-radius: var(--d-post-control-border-radius) 0 0
+            var(--d-post-control-border-radius);
+        }
+
+        &:last-child {
+          border-radius: 0 var(--d-post-control-border-radius)
+            var(--d-post-control-border-radius) 0;
+        }
+
+        &:nth-child(2) {
+          padding-left: var(--space-1);
+        }
+
+        &:first-child:last-child {
+          border-radius: var(--d-post-control-border-radius);
+        }
+
         &.has-like {
           // Like button after I've liked
           .d-icon {
             color: var(--love);
           }
         }
-        &[disabled] {
-          // Disabled like button
-          cursor: not-allowed;
-        }
+
         &.button-count {
+          @include viewport.until(sm) {
+            padding: var(--control-space);
+
+            + .toggle-like,
+            + .create-flag {
+              padding: var(--control-space) var(--control-space-large)
+                var(--control-space) var(--control-space-small);
+            }
+
+            &.regular-likes {
+              padding: var(--control-space) var(--control-space-small)
+                var(--control-space) var(--control-space-large);
+            }
+          }
+
           // Like count button
-          height: 100%; // sometimes the font might be shorter than the icon
           &:not(.my-likes) {
             padding-right: 0;
           }
-          + .toggle-like {
-            // Like button when like count is present
+
+          &.my-likes {
+            flex-direction: row-reverse;
+          }
+
+          // Like count button
+          .discourse-no-touch & {
+            &:hover {
+              color: var(--primary);
+            }
+          }
+        }
+
+        &.my-likes,
+        &.read-indicator,
+        &.regular-likes {
+          // Like count on posts
+          .d-icon {
+            color: var(--d-post-control-icon-color);
             padding-left: 0.45em;
           }
         }
+
+        &[disabled] {
+          // Disabled like button
+          cursor: not-allowed;
+          opacity: 1;
+        }
       }
     }
+
     a,
     button {
-      color: var(--primary-low-mid-or-secondary-high);
-      .d-icon {
-        opacity: 1;
-      }
       display: inline-flex;
+      color: var(--d-post-control-text-color);
     }
 
     button {
-      flex: 0 1 auto;
-      font-size: var(--font-up-1);
-      padding: 8px 10px;
-      vertical-align: top;
-      background: transparent;
-      border: none;
-      .d-icon {
-        // this avoids an issue where hovering off the icon
-        // removes the .d-hover class from the button prematurely
-        pointer-events: none;
+      .discourse-no-touch & {
+        &:hover,
+        &:focus-visible,
+        &:active {
+          outline: none;
+          background: var(--d-post-control-background--hover);
+          color: var(--d-post-control-text-color--hover);
+        }
+
+        &.delete:hover,
+        &.delete:active,
+        &.delete:focus {
+          background: var(--danger);
+          color: var(--secondary);
+
+          .d-icon {
+            color: var(--secondary);
+          }
+        }
       }
-      &.d-hover,
-      &:focus,
-      &:active {
-        outline: none;
-        background: var(--primary-low);
-        color: var(--primary);
-      }
+
       &.hidden {
         display: none;
       }
+
       &.admin {
         position: relative;
       }
-      &.delete.d-hover,
-      &.delete:active,
-      &.delete:focus {
-        background: var(--danger);
-        color: var(--secondary);
-        .d-icon {
-          color: var(--secondary);
-        }
-      }
+
       &.bookmarked .d-icon {
         color: var(--tertiary);
       }
+
       &.create {
-        margin-right: 0;
-        color: var(--primary-high-or-secondary-low);
+        color: var(--d-post-control-create-text-color);
+
         .d-icon {
-          color: var(--primary-high-or-secondary-low);
+          color: var(--d-post-control-create-icon-color);
         }
       }
     }
   }
 
-  .show-replies {
-    font-size: var(--font-up-1);
-    font-size: inherit;
-    padding: 10px;
-    color: var(--primary-medium);
-    &:hover,
-    &:focus {
-      outline: none;
-      color: var(--primary);
-      background: var(--primary-low);
+  .post-action-menu__like-count {
+    display: inline-flex;
+    align-items: center;
+    color: var(--d-post-control-text-color) !important;
+    gap: var(--space-2);
+
+    &.has-liked .d-icon {
+      color: var(--danger);
     }
+  }
+
+  .btn.show-replies {
+    --border-width: 1px;
+    font-size: inherit;
+    color: var(--primary-medium);
+    display: flex;
+    align-items: center;
+    border-radius: var(--d-button-border-radius);
+
+    &[aria-expanded="true"] {
+      background: var(--primary-low);
+      color: var(--primary-high);
+      z-index: 1;
+
+      .d-icon {
+        color: var(--primary-high);
+      }
+    }
+
+    .discourse-no-touch & {
+      &:hover {
+        color: var(--primary);
+
+        .d-icon {
+          color: var(--primary-high);
+        }
+      }
+    }
+
+    @include viewport.from(sm) {
+      white-space: nowrap;
+
+      .topic-post & {
+        margin-right: var(--space-2);
+      }
+    }
+
     .d-icon {
       font-size: var(--font-down-1);
+
+      @include viewport.until(sm) {
+        padding-left: var(--control-space);
+        margin-left: 0 !important;
+      }
     }
+
     .d-button-label + .d-icon {
       margin-left: 0.45em;
       margin-right: 0;
     }
+  }
+
+  @include viewport.until(sm) {
+    .reply .d-icon {
+      color: var(--primary-high);
+    }
+
+    &.replies-button-visible {
+      display: flex;
+      align-items: center;
+
+      .show-replies {
+        display: flex;
+
+        + .reply {
+          margin-left: 0;
+        }
+
+        .d-icon {
+          padding-left: var(--control-space);
+        }
+      }
+
+      .actions {
+        flex-grow: 2;
+      }
+    }
+  }
+}
+
+.expand-post {
+  @include viewport.until(sm) {
+    margin: var(--space-3) 0;
+  }
+
+  @include viewport.from(sm) {
+    margin-top: var(--space-3);
+    margin-left: var(--topic-body-width-padding);
   }
 }
 
@@ -391,48 +689,57 @@ nav.post-controls {
   .regular > .cooked {
     background-color: var(--danger-low-mid);
   }
+
   .topic-meta-data:not(.embedded-reply) {
     color: var(--danger);
 
     .post-info a,
     a {
-      color: currentColor;
+      color: currentcolor;
     }
 
     .d-icon {
-      color: currentColor;
+      color: currentcolor;
     }
   }
+
   nav.post-controls {
     color: var(--danger);
 
     .show-replies,
     button.reply.create {
       color: var(--danger);
+
       .d-icon {
         color: var(--danger);
       }
     }
-    .widget-button {
+
+    .btn {
       &:hover {
-        color: currentColor;
+        color: currentcolor;
         background: var(--danger-low);
+
         .d-icon {
-          color: currentColor;
+          color: currentcolor;
         }
       }
+
       &[disabled]:hover {
         background-color: transparent;
         cursor: not-allowed;
       }
+
       &.fade-out {
         opacity: 1;
       }
     }
+
     .d-icon {
       color: var(--danger);
     }
   }
+
   .post-action {
     color: var(--danger);
   }
@@ -442,15 +749,17 @@ nav.post-controls {
   0% {
     transform: scale(1);
   }
+
   50% {
     transform: scale(1.5);
   }
+
   100% {
     transform: scale(1);
   }
 }
 
-.has-like .d-icon.heart-animation {
+.toggle-like.heart-animation .d-icon {
   @media (prefers-reduced-motion: no-preference) {
     animation: heartBump 0.4s;
   }
@@ -466,34 +775,76 @@ nav.post-controls {
   }
 }
 
+blockquote {
+  margin-left: 0;
+  margin-right: 0;
+  padding: 0.75em;
+}
+
 // we use aside to hold expandable quotes (versus, say, static blockquotes)
 aside.quote {
   margin-top: 1em;
   margin-bottom: 1em;
 
   .title {
-    @include post-aside;
-
+    display: flex;
+    align-items: start;
+    gap: var(--space-2);
     color: var(--primary-high-or-secondary-low);
     padding: 0.8em 0.8em 0 0.8em;
-    // blockquote is underneath this and has top margin
-    .avatar {
-      margin-right: 0.5em;
-    }
-    img {
-      margin-top: -0.26em;
-    }
+    background: var(--d-post-aside-background);
+    border-left: var(--d-post-aside-border-left);
+
     @include unselectable;
+
+    &[data-can-toggle-quote] {
+      cursor: pointer;
+    }
+
+    a {
+      @include ellipsis;
+    }
+
+    .badge-category__wrapper {
+      align-self: center;
+    }
+
+    .quote-controls {
+      min-height: 24px; // match avatar height for alignment
+    }
+
+    // empty control div can impact layout, so hide it
+    &:not([data-has-quote-controls]) {
+      .quote-controls {
+        display: none;
+      }
+    }
+  }
+
+  .quote-title__text-content {
+    flex: 1 1 auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 var(--space-2);
+    min-width: 0;
+
+    .badge-category__wrapper {
+      align-self: auto;
+    }
   }
 
   // blockquote is docked within aside for content
   blockquote {
     margin-top: 0;
+
     .expanded-quote {
       overflow: hidden;
+
       @media (prefers-reduced-motion: no-preference) {
         animation: slideout 1s ease-in-out;
       }
+
       &.icon-only {
         text-align: center;
         font-size: var(--font-up-4);
@@ -501,6 +852,27 @@ aside.quote {
         padding-bottom: 0.5em;
         color: var(--primary-medium);
       }
+    }
+
+    .onebox-result {
+      background-color: var(--primary-very-low);
+    }
+  }
+
+  // nested quotes
+  aside {
+    .quote,
+    .title,
+    blockquote,
+    .onebox,
+    .onebox-result {
+      background: var(--primary-very-low);
+      border-left: 5px solid var(--primary-low);
+    }
+
+    aside.quote > blockquote,
+    aside.quote > .title {
+      border-left: 0;
     }
   }
 }
@@ -511,7 +883,17 @@ aside.quote {
 }
 
 .quote-controls {
-  .quote-toggle {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  order: 2; // for non-glimmer post stream
+
+  a {
+    margin-left: 0.3em;
+  }
+
+  .quote-toggle,
+  .back {
     padding: 0;
   }
 }
@@ -526,8 +908,33 @@ aside.quote {
   font-style: italic;
 }
 
+.post-actions {
+  text-align: right;
+  margin-bottom: var(--space-2);
+
+  @include viewport.until(sm) {
+    margin-top: var(--space-2);
+  }
+
+  .post-action {
+    display: inline-block;
+    margin-left: var(--space-2);
+  }
+}
+
 .post-action {
   color: var(--primary-medium);
+
+  @include viewport.from(sm) {
+    .relative-date {
+      margin-left: var(--space-1);
+    }
+
+    .avatar {
+      margin-right: var(--space-half);
+    }
+  }
+
   .undo-action,
   .act-action {
     margin-left: 5px;
@@ -566,13 +973,16 @@ aside.quote {
   opacity: 0.4;
 }
 
-.quote-controls {
-  float: right;
-  display: flex;
-  align-items: center;
-  a {
-    margin-left: 0.3em;
-  }
+.post-stream--cloaked {
+  min-height: 1px; // ensures that cloaked items have a minimum height to force the intersection observers to work
+  overflow-anchor: none; // cloaked posts are empty placeholders with approximate height and must not be used as scroll anchors
+}
+
+// these elements appear/disappear dynamically inside the post stream and must
+// not be used as scroll anchors by the browser's native scroll anchoring
+.post-stream .load-more-sentinel,
+.post-stream .post-stream-load-more-accessible {
+  overflow-anchor: none;
 }
 
 .quote-button {
@@ -580,38 +990,37 @@ aside.quote {
 
   &.visible {
     display: flex;
+
+    @include viewport.until(sm) {
+      z-index: z("tooltip");
+    }
   }
 
   .buttons {
     display: flex;
+    flex-wrap: wrap;
+
+    .btn,
+    .ai-post-helper {
+      border-radius: 0;
+    }
+
+    @media screen and (width <= 420px) {
+      flex-direction: column;
+      align-items: flex-start;
+
+      .btn,
+      .ai-post-helper {
+        width: 100%;
+        justify-content: flex-start;
+      }
+    }
   }
 
   .extra {
     display: flex;
     flex-direction: column;
     width: 100%;
-  }
-
-  .fast-edit-container {
-    display: flex;
-    padding: 0.5em;
-    padding-top: 0;
-    flex-direction: column;
-    align-items: flex-start;
-
-    #fast-edit-input {
-      margin: 0;
-      width: 300px;
-      height: 90px;
-    }
-
-    .save-fast-edit {
-      margin-top: 0.5em;
-    }
-  }
-
-  .insert-quote + .quote-sharing {
-    border-left: 1px solid rgba(255, 255, 255, 0.3);
   }
 
   .btn-flat {
@@ -625,57 +1034,10 @@ aside.quote {
       white-space: nowrap;
     }
   }
+}
 
-  .quote-sharing {
-    vertical-align: middle;
-    display: inline-flex;
-    align-items: center;
-
-    .btn {
-      display: inline-flex;
-      align-items: center;
-    }
-
-    .quote-share-label {
-      opacity: 1;
-      transition: opacity 0.3s ease-in-out;
-    }
-
-    &:hover {
-      .quote-share-label {
-        background: transparent;
-        opacity: 0;
-        max-width: 0;
-        padding: 0;
-        overflow: hidden;
-      }
-      .quote-share-label + .quote-share-buttons {
-        max-width: 10em;
-        opacity: 1;
-        transition: opacity 0.3s ease-in-out;
-      }
-      // this pseudo element creates a transition buffer zone
-      // without it, the width change on hover can cause transition jitter
-      // the width is roughly wide enough to cover long translations of "share"
-      &:after {
-        content: "";
-        position: absolute;
-        display: block;
-        background: transparent;
-        height: 100%;
-        padding: 0.5em 4em;
-        z-index: -1; // below the buttons
-      }
-    }
-
-    .quote-share-label + .quote-share-buttons {
-      opacity: 0;
-      overflow: hidden;
-      max-width: 0;
-      display: inline-flex;
-      transition: opacity 0.3s ease-in-out;
-    }
-  }
+#fast-edit-input {
+  resize: block;
 }
 
 .post-avatar,
@@ -684,195 +1046,9 @@ aside.quote {
   position: relative;
 }
 
-.topic-map {
-  background: var(--primary-very-low);
-  border: 1px solid var(--primary-low);
-  border-top: none; // would cause double top border
-
-  .avatars {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    box-sizing: border-box;
-    a {
-      display: block;
-      position: relative;
-    }
-
-    .avatar {
-      width: 2.15em;
-      height: 2.15em;
-    }
-    .post-count {
-      position: absolute;
-      top: 0;
-      right: 0;
-      border-radius: 100px;
-      padding: 0.15em 0.4em 0.2em;
-      text-align: center;
-      font-weight: normal;
-      font-size: var(--font-down-2);
-      line-height: var(--line-height-small);
-    }
-  }
-
-  .avatar {
-    margin-right: 0.33em;
-  }
-
-  section {
-    border-top: 1px solid var(--primary-low);
-  }
-
-  ul {
-    display: flex;
-    flex-wrap: wrap;
-    margin: 0;
-    list-style: none;
-  }
-
-  h3 {
-    width: 100%;
-    margin-bottom: 0.33em;
-    color: var(--primary);
-    line-height: var(--line-height-large);
-    font-weight: normal;
-    font-size: var(--font-0);
-  }
-
-  h4 {
-    margin: 1px 0 2px 0;
-    color: var(--primary-med-or-secondary-med);
-    font-weight: normal;
-    font-size: var(--font-down-1);
-    line-height: var(--line-height-small);
-  }
-
-  span.domain {
-    font-size: var(--font-down-2);
-    color: var(--primary-med-or-secondary-med);
-  }
-
-  td {
-    vertical-align: top;
-    padding: 1px;
-    word-break: break-all;
-  }
-
-  .topic-links {
-    tbody {
-      border: none;
-    }
-    tr {
-      border: none;
-    }
-    .badge-notification {
-      margin: 1px 5px 2px 0;
-    }
-  }
-
-  .link-summary .btn {
-    width: 100%;
-    .d-icon {
-      color: var(--primary-high);
-    }
-    .discourse-no-touch & {
-      &:hover {
-        background: var(--primary-low);
-      }
-    }
-  }
-
-  .controls {
-    display: flex;
-    align-items: center;
-
-    .btn {
-      margin-right: 0.5em;
-
-      &:last-child {
-        margin: 0;
-      }
-    }
-  }
-
-  .participants {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-
-    & + .controls {
-      margin-top: 0.5em;
-    }
-
-    &.hide-names .user {
-      .username,
-      .group-name {
-        display: none;
-      }
-    }
-
-    .user {
-      @include ellipsis;
-      border: 1px solid var(--primary-low);
-      border-radius: 0.25em;
-      padding: 0;
-      margin: 0.125em 0.25em 0.125em 0;
-      display: flex;
-      align-items: center;
-      height: 26px;
-
-      .user-link,
-      .group-link {
-        @include ellipsis;
-        color: var(--primary-high);
-
-        &:hover {
-          color: var(--primary);
-        }
-      }
-
-      .avatar,
-      .d-icon-users {
-        margin-left: 0.25em;
-        margin-right: 0.25em;
-      }
-
-      .username,
-      .group-name {
-        margin-right: 0.25em;
-      }
-
-      &:last-child {
-        margin-right: 0;
-      }
-
-      .remove-invited {
-        display: flex;
-        flex: 1 0 0px;
-        align-items: center;
-        justify-content: center;
-        box-sizing: border-box;
-        border-radius: 0 var(--border-radius) var(--border-radius) 0;
-        padding-top: 0;
-        padding-bottom: 0;
-        height: calc(100% + 0.25em);
-        margin-right: -4px;
-      }
-    }
-  }
-
-  .add-remove-participant-btn {
-    .d-icon {
-      margin-left: 0.25em;
-    }
-  }
-}
-
 .topic-avatar,
 .avatar-flair-preview,
 .user-card-avatar,
-.topic-map .poster,
 .user-profile-avatar,
 .user-image,
 .latest-topic-list-item {
@@ -887,6 +1063,7 @@ aside.quote {
     right: -6px;
   }
 }
+
 .topic-avatar .avatar-flair,
 .avatar-flair-preview .avatar-flair,
 .collapsed-info .user-profile-avatar .avatar-flair,
@@ -895,6 +1072,7 @@ aside.quote {
   background-size: 20px 20px;
   width: 20px;
   height: 20px;
+
   &.rounded {
     background-size: 18px 18px;
     border-radius: 12px;
@@ -904,11 +1082,13 @@ aside.quote {
     right: -8px;
   }
 }
+
 .user-card-avatar .avatar-flair,
 .user-profile-avatar .avatar-flair {
   background-size: 40px 40px;
   width: 40px;
   height: 40px;
+
   &.rounded {
     background-size: 30px 30px;
     border-radius: 24px;
@@ -917,68 +1097,61 @@ aside.quote {
     bottom: -2px;
     right: -4px;
   }
+
   .fa {
     font-size: var(--font-up-4);
   }
 }
-.topic-map .poster .avatar-flair {
-  right: 0;
-  background-size: 12px 12px;
-  width: 16px;
-  height: 16px;
-  bottom: -3px;
-  color: var(--primary);
-  &.rounded {
-    background-size: 12px 12px;
-    border-radius: 8px;
-    width: 16px;
-    height: 16px;
-    bottom: -2px;
-    right: 0;
-  }
-  .d-icon {
-    font-size: var(--font-down-2);
-  }
-}
-
-.map {
-  &:first-of-type {
-    display: flex;
-    .buttons {
-      margin-left: auto;
-      order: 15;
-      .btn {
-        height: 100%;
-      }
-    }
-  }
-}
 
 .topic-body {
-  // this is necessary for ANYTHING that extends past the right edge of
+  @include viewport.from(sm) {
+    width: calc(
+      var(--topic-body-width) + (var(--topic-body-width-padding) * 2)
+    );
+    float: left;
+    min-width: 0; // prevents some elements, like <pre>, from blowing out the width
+    position: relative;
+    border-top: 1px solid var(--content-border-color);
+    padding: var(--space-3) 0 0 0;
+
+    &:first-of-type {
+      border-top: none;
+    }
+
+    a.expand-hidden {
+      padding-left: var(--topic-body-width-padding);
+    }
+
+    &:hover .actions .fade-out,
+    .selected .actions .fade-out {
+      opacity: 1;
+    }
+  }
+
+  // hiding overflow is necessary for ANYTHING that extends past the right edge of
   // the post body, such as an image in a deeply nested list, image in
   // a deeply nested blockquote, and so on.. you get the idea.
   .cooked {
     overflow: hidden;
 
+    @include viewport.from(sm) {
+      padding: var(--space-4) var(--topic-body-width-padding) var(--space-1)
+        var(--topic-body-width-padding);
+    }
+
     .button-wrapper {
       display: none;
     }
   }
-  .group-request {
-    border-top: 1px solid var(--primary-low);
-    padding-top: 0.5em;
-  }
-}
 
-@media (prefers-reduced-motion: no-preference) {
-  .topic-body.highlighted,
-  .small-action-desc.highlighted {
-    animation: background-fade-highlight 2.5s ease-out;
-  }
-  // Disable animation so deleted status is visible immediately
-  .deleted .topic-body.highlighted {
-    animation: none;
+  .group-request {
+    border-top: 1px solid var(--content-border-color);
+    padding-top: 0.5em;
+
+    @include viewport.from(sm) {
+      padding: var(space-2) var(--topic-body-width-padding) 0
+        var(--topic-body-width-padding);
+    }
   }
 }
 
@@ -993,9 +1166,14 @@ aside.quote {
   flex: 0 0 auto;
   margin-right: 0.5em;
 
+  .btn {
+    padding: revert;
+  }
+
   &.post-date {
     margin-right: 0;
   }
+
   &.via-email,
   &.whisper,
   &.post-locked {
@@ -1009,35 +1187,49 @@ aside.quote {
     color: var(--wiki);
   }
 
+  @include viewport.from(sm) {
+    a.wiki {
+      color: var(--wiki);
+    }
+  }
+
   &.via-email {
     color: var(--primary-low-mid-or-secondary-high);
   }
+
   &.raw-email {
     cursor: pointer;
   }
+
   &.edits {
-    .widget-button {
+    .btn {
       display: flex;
       align-items: center;
+
       .d-button-label {
         order: 0;
         padding-right: 0.25em;
         color: var(--primary-med-or-secondary-med);
       }
+
       .d-icon {
+        margin-right: 0;
         order: 1;
         color: var(--primary-med-or-secondary-med);
       }
+
       .discourse-no-touch & {
         &:hover {
           .d-button-label {
             color: var(--primary-high);
           }
+
           .d-icon {
             color: var(--primary-high);
           }
         }
       }
+
       &:focus {
         @include default-focus;
         background: transparent;
@@ -1048,14 +1240,6 @@ aside.quote {
 
 pre {
   max-height: 2000px;
-  code {
-    word-wrap: normal;
-    display: block;
-    padding: 0.5em;
-    color: var(--primary);
-    background: var(--blend-primary-secondary-5);
-    max-height: 500px;
-  }
 
   .bidi-warning,
   .bidi-warning span {
@@ -1082,13 +1266,12 @@ pre {
     top: 0;
     min-height: 0;
     font-size: var(--font-down-2);
-    min-height: 0;
-    font-size: var(--font-down-2);
     opacity: 0.7;
     cursor: pointer;
 
     &.action-complete {
       cursor: auto;
+
       .d-icon {
         color: var(--tertiary);
       }
@@ -1097,6 +1280,33 @@ pre {
     .d-icon {
       pointer-events: none;
       margin-right: 0;
+    }
+  }
+
+  @include viewport.until(sm) {
+    code {
+      padding-right: 2.75em;
+    }
+  }
+
+  @include viewport.from(sm) {
+    .copy-cmd:not(.action-complete),
+    .fullscreen-cmd:not(.action-complete) {
+      opacity: 0;
+      transition: 0.2s;
+      visibility: hidden;
+    }
+
+    &:hover {
+      .copy-cmd,
+      .fullscreen-cmd {
+        opacity: 0.7;
+        visibility: visible;
+
+        &:hover {
+          opacity: 1;
+        }
+      }
     }
   }
 }
@@ -1128,26 +1338,53 @@ kbd {
 
 // we assume blockquotes have their own margins, so all blockquotes
 // will remove margins from first (top) and last (bottom) child elements
-blockquote > *:first-child {
-  margin-top: 0 !important;
-}
-blockquote > *:last-child {
-  margin-bottom: 0 !important;
+blockquote,
+blockquote .post__contents-cooked-quote {
+  overflow-wrap: break-word;
+
+  > *:first-child {
+    margin-top: 0 !important;
+  }
+
+  > *:last-child {
+    margin-bottom: 0 !important;
+  }
+
+  table {
+    table-layout: fixed; // prevents table from expanding past the post body width
+    width: 100%;
+  }
 }
 
 .gap {
-  padding: 0.25em 0 0.5em
-    calc(var(--topic-avatar-width) + var(--topic-body-width-padding));
+  box-sizing: border-box;
   color: var(--primary-med-or-secondary-high);
   cursor: pointer;
   text-transform: uppercase;
   font-weight: bold;
   font-size: var(--font-down-1);
+  padding: 0.25em 0 0.5em
+    calc(var(--topic-avatar-width) + var(--topic-body-width-padding));
+
+  @include viewport.until(sm) {
+    padding: 0.25em 0;
+  }
 }
 
 .who-liked,
 .who-read {
   transition: height 0.5s;
+
+  @include viewport.from(sm) {
+    margin-bottom: 0;
+    width: 100%;
+    text-align: right;
+
+    &.--expanded {
+      margin-top: var(--space-5);
+    }
+  }
+
   a {
     margin: 0 0.25em 0.5em 0;
     display: inline-block;
@@ -1188,7 +1425,7 @@ blockquote > *:last-child {
 
   .topic-avatar,
   .small-action-desc {
-    border-top: 1px solid var(--primary-low);
+    border-top: 1px solid var(--content-border-color);
   }
 
   .topic-avatar {
@@ -1200,6 +1437,7 @@ blockquote > *:last-child {
     width: var(--topic-avatar-width);
     justify-content: center;
     height: auto;
+
     .d-icon {
       font-size: var(--font-up-3);
       width: var(--topic-avatar-width);
@@ -1244,6 +1482,7 @@ blockquote > *:last-child {
     word-break: break-word;
     min-width: 0; // Allows content like oneboxes to shrink
     color: var(--primary);
+
     p {
       margin-bottom: 0;
     }
@@ -1252,6 +1491,7 @@ blockquote > *:last-child {
   button {
     background: transparent;
     font-size: var(--font-down-1);
+
     .d-icon {
       color: var(--primary-500);
     }
@@ -1260,6 +1500,7 @@ blockquote > *:last-child {
       &:hover,
       &:focus {
         background: var(--primary-200);
+
         .d-icon {
           color: var(--primary);
         }
@@ -1281,6 +1522,7 @@ blockquote > *:last-child {
         var(--topic-body-width) + var(--topic-avatar-width) +
           (var(--topic-body-width-padding) * 2)
       );
+
       .topic-post-visited-message {
         background-color: var(--secondary);
         padding: 0 0.5em;
@@ -1293,6 +1535,7 @@ blockquote > *:last-child {
   .post-info.whisper {
     margin-left: 0.5em;
   }
+
   .topic-body {
     .cooked {
       font-style: italic;
@@ -1305,12 +1548,15 @@ a.mention,
 a.mention-group {
   // linked
   @include mention;
+
+  .user-status-message {
+    user-select: none;
+  }
 }
 
 .mention .emoji {
-  margin-left: 0.3em;
-  width: 15px;
-  height: 15px;
+  width: 0.93em;
+  height: 0.93em;
 }
 
 span.mention {
@@ -1367,15 +1613,15 @@ span.mention {
 
 .broken-image,
 .blocked-hotlinked-placeholder {
+  display: inline-flex;
+  flex-direction: column;
+  border: 1px solid var(--content-border-color);
+  align-items: center;
+  justify-content: center;
+
   &:not(a) {
     color: var(--primary-low-mid-or-secondary-high);
   }
-
-  display: inline-flex;
-  flex-direction: column;
-  border: 1px solid var(--primary-low);
-  align-items: center;
-  justify-content: center;
 
   .d-icon {
     margin: 16px;
@@ -1387,23 +1633,36 @@ span.mention {
   }
 }
 
-/* below standard tablet portrait ----------- */
-
-.reply-to-tab {
+a.reply-to-tab {
   display: flex;
   align-items: center;
   margin-right: 2em;
   max-width: 400px;
   overflow: hidden;
+  gap: var(--space-1);
 
-  img {
-    margin: 0 0.25em;
+  @include viewport.from(sm) {
+    z-index: z("base") + 1;
+    color: var(--primary-med-or-secondary-med);
+  }
+
+  .d-icon {
+    color: var(--primary-medium);
+  }
+
+  .avarar {
+    margin-left: var(--space-1);
   }
 }
 
-// Select posts
-
 .topic-post {
+  @include viewport.until(sm) {
+    > article {
+      border-top: 1px solid var(--content-border-color);
+      padding: 15px 0 8px 0;
+    }
+  }
+
   &.selected {
     article.boxed {
       .select-posts {
@@ -1413,21 +1672,25 @@ span.mention {
           border-color: var(--tertiary);
         }
       }
+
       .topic-body {
-        .contents:after {
+        .contents::after {
           display: none;
         }
       }
     }
   }
+
   article.boxed {
     position: relative;
+
     .select-posts {
       position: absolute;
       right: 7em;
       z-index: z("dropdown");
       top: 0.5em;
       height: 100px;
+
       button {
         margin-left: 8px;
         background-color: var(--primary-low);
@@ -1438,12 +1701,69 @@ span.mention {
   }
 }
 
-@media all and (max-width: 767px) {
+.selected-posts {
+  @include viewport.until(sm) {
+    padding: 0.1em 0.7em;
+  }
+
+  @include viewport.from(sm) {
+    width: 200px;
+    position: fixed;
+    z-index: z("dropdown") + 1; // 1 higher than .select-posts
+    box-shadow: var(--shadow-card);
+    padding: var(--space-3);
+    margin-bottom: var(--space-1);
+    right: 10px;
+
+    @include viewport.from(xl) {
+      right: auto;
+      margin-left: 330px;
+      left: 50%;
+    }
+
+    button {
+      width: 100%;
+      margin: 4px auto;
+      display: inline-block;
+      text-align: left;
+    }
+
+    &.hidden {
+      display: none;
+    }
+
+    .controls {
+      margin-top: 10px;
+    }
+
+    p {
+      font-size: var(--font-down-1);
+      margin: 0 0 10px 0;
+    }
+
+    p.cancel {
+      margin: 10px 0 0 0;
+    }
+
+    h3 {
+      font-size: var(--font-up-4);
+      color: var(--primary);
+      margin-bottom: 5px;
+
+      .d-icon {
+        margin-right: 7px;
+      }
+    }
+  }
+}
+
+@media all and (width <= 767px) {
   .reply-to-tab {
     span {
       display: none;
     }
   }
+
   .user-title {
     float: left;
     clear: left;
@@ -1455,23 +1775,29 @@ span.mention {
   max-width: calc(var(--topic-body-width) + 4.5em);
   padding: 3em 5em 2em
     calc(var(--topic-avatar-width) + var(--topic-body-width-padding));
-  @include breakpoint(mobile-extra-large) {
+
+  @include viewport.until(sm) {
     padding: 1.5em 1.5em 0.25em;
   }
+
   h3 {
     margin-bottom: 0.5em;
   }
+
   a {
     text-decoration: underline;
   }
+
   .buttons {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     margin: 1.5em 0 1em;
+
     > * {
       margin-bottom: 0.5em;
     }
+
     .btn {
       margin-right: 0.5em;
       white-space: nowrap;
@@ -1483,11 +1809,13 @@ span.mention {
       &.btn-remind {
         background: var(--primary-very-low);
         margin-right: auto;
+
         @include hover {
           background: var(--primary-medium);
         }
       }
-      @include breakpoint(mobile-extra-large) {
+
+      @include viewport.until(sm) {
         &.btn-primary {
           margin-right: 100%;
         }
@@ -1497,96 +1825,46 @@ span.mention {
 }
 
 .post-notice {
-  box-sizing: border-box;
   align-items: center;
-  background-color: var(--tertiary-low);
-  border-top: 1px solid var(--primary-low);
+  background-color: var(--tertiary-very-low);
+  border-top: 1px solid var(--content-border-color);
   display: flex;
   width: 100%;
   max-width: calc(
     var(--topic-body-width) + (var(--topic-body-width-padding) * 2) +
       var(--topic-avatar-width)
   );
-  padding: var(--topic-body-width-padding);
-  padding-left: 0;
-  &.old {
-    background-color: unset;
-    color: var(--primary-medium);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--font-down-1-rem);
+  gap: var(--space-2);
+  box-sizing: border-box;
 
-    .d-icon {
-      color: var(--primary-medium);
-    }
+  @include viewport.until(sm) {
+    margin-bottom: var(--space-4);
   }
 
-  p {
-    margin: 0;
+  &.custom {
+    background: var(--danger-low);
+  }
+
+  .emoji {
+    width: 1.5em;
+    height: 1.5em;
   }
 
   .d-icon {
-    font-size: 2em;
-    width: var(--topic-avatar-width);
+    width: 1.25em;
+    height: 1.25em;
     color: var(--primary-high);
-    margin-right: var(--topic-body-width-padding);
-  }
-}
-
-html.anon #topic-footer-buttons {
-  display: flex;
-  justify-content: end;
-}
-
-#topic-footer-buttons {
-  margin: var(--below-topic-margin) 0;
-  padding: 0;
-
-  .topic-footer-main-buttons {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: stretch; // aligns items by making them the same height
-    button,
-    details {
-      margin-right: 0.54em;
-    }
-    > * {
-      margin-bottom: 0.5em; // all immediate children should have a bottom margin in case of wrapping
-    }
-    .topic-admin-menu-button-container {
-      display: inline-flex;
-      .topic-admin-menu-button {
-        display: flex; // to make this button match siblings behavior, all of its parents need to be flex
-      }
-    }
   }
 
-  .pinned-button:not(.is-hidden) + .topic-notifications-button {
-    margin-top: 0;
+  p {
+    display: inline;
+    margin: 0;
   }
 
-  .pinned-button,
-  .topic-notifications-button {
-    margin: 0.5em 0 1em;
-
-    .reason {
-      color: var(--primary-high);
-      display: inline-flex;
-      margin: 0;
-      align-items: center;
-
-      .dropdown-select-box {
-        .select-kit-selected-name {
-          width: 100%;
-          overflow: hidden;
-        }
-        .name {
-          @include ellipsis;
-        }
-      }
-
-      .text {
-        margin-left: 0.5em;
-        line-height: var(--line-height-medium);
-      }
-    }
+  .custom_created_by {
+    display: inline-block;
   }
 }
 
@@ -1605,10 +1883,18 @@ iframe {
   text-align: left;
   bottom: -2px;
   right: 15px;
+
+  @include viewport.until(sm) {
+    bottom: -50px;
+    left: 135px;
+  }
+
+  @media screen and (width <= 374px) {
+    left: 50px;
+  }
 }
 
 .posts-filtered-notice {
-  position: -webkit-sticky;
   position: sticky;
   background-color: var(--tertiary-low);
   bottom: 0;
@@ -1624,8 +1910,32 @@ iframe {
       var(--topic-avatar-width)
   );
 
+  @include viewport.until(sm) {
+    padding-right: 8.5em;
+    padding-bottom: max(1em, env(safe-area-inset-bottom));
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    margin: 1em -9px;
+    z-index: 101;
+
+    .filtered-replies-viewing {
+      text-align: left;
+      width: 100%;
+    }
+  }
+
   .filtered-avatar {
     margin: 0 0.5em;
+
+    @include viewport.until(sm) {
+      margin-left: 0;
+
+      img.avatar {
+        width: 20px;
+        height: 20px;
+      }
+    }
+
     + .names {
       flex: inherit;
     }
@@ -1633,11 +1943,25 @@ iframe {
 
   .filtered-replies-show-all {
     margin-left: 1em;
+
+    @include viewport.until(sm) {
+      position: absolute;
+      right: 1em;
+    }
   }
 
   .filtered-user-row {
     @include ellipsis;
   }
+}
+
+.posts-wrapper {
+  position: relative;
+  -webkit-font-smoothing: subpixel-antialiased;
+}
+
+span.highlighted {
+  background-color: var(--highlight-bg);
 }
 
 .pausable-animated-image {
@@ -1661,11 +1985,11 @@ iframe {
     display: flex;
     justify-content: flex-end;
     align-items: flex-end;
+
     > .d-icon {
-      cursor: pointer;
       padding: 0.5em;
       margin: 0.5em;
-      background-color: rgba(var(--always-black-rgb), 0.25);
+      background-color: rgb(var(--always-black-rgb), 0.25);
       color: var(--secondary-or-primary);
       cursor: pointer;
       display: none;
@@ -1700,6 +2024,27 @@ iframe {
   }
 }
 
+.btn-group {
+  position: relative;
+
+  @include viewport.until(sm) {
+    margin-top: 25px;
+  }
+}
+
+.dropdown-toggle {
+  float: left;
+  position: relative;
+}
+
+.deleted-user-avatar {
+  font-size: var(--font-up-6);
+
+  @include viewport.until(sm) {
+    font-size: var(--font-up-5);
+  }
+}
+
 .open-popup-link {
   display: inline;
   margin-inline: 0.25em;
@@ -1708,38 +2053,19 @@ iframe {
   opacity: 0%;
   white-space: nowrap;
   transition: 0.25s ease-in-out opacity;
+
+  @include viewport.until(sm) {
+    opacity: 100%;
+    margin-bottom: 1rem;
+  }
 }
 
 .fullscreen-table-wrapper {
-  transition: all 0.6s cubic-bezier(0.165, 0.84, 0.44, 1);
   display: block;
   position: relative;
-}
 
-.fullscreen-table-modal .modal-inner-container,
-.fullscreen-code-modal .modal-inner-container {
-  width: max-content;
-  max-width: 90%;
-  margin: 0 auto;
-  padding: 10px;
-
-  .modal-body {
-    padding-top: 0;
-  }
-
-  thead {
-    position: sticky;
-    top: 0;
-    z-index: 1;
-    background-color: var(--secondary);
-  }
-
-  tbody {
-    overflow-x: hidden;
-  }
-
-  td {
-    padding: 0.5rem;
+  html.discourse-no-touch & {
+    transition: box-shadow 0.6s cubic-bezier(0.165, 0.84, 0.44, 1);
   }
 }
 
@@ -1753,8 +2079,10 @@ iframe {
   .d-modal__container {
     width: auto;
   }
+
   .d-modal__body {
     padding-top: 0;
+
     thead {
       position: sticky;
       top: 0;
@@ -1770,23 +2098,281 @@ iframe {
 
 html.discourse-no-touch .fullscreen-table-wrapper:hover {
   border-radius: 5px;
-  box-shadow: 0 2px 5px 0 rgba(var(--always-black-rgb), 0.1),
-    0 2px 10px 0 rgba(var(--always-black-rgb), 0.1);
+
   .open-popup-link {
     opacity: 100%;
+  }
+
+  &.--has-overflow,
+  &.--editable {
+    box-shadow:
+      0 2px 5px 0 rgb(var(--always-black-rgb), 0.1),
+      0 2px 10px 0 rgb(var(--always-black-rgb), 0.1);
   }
 }
 
 .read-state {
   position: absolute;
+
   // We use absolute positioning here because we want it to display in the padding
   align-self: center;
   color: var(--tertiary-medium);
   right: 0;
   font-size: 0.571em;
+
+  @include viewport.until(sm) {
+    // contained within the padding to prevent vertical overflow
+    max-width: var(--d-wrap-padding-x);
+    right: calc(var(--d-wrap-padding-x) * -1);
+    font-size: 6px; // static size to avoid overflow issues
+
+    svg {
+      right: -2px;
+    }
+  }
+
   &.read {
     visibility: hidden;
     opacity: 0;
-    transition: visibility 1s, opacity ease-out 1s;
+    transition:
+      visibility 1s,
+      opacity ease-out 1s;
+  }
+}
+
+.liked-users-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+
+  &__list {
+    margin: 0;
+    list-style: none;
+    display: flex;
+    justify-content: end;
+    gap: var(--space-1);
+
+    // avatar width + gap * (max amount of users per row + 1)
+    max-width: calc((var(--liked-users-list-avatar-size) + var(--space-1)) * 9);
+    flex-wrap: wrap;
+  }
+
+  &__item,
+  &__item .avatar {
+    width: var(--liked-users-list-avatar-size);
+    height: var(--liked-users-list-avatar-size);
+  }
+
+  &__container {
+    --liked-users-list-avatar-size: 22px;
+    padding: var(--space-2);
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+  }
+
+  &__count {
+    display: flex;
+    gap: var(--space-2);
+    color: var(--primary-medium);
+    font-weight: 300;
+    align-items: center;
+  }
+
+  &__count-icon {
+    color: var(--love);
+  }
+
+  &__more {
+    font-size: var(--font-down-1);
+    color: var(--primary-medium);
+  }
+
+  &__more-button.btn-flat.btn {
+    padding: 0;
+    width: var(--liked-users-list-avatar-size);
+    border-radius: var(--d-button-border-radius);
+    height: var(--liked-users-list-avatar-size);
+  }
+}
+
+.time-gap + .topic-post .topic-body,
+.time-gap + .topic-post .topic-avatar {
+  border-top: none;
+}
+
+.time-gap + .topic-post .embedded-posts.top {
+  border-bottom: none;
+}
+
+span.post-count {
+  background: var(--primary);
+  color: var(--secondary);
+  opacity: 0.8;
+}
+
+@include viewport.until(sm) {
+  .topic-avatar {
+    // puts avatar above self-background in PMs
+    z-index: z("base") + 1;
+  }
+
+  topic-post-visited {
+    + .topic-post > article {
+      border-top: none;
+    }
+  }
+
+  span.btn-text {
+    display: none;
+  }
+
+  span.badge-posts {
+    margin-right: 5px;
+  }
+
+  .topic-avatar {
+    float: left;
+    margin-right: var(--space-2);
+  }
+
+  .topic-post .boxed .contents {
+    clear: both;
+  }
+
+  .time-gap {
+    + .topic-post article {
+      border-top: none;
+    }
+
+    .topic-avatar {
+      display: none;
+    }
+  }
+
+  // hide the full set of selection buttons on mobile
+  .select-posts button {
+    display: none;
+  }
+
+  // unhide the simple "select just this post" button
+  button.select-post {
+    display: inline-block;
+  }
+}
+
+@include viewport.from(sm) {
+  .staff {
+    .topic-post:first-child {
+      nav.post-controls .post-admin-menu {
+        bottom: -125px;
+      }
+    }
+  }
+
+  .topic-avatar {
+    border-top: 1px solid var(--content-border-color);
+    padding-top: var(--space-4);
+    width: var(--topic-avatar-width);
+    float: left;
+    z-index: z("base") + 1;
+    height: 100%;
+    overflow-anchor: none;
+  }
+
+  .video {
+    // Height determined by aspect-ratio
+    max-height: 500px;
+
+    > video {
+      max-height: unset;
+    }
+  }
+
+  .post-select {
+    float: right;
+    margin-right: 20px;
+    margin-top: -20px;
+  }
+
+  .info-line {
+    margin: 10px 0;
+    color: var(--primary);
+  }
+
+  .topic-post-visited {
+    + .topic-post {
+      .topic-avatar,
+      .topic-body {
+        border-top: none;
+      }
+    }
+  }
+
+  .topic-area > .loading-container {
+    overflow-anchor: none; // the loading spinner appears/disappears dynamically and must not be used as a scroll anchor
+    // loader needs to be same width as posts
+    // the extra 1px is to account for the left transparent border set to
+    // .topic_post in `keyboard_shortcuts.scss`
+    width: calc(
+      var(--topic-body-width) + var(--topic-avatar-width) +
+        (var(--topic-body-width-padding) * 2) + 1px
+    );
+    max-width: 100%;
+  }
+
+  .caret {
+    display: inline-block;
+    width: 0;
+    height: 0;
+    vertical-align: middle;
+    border-top: 4px solid var(--primary);
+    border-right: 4px solid transparent;
+    border-left: 4px solid transparent;
+    content: "";
+    margin-left: 5px;
+  }
+
+  .topic-post.sticky-avatar {
+    > article > .row > .topic-avatar {
+      position: sticky;
+      top: calc(var(--header-offset) - var(--space-1));
+      margin-bottom: 25px;
+    }
+  }
+
+  a.attachment::before {
+    display: inline-block;
+    margin-right: 4px;
+
+    // ideally, the SVG used here should be in HTML and reference the SVG sprite
+    content: svg-uri(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="14px" height="16px" viewBox="0 0 512 512" fill="#{$tertiary}"><path d="M216 0h80c13.3 0 24 10.7 24 24v168h87.7c17.8 0 26.7 21.5 14.1 34.1L269.7 378.3c-7.5 7.5-19.8 7.5-27.3 0L90.1 226.1c-12.6-12.6-3.7-34.1 14.1-34.1H192V24c0-13.3 10.7-24 24-24zm296 376v112c0 13.3-10.7 24-24 24H24c-13.3 0-24-10.7-24-24V376c0-13.3 10.7-24 24-24h146.7l49 49c20.1 20.1 52.5 20.1 72.6 0l49-49H488c13.3 0 24 10.7 24 24zm-124 88c0-11-9-20-20-20s-20 9-20 20 9 20 20 20 20-9 20-20zm64 0c0-11-9-20-20-20s-20 9-20 20 9 20 20 20 20-9 20-20z"></path></svg>'
+    );
+    vertical-align: middle;
+  }
+
+  /* Tablet (portrait) ----------- */
+
+  @media all and (width <= 790px) {
+    .topic-avatar {
+      width: 45px;
+    }
+
+    .topic-post .reply-to-tab {
+      right: 15%;
+    }
+
+    .topic-body {
+      box-sizing: border-box;
+      width: calc(100% - 47px); // 100% - [width of .topic-avatar + 2px]
+    }
+
+    .embedded-posts {
+      // top means "in reply to expansion" above a post
+      &.top {
+        width: calc(100% - 56px); // [100% - margin-left]
+      }
+    }
   }
 }

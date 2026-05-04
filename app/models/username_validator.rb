@@ -8,42 +8,43 @@ class UsernameValidator
   # field_name - name of the field that we're validating
   #
   # Example: UsernameValidator.perform_validation(user, 'name')
-  def self.perform_validation(object, field_name)
-    validator = UsernameValidator.new(object.public_send(field_name))
+  def self.perform_validation(object, field_name, opts = {})
+    validator = UsernameValidator.new(object.public_send(field_name), object:, **opts)
     unless validator.valid_format?
       validator.errors.each { |e| object.errors.add(field_name.to_sym, e) }
     end
   end
 
-  def initialize(username)
+  def initialize(username, skip_length_validation: false, object: nil)
     @username = username&.unicode_normalize
+    @skip_length_validation = skip_length_validation
+    @object = object
     @errors = []
   end
 
   attr_accessor :errors
   attr_reader :username
-
-  def user
-    @user ||= User.new(user)
-  end
+  attr_reader :object
+  attr_reader :skip_length_validation
 
   def valid_format?
     username_present?
-    username_length_min?
-    username_length_max?
+    username_length_min? if !skip_length_validation
+    username_length_max? if !skip_length_validation
     username_char_valid?
     username_char_allowed?
     username_first_char_valid?
     username_last_char_valid?
     username_no_double_special?
     username_does_not_end_with_confusing_suffix?
+    username_plugin_validation
     errors.empty?
   end
 
-  CONFUSING_EXTENSIONS ||= /\.(js|json|css|htm|html|xml|jpg|jpeg|png|gif|bmp|ico|tif|tiff|woff)\z/i
-  MAX_CHARS ||= 60
+  CONFUSING_EXTENSIONS = /\.(js|json|css|htm|html|xml|jpg|jpeg|png|gif|bmp|ico|tif|tiff|woff)\z/i
+  MAX_CHARS = 60
 
-  ASCII_INVALID_CHAR_PATTERN ||= /[^\w.-]/
+  ASCII_INVALID_CHAR_PATTERN = /[^\w.-]/
   # All Unicode characters except for alphabetic and numeric character, marks and underscores are invalid.
   # In addition to that, the following letters and nonspacing marks are invalid:
   #   (U+034F) Combining Grapheme Joiner
@@ -56,7 +57,7 @@ class UsernameValidator
   #   (U+FFA0) Halfwidth Hangul Filler
   #   (U+FE00 - U+FE0F) "Variation Selectors" block
   #   (U+E0100 - U+E01EF) "Variation Selectors Supplement" block
-  UNICODE_INVALID_CHAR_PATTERN ||=
+  UNICODE_INVALID_CHAR_PATTERN =
     /
       [^\p{Alnum}\p{M}._-]|
       [
@@ -72,9 +73,9 @@ class UsernameValidator
         \p{In Variation Selectors Supplement}
       ]
     /x
-  INVALID_LEADING_CHAR_PATTERN ||= /\A[^\p{Alnum}\p{M}_]+/
-  INVALID_TRAILING_CHAR_PATTERN ||= /[^\p{Alnum}\p{M}]+\z/
-  REPEATED_SPECIAL_CHAR_PATTERN ||= /[-_.]{2,}/
+  INVALID_LEADING_CHAR_PATTERN = /\A[^\p{Alnum}\p{M}_]+/
+  INVALID_TRAILING_CHAR_PATTERN = /[^\p{Alnum}\p{M}]+\z/
+  REPEATED_SPECIAL_CHAR_PATTERN = /[-_.]{2,}/
 
   private
 
@@ -148,6 +149,12 @@ class UsernameValidator
     if CONFUSING_EXTENSIONS.match?(username)
       self.errors << I18n.t(:"user.username.must_not_end_with_confusing_suffix")
     end
+  end
+
+  def username_plugin_validation
+    return unless errors.empty?
+
+    DiscoursePluginRegistry.apply_modifier(:username_validation, self.errors, self)
   end
 
   def username_grapheme_clusters

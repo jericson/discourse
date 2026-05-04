@@ -1,28 +1,13 @@
 .c-navbar-container {
   position: relative;
-  border-bottom: 1px solid var(--primary-low);
+  border-bottom: 1px solid var(--content-border-color);
   background: var(--secondary);
   box-sizing: border-box;
   display: flex;
-  z-index: z("composer", "content") - 1;
-  padding: 0 1rem;
+  padding: 0 0.67em;
 
   &.-clickable {
     cursor: pointer;
-  }
-
-  &.-full-title {
-    .c-navbar__title {
-      min-height: var(--chat-header-offset);
-    }
-
-    .c-navbar__title,
-    .c-navbar__title-text {
-      height: auto;
-      overflow: visible;
-      white-space: normal;
-      text-overflow: unset;
-    }
   }
 }
 
@@ -30,38 +15,91 @@
   display: flex;
   align-items: flex-start;
   width: 100%;
-  gap: 0.25rem;
   position: relative;
+  container-type: inline-size;
+
+  .is-collapsed & {
+    &__title {
+      margin-left: 0 !important;
+    }
+
+    &__toggle-drawer-button {
+      &::after {
+        @container (inline-size) {
+          content: "";
+          position: absolute;
+          height: 100%;
+          left: -1rem;
+          width: calc(100cqw - 2.3em + 1rem);
+        }
+
+        &:hover {
+          color: var(--tertiary-hover);
+
+          .d-icon {
+            color: inherit;
+          }
+        }
+      }
+    }
+  }
 
   .single-select-header {
     padding: 0.3675rem 0.584rem;
-  }
-
-  > .c-navbar__title:first-child {
-    margin-left: 1rem;
   }
 }
 
 .c-navbar__back-button {
   height: var(--chat-header-offset);
+  padding: 0.5rem 0.8rem 0.5rem 0.25rem;
 }
 
 .c-navbar__channel-title {
-  @include ellipsis();
+  @include ellipsis;
   font-weight: 700;
   height: var(--chat-header-offset);
   display: flex;
   align-items: center;
+
+  .chat-channel-title.is-dm .user-status-message {
+    display: inline-flex;
+  }
+
+  .chat-channel-title.is-dm .chat-channel-name__label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+}
+
+.c-navbar__star-channel-button {
+  height: var(--chat-header-offset);
+  color: var(--primary-medium);
+
+  &:hover,
+  &:focus {
+    color: var(--primary);
+  }
+
+  &.--starred {
+    color: var(--tertiary);
+
+    &:hover,
+    &:focus {
+      color: var(--tertiary-hover);
+    }
+  }
 }
 
 .c-navbar__title {
   display: flex;
   align-items: center;
-  @include ellipsis();
+
+  @include ellipsis;
   height: var(--chat-header-offset);
 
   &-text {
-    @include ellipsis();
+    @include ellipsis;
     font-weight: 700;
     max-width: 100%;
     vertical-align: middle;
@@ -99,8 +137,17 @@
   display: flex;
   align-items: center;
   height: var(--chat-header-offset);
+
   .d-icon {
     color: var(--primary-low-mid);
+  }
+
+  .c-navbar__filter {
+    &.active {
+      .d-icon {
+        color: var(--d-button-transparent-text-color--hover);
+      }
+    }
   }
 }
 

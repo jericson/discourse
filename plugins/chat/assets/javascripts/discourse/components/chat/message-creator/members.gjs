@@ -3,16 +3,14 @@ import { Input } from "@ember/component";
 import { on } from "@ember/modifier";
 import { action } from "@ember/object";
 import didInsert from "@ember/render-modifiers/modifiers/did-insert";
-import { eq } from "truth-helpers";
-import icon from "discourse-common/helpers/d-icon";
-import I18n from "discourse-i18n";
+import icon from "discourse/helpers/d-icon";
+import { eq } from "discourse/truth-helpers";
+import { i18n } from "discourse-i18n";
 import { getNext, getPrevious } from "./lib/iterate-list";
 import Member from "./member";
 
 export default class Members extends Component {
-  addMoreMembersLabel = I18n.t(
-    "chat.new_message_modal.user_search_placeholder"
-  );
+  addMoreMembersLabel = i18n("chat.new_message_modal.user_search_placeholder");
 
   @action
   onFilter() {
@@ -31,7 +29,7 @@ export default class Members extends Component {
       event.stopPropagation();
 
       if (!this.args.highlightedMember) {
-        this.args.onHighlightMember(this.args.members.lastObject);
+        this.args.onHighlightMember(this.args.members.at(-1));
       } else {
         this.args.onSelectMember(this.args.highlightedMember);
       }
@@ -75,7 +73,7 @@ export default class Members extends Component {
   <template>
     <div class="chat-message-creator__members-container">
       <div class="chat-message-creator__members">
-        {{icon "search"}}
+        {{icon "magnifying-glass"}}
 
         {{#each @members as |member|}}
           <Member

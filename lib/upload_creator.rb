@@ -3,9 +3,9 @@
 require "fastimage"
 
 class UploadCreator
-  TYPES_TO_CROP ||= %w[avatar card_background custom_emoji profile_background].each(&:freeze)
+  TYPES_TO_CROP = %w[avatar card_background custom_emoji profile_background].each(&:freeze)
 
-  ALLOWED_SVG_ELEMENTS ||= %w[
+  ALLOWED_SVG_ELEMENTS = %w[
     circle
     clipPath
     defs
@@ -64,7 +64,9 @@ class UploadCreator
 
     @image_info =
       begin
-        FastImage.new(@file)
+        image = FastImage.new(@file)
+        image.type # eager load to rescue errors early
+        image
       rescue StandardError
         nil
       end
@@ -175,7 +177,7 @@ class UploadCreator
         )
       @upload.original_sha1 = SiteSetting.secure_uploads? ? sha1 : nil
       @upload.url = ""
-      @upload.origin = @opts[:origin][0...1000] if @opts[:origin]
+      @upload.origin = @opts[:origin][0...2000] if @opts[:origin]
       @upload.extension = image_type || File.extname(@filename)[1..10]
 
       if is_image && !external_upload_too_big
@@ -289,7 +291,9 @@ class UploadCreator
   def extract_image_info!
     @image_info =
       begin
-        FastImage.new(@file)
+        image = FastImage.new(@file)
+        image.type # eager load to rescue errors early
+        image
       rescue StandardError
         nil
       end
@@ -307,17 +311,18 @@ class UploadCreator
         I18n.t(
           "upload.images.larger_than_x_megapixels",
           max_image_megapixels: SiteSetting.max_image_megapixels,
+          original_filename: @upload.original_filename,
         ),
       )
     end
   end
 
-  MIN_PIXELS_TO_CONVERT_TO_JPEG ||= 1280 * 720
+  MIN_PIXELS_TO_CONVERT_TO_JPEG = 1280 * 720
 
   def convert_png_to_jpeg?
     return false unless @image_info.type == :png
     return true if @opts[:pasted]
-    return false if SiteSetting.png_to_jpg_quality == 100
+    return false if SiteSetting.ImageQuality.png_to_jpg_quality == 100
     pixels > MIN_PIXELS_TO_CONVERT_TO_JPEG
   end
 
@@ -366,10 +371,12 @@ class UploadCreator
     to = OptimizedImage.prepend_decoder!(to)
 
     opts = {}
+
     desired_quality = [
-      SiteSetting.png_to_jpg_quality,
-      SiteSetting.recompress_original_jpg_quality,
+      SiteSetting.ImageQuality.png_to_jpg_quality,
+      SiteSetting.ImageQuality.recompress_original_jpg_quality,
     ].compact.min
+
     target_quality = @upload.target_image_quality(from, desired_quality)
     opts = { quality: target_quality } if target_quality
 
@@ -418,7 +425,7 @@ class UploadCreator
 
   MAX_CONVERT_FORMAT_SECONDS = 20
   def execute_convert(from, to, opts = {})
-    command = ["convert", from, "-auto-orient", "-background", "white", "-interlace", "none"]
+    command = ["magick", from, "-auto-orient", "-background", "white", "-interlace", "none"]
     command << "-flatten" unless opts[:flatten] == false
     command << "-debug" << "all" if opts[:debug]
     command << "-quality" << opts[:quality].to_s if opts[:quality]
@@ -437,11 +444,12 @@ class UploadCreator
     desired_quality =
       (
         if @image_info.type == :png
-          SiteSetting.png_to_jpg_quality
+          SiteSetting.ImageQuality.png_to_jpg_quality
         else
-          SiteSetting.recompress_original_jpg_quality
+          SiteSetting.ImageQuality.recompress_original_jpg_quality
         end
       )
+
     @upload.target_image_quality(@file.path, desired_quality).present?
   end
 
@@ -479,6 +487,7 @@ class UploadCreator
         I18n.t(
           "upload.images.larger_than_x_megapixels",
           max_image_megapixels: SiteSetting.max_image_megapixels,
+          original_filename: @upload.original_filename,
         ),
       )
       true
@@ -508,6 +517,7 @@ class UploadCreator
         end
         use_el.remove_attribute("xlink:href")
       end
+
     File.write(@file.path, doc.to_s)
     @file.rewind
   end
@@ -526,7 +536,7 @@ class UploadCreator
     path = OptimizedImage.prepend_decoder!(path, nil, filename: "image.#{@image_info.type}")
 
     Discourse::Utils.execute_command(
-      "convert",
+      "magick",
       path,
       "-auto-orient",
       path,
@@ -643,6 +653,7 @@ class UploadCreator
     @upload.for_theme = true if @opts[:for_theme]
     @upload.for_export = true if @opts[:for_export]
     @upload.for_site_setting = true if @opts[:for_site_setting]
+    @upload.site_setting_name = @opts[:site_setting_name] if @opts[:site_setting_name]
     @upload.for_gravatar = true if @opts[:for_gravatar]
   end
 

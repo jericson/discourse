@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-describe "JS Deprecation Handling", type: :system do
+describe "JS Deprecation Handling" do
   it "can successfully print a deprecation message after applying production-mode shims" do
     visit("/latest")
     expect(find("#main-outlet-wrapper")).to be_visible
@@ -11,25 +11,21 @@ describe "JS Deprecation Handling", type: :system do
       console.warn = (msg) => window.intercepted_warnings.push([msg, (new Error()).stack])
     JS
 
-    # Apply deprecate shims. These are applied automatically in production
-    # builds, but running a full production build for system specs would be
-    # too slow
-    page.execute_script <<~JS
-      require("discourse/lib/deprecate-shim").applyShim();
-    JS
-
-    # Trigger a deprecation, then return the console.warn calls
-    warn_calls = page.execute_script <<~JS
-      const { deprecate } = require('@ember/debug');
-      deprecate("Some message", false, { id: "some.id" })
-      return window.intercepted_warnings
-    JS
+    warn_calls = nil
+    page.driver.with_playwright_page do |playwright_page|
+      warn_calls = playwright_page.evaluate <<~JS
+        () => {
+          const { deprecate } = require('@ember/debug');
+          deprecate("Some message", false, { id: "fake.deprecation", for: "discourse", since: "3.4.0", until: "3.5.0" });
+          return window.intercepted_warnings;
+        }
+      JS
+    end
 
     expect(warn_calls.size).to eq(1)
     call, backtrace = warn_calls[0]
 
-    expect(call).to eq("DEPRECATION: Some message [deprecation id: some.id]")
-    expect(backtrace).to include("shimLogDeprecationToConsole")
+    expect(call).to start_with("DEPRECATION: Some message [deprecation id: fake.deprecation]")
   end
 
   it "shows warnings to admins for critical deprecations" do
@@ -42,14 +38,67 @@ describe "JS Deprecation Handling", type: :system do
     visit("/latest")
 
     page.execute_script <<~JS
-      const deprecated = require("discourse-common/lib/deprecated").default;
-      deprecated("Fake deprecation message", { id: "fake-deprecation" })
+      const deprecated = require("discourse/lib/deprecated").default;
+      deprecated("Fake deprecation message", { id: "fake.deprecation1" })
+      deprecated("Other fake deprecation message", { id: "fake.deprecation2" })
     JS
 
-    message = find("#global-notice-critical-deprecation")
-    expect(message).to have_text(
-      "One of your themes or plugins needs updating for compatibility with upcoming Discourse core changes",
-    )
+    message = find("#global-notice-critical-deprecation--fake-deprecation1")
+    expect(message).to have_text("One of your themes or plugins contains code which needs updating")
+    expect(message).to have_text("fake.deprecation1")
     expect(message).to have_text(SiteSetting.warn_critical_js_deprecations_message)
+
+    message = find("#global-notice-critical-deprecation--fake-deprecation2")
+    expect(message).to have_text("One of your themes or plugins contains code which needs updating")
+    expect(message).to have_text("fake.deprecation2")
+    expect(message).to have_text(SiteSetting.warn_critical_js_deprecations_message)
+  end
+
+  it "emits ember-this-fallback deprecation for theme .hbs connectors using property fallback" do
+    t = Fabricate(:theme, name: "Theme With Hbs Connector")
+    t.set_field(
+      target: :extra_js,
+      name: "discourse/connectors/below-footer/my-connector.hbs",
+      value: "{{someProperty}}",
+    )
+    t.save!
+    SiteSetting.default_theme_id = t.id
+
+    visit "/latest"
+    expect(find("#main-outlet-wrapper")).to be_visible
+
+    try_until_success do
+      expect(
+        $playwright_logger.logs.any? do |log|
+          log[:message].include?("ember-this-fallback.this-property-fallback")
+        end,
+      ).to eq(true)
+    end
+  end
+
+  it "can show warnings triggered during initial render" do
+    sign_in Fabricate(:admin)
+
+    t = Fabricate(:theme, name: "Theme With Tests")
+    t.set_field(
+      target: :extra_js,
+      type: :js,
+      name: "discourse/connectors/below-footer/my-connector.gjs",
+      value: <<~JS,
+        import deprecated from "discourse/lib/deprecated";
+        function triggerDeprecation(){
+          deprecated("Fake deprecation message", { id: "fake.deprecation" })
+        }
+        export default <template>
+          {{triggerDeprecation}}
+        </template>
+      JS
+    )
+    t.save!
+    SiteSetting.default_theme_id = t.id
+
+    visit "/latest"
+
+    expect(page).to have_css("#global-notice-critical-deprecation--fake-deprecation")
   end
 end

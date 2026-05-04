@@ -1,38 +1,25 @@
 # frozen_string_literal: true
 
 RSpec.describe Chat::CreateCategoryChannel do
-  describe Chat::CreateCategoryChannel::Contract, type: :model do
+  describe described_class::Contract, type: :model do
     it { is_expected.to validate_presence_of :category_id }
     it { is_expected.to validate_length_of(:name).is_at_most(SiteSetting.max_topic_title_length) }
   end
 
   describe ".call" do
-    subject(:result) { described_class.call(params) }
+    subject(:result) { described_class.call(params:, **dependencies) }
 
-    fab!(:current_user) { Fabricate(:admin) }
+    fab!(:current_user, :admin)
     fab!(:category)
     let(:category_id) { category.id }
 
+    let(:name) { "cool channel" }
     let(:guardian) { Guardian.new(current_user) }
-    let(:params) { { guardian: guardian, category_id: category_id, name: "cool channel" } }
-
-    it "can create several channels with empty slugs" do
-      SiteSetting.slug_generation_method = "none"
-      expect do
-        described_class.call(params.merge(name: "channel 1", slug: nil))
-      end.not_to raise_error
-      expect do
-        described_class.call(params.merge(name: "channel 2", slug: nil))
-      end.not_to raise_error
-    end
-
-    it "can create several channels with unicode names" do
-      expect do described_class.call(params.merge(name: "マイキ")) end.not_to raise_error
-      expect do described_class.call(params.merge(name: "境界")) end.not_to raise_error
-    end
+    let(:params) { { category_id:, name: name } }
+    let(:dependencies) { { guardian: } }
 
     context "when public channels are disabled" do
-      fab!(:current_user) { Fabricate(:user) }
+      fab!(:current_user, :user)
 
       before { SiteSetting.enable_public_channels = false }
 
@@ -40,7 +27,7 @@ RSpec.describe Chat::CreateCategoryChannel do
     end
 
     context "when the current user cannot make a channel" do
-      fab!(:current_user) { Fabricate(:user) }
+      fab!(:current_user, :user)
 
       it { is_expected.to fail_a_policy(:can_create_channel) }
     end
@@ -60,11 +47,13 @@ RSpec.describe Chat::CreateCategoryChannel do
       end
 
       context "when all steps pass" do
+        it { is_expected.to run_successfully }
+
         it "creates the channel" do
           expect { result }.to change { Chat::Channel.count }.by(1)
           expect(result.channel).to have_attributes(
             chatable: category,
-            name: "cool channel",
+            name: name,
             slug: "cool-channel",
           )
         end
@@ -79,10 +68,7 @@ RSpec.describe Chat::CreateCategoryChannel do
         end
 
         it "does not enforce automatic memberships" do
-          Chat::ChannelMembershipManager
-            .any_instance
-            .expects(:enforce_automatic_channel_memberships)
-            .never
+          Chat::AutoJoinChannels.expects(:call).never
           result
         end
 
@@ -97,10 +83,7 @@ RSpec.describe Chat::CreateCategoryChannel do
           let(:params) { { guardian: guardian, category_id: category_id, auto_join_users: "" } }
 
           it "defaults to false" do
-            Chat::ChannelMembershipManager
-              .any_instance
-              .expects(:enforce_automatic_channel_memberships)
-              .never
+            Chat::AutoJoinChannels.expects(:call).never
             result
           end
         end
@@ -109,10 +92,7 @@ RSpec.describe Chat::CreateCategoryChannel do
           let(:params) { { guardian: guardian, category_id: category_id, auto_join_users: "true" } }
 
           it "enforces automatic memberships" do
-            Chat::ChannelMembershipManager
-              .any_instance
-              .expects(:enforce_automatic_channel_memberships)
-              .once
+            Chat::AutoJoinChannels.expects(:call).once
             result
           end
         end
@@ -136,6 +116,22 @@ RSpec.describe Chat::CreateCategoryChannel do
             it "sets threading_enabled to false" do
               params[:threading_enabled] = false
               expect(result.channel.threading_enabled).to eq(false)
+            end
+          end
+        end
+
+        describe "emoji" do
+          context "when selected" do
+            it "sets emoji" do
+              params[:emoji] = ":smile:"
+              expect(result.channel.emoji).to eq(":smile:")
+            end
+          end
+
+          context "when blank" do
+            it "sets emoji to nil" do
+              params[:emoji] = nil
+              expect(result.channel.emoji).to eq(nil)
             end
           end
         end

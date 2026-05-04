@@ -3,19 +3,24 @@
 require "base64"
 
 class ThemeSerializer < BasicThemeSerializer
-  attributes :color_scheme,
-             :color_scheme_id,
+  attributes :color_scheme_id,
+             :dark_color_scheme_id,
              :user_selectable,
              :auto_update,
              :remote_theme_id,
              :settings,
+             :themeable_site_settings,
              :errors,
              :supported?,
-             :description,
              :enabled?,
              :disabled_at,
-             :theme_fields
+             :theme_fields,
+             :screenshot_dark_url,
+             :screenshot_light_url,
+             :system,
+             :only_theme_color_schemes
 
+  has_one :color_scheme, serializer: ColorSchemeSerializer, embed: :object
   has_one :user, serializer: UserNameSerializer, embed: :object
   has_one :disabled_by, serializer: UserNameSerializer, embed: :object
 
@@ -64,6 +69,20 @@ class ThemeSerializer < BasicThemeSerializer
     nil
   end
 
+  # Components always return an empty array here
+  def themeable_site_settings
+    # UI for editing settings always expects the value + default to be a string
+    # to compare whether the setting has been changed or not.
+    object.themeable_site_settings.each do |tss|
+      tss[:default] = tss[:default].to_s
+      tss[:value] = tss[:value].to_s
+    end
+  end
+
+  def include_themeable_site_settings?
+    !object.component?
+  end
+
   def include_child_themes?
     !object.component?
   end
@@ -76,15 +95,19 @@ class ThemeSerializer < BasicThemeSerializer
     @errors.present?
   end
 
-  def description
-    object.internal_translations.find { |t| t.key == "theme_metadata.description" }&.value
-  end
-
   def include_disabled_at?
     object.component? && !object.enabled?
   end
 
   def include_disabled_by?
     include_disabled_at?
+  end
+
+  def system
+    object.system?
+  end
+
+  def only_theme_color_schemes
+    object.theme_modifier_set&.only_theme_color_schemes || false
   end
 end

@@ -56,6 +56,8 @@ gl:
         breakdown: "Detalle"
         percentage: "Porcentaxe"
         count: "Conta"
+      ranked_choice:
+        none: "Ningunha"
       options:
         label: "Opcións"
       error_while_toggling_status: "Desculpe, produciuse un erro ao trocar o status desta enquisa."
@@ -63,7 +65,6 @@ gl:
       error_while_fetching_voters: "Desculpe, produciuse un erro ao presentar os votantes."
       error_while_exporting_results: "Desculpe, produciuse un erro ao exportar os resultados da enquisa."
       ui_builder:
-        title: Construír a enquisa
         insert: Inserir enquisa
         help:
           options_min_count: Introducir cando menos 1 opción.

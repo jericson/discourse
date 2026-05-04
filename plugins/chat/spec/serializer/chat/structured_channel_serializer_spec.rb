@@ -1,12 +1,11 @@
 # frozen_string_literal: true
 
 RSpec.describe Chat::StructuredChannelSerializer do
-  fab!(:user1) { Fabricate(:user) }
-  fab!(:guardian) { Guardian.new(user1) }
-  fab!(:user2) { Fabricate(:user) }
-  fab!(:user3) { Fabricate(:user) }
-  fab!(:channel1) { Fabricate(:category_channel) }
-  fab!(:channel2) { Fabricate(:category_channel) }
+  fab!(:user1, :user)
+  fab!(:user2, :user)
+  fab!(:user3, :user)
+  fab!(:channel1, :category_channel)
+  fab!(:channel2, :category_channel)
   fab!(:channel3) do
     Fabricate(:direct_message_channel, users: [user1, user2], with_membership: false)
   end
@@ -32,6 +31,8 @@ RSpec.describe Chat::StructuredChannelSerializer do
     Fabricate(:user_chat_channel_membership_for_dm, user: user3, chat_channel: channel4)
   end
 
+  let(:guardian) { Guardian.new(user1) }
+
   def fetch_data
     Chat::ChannelFetcher.structured(guardian)
   end
@@ -46,10 +47,9 @@ RSpec.describe Chat::StructuredChannelSerializer do
         .as_json,
     ).to include(
       "chat_channel_id" => channel1.id,
-      "desktop_notification_level" => "mention",
+      "notification_level" => "mention",
       "following" => true,
       "last_read_message_id" => nil,
-      "mobile_notification_level" => "mention",
       "muted" => false,
     )
   end
@@ -64,10 +64,9 @@ RSpec.describe Chat::StructuredChannelSerializer do
         .as_json,
     ).to include(
       "chat_channel_id" => channel3.id,
-      "desktop_notification_level" => "always",
+      "notification_level" => "always",
       "following" => true,
       "last_read_message_id" => nil,
-      "mobile_notification_level" => "always",
       "muted" => false,
     )
   end
@@ -128,6 +127,7 @@ RSpec.describe Chat::StructuredChannelSerializer do
             new_channel
             archive_status
             user_tracking_state
+            user_has_threads
           ],
         )
       end
@@ -143,6 +143,7 @@ RSpec.describe Chat::StructuredChannelSerializer do
               Chat::Publisher::NEW_CHANNEL_MESSAGE_BUS_CHANNEL,
               Chat::Publisher::CHANNEL_ARCHIVE_STATUS_MESSAGE_BUS_CHANNEL,
               Chat::Publisher.user_tracking_state_message_bus_channel(user1.id),
+              Chat::Publisher.user_has_threads_message_bus_channel(user1.id),
               Chat::Publisher.new_messages_message_bus_channel(channel1.id),
               Chat::Publisher.new_mentions_message_bus_channel(channel1.id),
               Chat::Publisher.kick_users_message_bus_channel(channel1.id),

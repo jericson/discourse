@@ -1,21 +1,18 @@
+@use "lib/viewport";
+
 .select-kit {
   &.single-select {
     &.dropdown-select-box {
       display: inline-flex;
       min-width: auto;
       border: none;
-
-      &.is-expanded {
-        .select-kit-collection,
-        .select-kit-body {
-          border-radius: 0;
-        }
-      }
+      white-space: nowrap;
 
       .select-kit-body {
-        border: 1px solid var(--primary-low);
+        border: 1px solid var(--content-border-color);
         background-clip: padding-box;
         box-shadow: var(--shadow-dropdown);
+        border-radius: var(--d-border-radius);
       }
 
       .select-kit-row {
@@ -48,8 +45,13 @@
             font-size: var(--font-0);
             color: var(--primary);
             padding: 0;
-            @include ellipsis;
             max-width: 100%;
+
+            @include ellipsis;
+
+            @include viewport.until(sm) {
+              font-weight: normal;
+            }
           }
 
           .desc {
@@ -60,11 +62,22 @@
             white-space: normal;
           }
         }
+
+        @include viewport.until(sm) {
+          .svg-icon-title {
+            width: auto;
+            height: auto;
+          }
+        }
       }
 
       .select-kit-collection {
         padding: 0;
         max-height: 100%;
+
+        @include viewport.until(sm) {
+          overflow-y: auto;
+        }
       }
 
       .select-kit-header {
@@ -72,6 +85,7 @@
         align-items: center;
         justify-content: space-between;
         flex-direction: row;
+        border-radius: var(--d-button-border-radius);
 
         .d-icon + .d-icon {
           margin-left: 0.25em;
@@ -84,10 +98,12 @@
       }
     }
   }
+
   &.user-notifications-dropdown {
     .select-kit-header .d-icon {
       margin-left: 0;
     }
+
     .select-kit-header-wrapper {
       justify-content: center;
     }

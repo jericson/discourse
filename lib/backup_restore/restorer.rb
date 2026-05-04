@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "colored2"
+
 module BackupRestore
   RestoreDisabledError = Class.new(RuntimeError)
   FilenameMissingError = Class.new(RuntimeError)
@@ -9,12 +11,20 @@ module BackupRestore
 
     attr_reader :success
 
-    def initialize(user_id:, filename:, factory:, disable_emails: true, location: nil)
+    def initialize(
+      user_id:,
+      filename:,
+      factory:,
+      disable_emails: true,
+      location: nil,
+      interactive: false
+    )
       @user_id = user_id
       @filename = filename
       @factory = factory
       @logger = factory.logger
       @disable_emails = disable_emails
+      @interactive = interactive
 
       ensure_restore_is_enabled
       ensure_we_have_a_user
@@ -39,7 +49,7 @@ module BackupRestore
 
       @system.listen_for_shutdown_signal
 
-      @tmp_directory, db_dump_path = @backup_file_handler.decompress
+      @filename, @tmp_directory, db_dump_path = @backup_file_handler.decompress
       validate_backup_metadata
 
       @system.enable_readonly_mode
@@ -48,9 +58,10 @@ module BackupRestore
       @system.flush_redis
       @system.clear_sidekiq_queues
 
-      @database_restorer.restore(db_dump_path)
+      @database_restorer.restore(db_dump_path, @interactive)
 
       reload_site_settings
+      run_seed_fu
 
       @system.disable_readonly_mode
 
@@ -58,7 +69,7 @@ module BackupRestore
       clear_stats
       reload_translations
 
-      @uploads_restorer.restore(@tmp_directory)
+      restore_uploads
 
       clear_emoji_cache
       clear_theme_cache
@@ -125,6 +136,17 @@ module BackupRestore
       end
     end
 
+    def run_seed_fu
+      log "Running seed fu..."
+
+      begin
+        Discourse::Application.load_tasks
+        Rake::Task["db:seed"].invoke
+      rescue => ex
+        log "Failed to run seed fu", ex
+      end
+    end
+
     def clear_category_cache
       log "Clearing category cache..."
       Category.reset_topic_ids_cache
@@ -143,13 +165,29 @@ module BackupRestore
       TranslationOverride.reload_all_overrides!
     end
 
+    def restore_uploads
+      if @interactive
+        puts ""
+        puts "Attention! Pausing restore before uploads.".red.bold
+        puts "You can work on the restored database in a separate Rails console."
+        puts ""
+        puts "Press any key to continue with the restore.".bold
+        puts ""
+        STDIN.getch
+      end
+
+      @uploads_restorer.restore(@tmp_directory)
+    end
+
     def notify_user
+      return if @success && @user_id == Discourse::SYSTEM_USER_ID
+
       if user = User.find_by_email(@user_info[:email])
         log "Notifying '#{user.username}' of the end of the restore..."
         status = @success ? :restore_succeeded : :restore_failed
 
         logs = Discourse::Utils.logs_markdown(@logger.logs, user: user)
-        post = SystemMessage.create_from_system_user(user, status, logs: logs)
+        SystemMessage.create_from_system_user(user, status, logs: logs)
       else
         log "Could not send notification to '#{@user_info[:username]}' " \
               "(#{@user_info[:email]}), because the user does not exist."

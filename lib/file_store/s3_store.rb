@@ -8,7 +8,7 @@ require "file_helper"
 
 module FileStore
   class S3Store < BaseStore
-    TOMBSTONE_PREFIX ||= "tombstone/"
+    TOMBSTONE_PREFIX = "tombstone/"
 
     delegate :abort_multipart,
              :presign_multipart_part,
@@ -39,7 +39,8 @@ module FileStore
           filename: upload.original_filename,
           content_type: content_type,
           cache_locally: true,
-          private_acl: upload.secure?,
+          private: upload.secure?,
+          upload_id: upload.id,
         )
       url
     end
@@ -54,7 +55,7 @@ module FileStore
           filename: upload.original_filename,
           content_type: content_type,
           cache_locally: false,
-          private_acl: upload.secure?,
+          private: upload.secure?,
           move_existing: true,
           existing_external_upload_key: existing_external_upload_key,
         )
@@ -65,7 +66,7 @@ module FileStore
       optimized_image.url = nil
       path = get_path_for_optimized_image(optimized_image)
       url, optimized_image.etag =
-        store_file(file, path, content_type: content_type, private_acl: secure)
+        store_file(file, path, content_type: content_type, private: secure)
       url
     end
 
@@ -80,6 +81,7 @@ module FileStore
     #   - content_type
     #   - cache_locally
     #   - move_existing
+    #   - private
     #   - existing_external_upload_key
     def store_file(file, path, opts = {})
       path = path.dup
@@ -87,24 +89,23 @@ module FileStore
       filename = opts[:filename].presence || File.basename(path)
       # cache file locally when needed
       cache_file(file, File.basename(path)) if opts[:cache_locally]
+
+      cache_control = "max-age=#{SiteSetting.s3_max_age}, public, immutable"
+      if SiteSetting.s3_stale_while_revalidate != SiteSetting.defaults[:s3_stale_while_revalidate]
+        cache_control =
+          "#{cache_control}, stale-while-revalidate=#{SiteSetting.s3_stale_while_revalidate}"
+      end
+
       options = {
-        acl: SiteSetting.s3_use_acls ? (opts[:private_acl] ? "private" : "public-read") : nil,
-        cache_control: "max-age=31556952, public, immutable",
+        cache_control: cache_control,
         content_type:
           opts[:content_type].presence || MiniMime.lookup_by_filename(filename)&.content_type,
-      }
+      }.merge(default_s3_options(secure: opts[:private]))
 
-      # add a "content disposition: attachment" header with the original
-      # filename for everything but safe images (not SVG). audio and video will
-      # still stream correctly in HTML players, and when a direct link is
-      # provided to any file but an image it will download correctly in the
-      # browser.
-      if !FileHelper.is_inline_image?(filename)
-        options[:content_disposition] = ActionDispatch::Http::ContentDisposition.format(
-          disposition: "attachment",
-          filename: filename,
-        )
-      end
+      # Only serve inline for allowlisted safe file types (non-SVG images and PDFs)
+      # to prevent XSS via HTML/XML/SVG uploads. All other files force download.
+      # See https://github.com/discourse/discourse/commit/31e31ef44973dc4daaee2f010d71588ea5873b53
+      options[:content_disposition] = self.class.content_disposition_for(filename)
 
       path.prepend(File.join(upload_path, "/")) if Rails.configuration.multisite
 
@@ -134,9 +135,8 @@ module FileStore
       s3_helper.remove(path, true)
     end
 
-    def copy_file(url, source, destination)
-      return unless has_been_uploaded?(url)
-      s3_helper.copy(source, destination)
+    def copy_file(source:, destination:, secure:)
+      s3_helper.copy(source, destination, options: default_s3_options(secure:))
     end
 
     def has_been_uploaded?(url)
@@ -190,11 +190,7 @@ module FileStore
     end
 
     def s3_upload_host
-      if SiteSetting.Upload.s3_cdn_url.present?
-        SiteSetting.Upload.s3_cdn_url
-      else
-        "https:#{absolute_base_url}"
-      end
+      SiteSetting.Upload.s3_cdn_url.presence || "https:#{absolute_base_url}"
     end
 
     def external?
@@ -246,10 +242,18 @@ module FileStore
     def signed_url_for_path(
       path,
       expires_in: SiteSetting.s3_presigned_get_url_expires_after_seconds,
-      force_download: false
+      force_download: false,
+      filename: nil,
+      include_content_disposition:
     )
       key = path.sub(absolute_base_url + "/", "")
-      presigned_get_url(key, expires_in: expires_in, force_download: force_download)
+
+      presigned_get_url(
+        key,
+        expires_in:,
+        force_download:,
+        filename: include_content_disposition ? (filename || File.basename(path)) : nil,
+      )
     end
 
     def signed_request_for_temporary_upload(
@@ -258,14 +262,12 @@ module FileStore
       metadata: {}
     )
       key = temporary_upload_path(file_name)
+
       s3_helper.presigned_request(
         key,
         method: :put_object,
         expires_in: expires_in,
-        opts: {
-          metadata: metadata,
-          acl: SiteSetting.s3_use_acls ? "private" : nil,
-        },
+        opts: { metadata: metadata }.merge(default_s3_options(secure: true)),
       )
     end
 
@@ -298,7 +300,13 @@ module FileStore
 
     def list_missing_uploads(skip_optimized: false)
       if s3_inventory_bucket = SiteSetting.s3_inventory_bucket
-        S3Inventory.new(:upload, s3_inventory_bucket:).backfill_etags_and_list_missing
+        s3_options = {}
+
+        if (s3_inventory_bucket_region = SiteSetting.s3_inventory_bucket_region).present?
+          s3_options[:region] = s3_inventory_bucket_region
+        end
+
+        S3Inventory.new(:upload, s3_inventory_bucket:, s3_options:).backfill_etags_and_list_missing
 
         unless skip_optimized
           S3Inventory.new(:optimized, s3_inventory_bucket:).backfill_etags_and_list_missing
@@ -309,31 +317,33 @@ module FileStore
       end
     end
 
-    def update_upload_ACL(upload, optimized_images_preloaded: false)
+    def update_upload_access_control(upload, remove_existing_acl: false)
       key = get_upload_key(upload)
-      update_ACL(key, upload.secure?)
+      update_access_control(key, upload.secure?, remove_existing_acl:)
 
-      # If we do find_each when the images have already been preloaded with
-      # includes(:optimized_images), then the optimized_images are fetched
-      # from the database again, negating the preloading if this operation
-      # is done on a large amount of uploads at once (see Jobs::SyncAclsForUploads)
-      if optimized_images_preloaded
-        upload.optimized_images.each do |optimized_image|
-          update_optimized_image_acl(optimized_image, secure: upload.secure)
-        end
-      else
-        upload.optimized_images.find_each do |optimized_image|
-          update_optimized_image_acl(optimized_image, secure: upload.secure)
-        end
+      upload.optimized_images.each do |optimized_image|
+        update_optimized_image_access_control(
+          optimized_image,
+          secure: upload.secure,
+          remove_existing_acl:,
+        )
       end
 
       true
     end
 
-    def update_optimized_image_acl(optimized_image, secure: false)
+    def update_optimized_image_access_control(
+      optimized_image,
+      secure: false,
+      remove_existing_acl: false
+    )
       optimized_image_key = get_path_for_optimized_image(optimized_image)
       optimized_image_key.prepend(File.join(upload_path, "/")) if Rails.configuration.multisite
-      update_ACL(optimized_image_key, secure)
+      update_access_control(optimized_image_key, secure, remove_existing_acl:)
+    end
+
+    def update_file_access_control(file_path, secure, remove_existing_acl: false)
+      update_access_control(file_path, secure, remove_existing_acl:)
     end
 
     def download_file(upload, destination_path)
@@ -367,7 +377,96 @@ module FileStore
 
     def create_multipart(file_name, content_type, metadata: {})
       key = temporary_upload_path(file_name)
-      s3_helper.create_multipart(key, content_type, metadata: metadata)
+      s3_helper.create_multipart(key, content_type, metadata:, **default_s3_options(secure: true))
+    end
+
+    # The following are canned ACLs defined by AWS S3 and not some generic value which we decide to use.
+    # https://docs.aws.amazon.com/AmazonS3/latest/userguide/acl-overview.html
+    CANNED_ACL_PUBLIC_READ = "public-read"
+    CANNED_ACL_PRIVATE = "private"
+
+    def self.acl_option_value(secure:)
+      return if !SiteSetting.s3_use_acls
+      secure ? CANNED_ACL_PRIVATE : CANNED_ACL_PUBLIC_READ
+    end
+
+    def acl_option_value(secure:)
+      self.class.acl_option_value(secure:)
+    end
+
+    def self.visibility_tagging_option_value(secure:, encode_form: true)
+      return if !SiteSetting.s3_enable_access_control_tags
+
+      key = SiteSetting.s3_access_control_tag_key
+      return if key.blank?
+
+      option_value = {
+        key =>
+          (
+            if secure
+              SiteSetting.s3_access_control_tag_private_value
+            else
+              SiteSetting.s3_access_control_tag_public_value
+            end
+          ),
+      }
+
+      encode_form ? URI.encode_www_form(option_value) : option_value
+    end
+
+    def self.default_s3_options(secure:)
+      options = {}
+
+      if acl_value = acl_option_value(secure:)
+        options[:acl] = acl_value
+      end
+
+      if tagging_option_value = visibility_tagging_option_value(secure:)
+        options[:tagging] = tagging_option_value
+      end
+
+      options
+    end
+
+    def default_s3_options(secure:)
+      self.class.default_s3_options(secure:)
+    end
+
+    # S3 limits total request header/metadata size to 2 KB. Content-Disposition
+    # includes the filename twice (filename= and filename*=UTF-8''), so we
+    # limit the full header to 1600 bytes to stay within that budget.
+    MAX_CONTENT_DISPOSITION_BYTES = 1_600
+
+    def self.content_disposition_for(filename, disposition: nil)
+      disposition ||= FileHelper.is_inline_safe?(filename) ? "inline" : "attachment"
+      return "" if filename.blank?
+
+      header = ActionDispatch::Http::ContentDisposition.format(disposition:, filename:)
+      return header if header.bytesize <= MAX_CONTENT_DISPOSITION_BYTES
+
+      extension = File.extname(filename)
+      basename = File.basename(filename, extension)
+
+      # Binary search for the longest basename that fits within the limit
+      low = 1
+      high = basename.length
+
+      while low < high
+        mid = (low + high + 1) / 2
+        candidate = "#{basename[0...mid]}#{extension}"
+        test_header =
+          ActionDispatch::Http::ContentDisposition.format(disposition:, filename: candidate)
+        if test_header.bytesize <= MAX_CONTENT_DISPOSITION_BYTES
+          low = mid
+        else
+          high = mid - 1
+        end
+      end
+
+      ActionDispatch::Http::ContentDisposition.format(
+        disposition:,
+        filename: "#{basename[0...low]}#{extension}",
+      )
     end
 
     private
@@ -380,10 +479,12 @@ module FileStore
     )
       opts = { expires_in: expires_in }
 
-      if force_download && filename
+      if filename
+        disposition =
+          (force_download || !FileHelper.is_inline_safe?(filename)) ? "attachment" : "inline"
         opts[:response_content_disposition] = ActionDispatch::Http::ContentDisposition.format(
-          disposition: "attachment",
-          filename: filename,
+          disposition:,
+          filename:,
         )
       end
 
@@ -399,14 +500,32 @@ module FileStore
       end
     end
 
-    def update_ACL(key, secure)
-      begin
-        object_from_path(key).acl.put(
-          acl: SiteSetting.s3_use_acls ? (secure ? "private" : "public-read") : nil,
-        )
-      rescue Aws::S3::Errors::NoSuchKey
-        Rails.logger.warn("Could not update ACL on upload with key: '#{key}'. Upload is missing.")
+    def update_access_control(key, secure, remove_existing_acl: false)
+      acl = self.class.acl_option_value(secure:)
+
+      if acl.present? || remove_existing_acl
+        begin
+          object_from_path(key).acl.put(acl:)
+        rescue Aws::S3::Errors::NotImplemented => err
+          Discourse.warn_exception(
+            err,
+            message: "The file store object storage provider does not support setting ACLs",
+          )
+        end
       end
+
+      if tagging_option_value =
+           self.class.visibility_tagging_option_value(secure:, encode_form: false)
+        s3_helper.upsert_tag(
+          key,
+          tag_key: tagging_option_value.keys.first,
+          tag_value: tagging_option_value.values.first,
+        )
+      end
+    rescue Aws::S3::Errors::NoSuchKey
+      Rails.logger.warn(
+        "Could not update access control on upload with key: '#{key}'. Upload is missing.",
+      )
     end
 
     def list_missing(model, prefix)

@@ -4,30 +4,7 @@ class Admin::ReportsController < Admin::StaffController
   REPORTS_LIMIT = 50
 
   def index
-    reports_methods =
-      ["page_view_total_reqs"] +
-        ApplicationRequest
-          .req_types
-          .keys
-          .select { |r| r =~ /\Apage_view_/ && r !~ /mobile/ }
-          .map { |r| r + "_reqs" } +
-        Report.singleton_methods.grep(/\Areport_(?!about|storage_stats)/)
-
-    reports =
-      reports_methods.map do |name|
-        type = name.to_s.gsub("report_", "")
-        description = I18n.t("reports.#{type}.description", default: "")
-        description_link = I18n.t("reports.#{type}.description_link", default: "")
-
-        {
-          type: type,
-          title: I18n.t("reports.#{type}.title"),
-          description: description.presence ? description : nil,
-          description_link: description_link.presence ? description_link : nil,
-        }
-      end
-
-    render_json_dump(reports: reports.sort_by { |report| report[:title] })
+    render_json_dump(reports: Reports::ListQuery.call(admin: current_user.admin?))
   end
 
   def bulk
@@ -35,10 +12,18 @@ class Admin::ReportsController < Admin::StaffController
 
     hijack do
       params[:reports].each do |report_type, report_params|
+        raise Discourse::NotFound unless report_type =~ /\A[a-z0-9\_]+\z/
+
         args = parse_params(report_params)
+        args[:current_user] = current_user
 
         report = nil
         report = Report.find_cached(report_type, args) if (report_params[:cache])
+
+        if Report.hidden?(report_type, admin: current_user.admin?)
+          report = Report._get(report_type, args)
+          report.error = :not_found
+        end
 
         if report
           reports << report
@@ -64,8 +49,10 @@ class Admin::ReportsController < Admin::StaffController
     report_type = params[:type]
 
     raise Discourse::NotFound unless report_type =~ /\A[a-z0-9\_]+\z/
+    raise Discourse::NotFound if Report.hidden?(report_type, admin: current_user.admin?)
 
     args = parse_params(params)
+    args[:current_user] = current_user
 
     report = nil
     report = Report.find_cached(report_type, args) if (params[:cache])
@@ -92,7 +79,7 @@ class Admin::ReportsController < Admin::StaffController
           if report_params[:start_date].present?
             Time.parse(report_params[:start_date]).to_date
           else
-            1.days.ago
+            1.day.ago
           end
         ).beginning_of_day
       end_date =

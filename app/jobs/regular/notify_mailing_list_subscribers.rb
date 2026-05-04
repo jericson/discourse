@@ -4,7 +4,15 @@ module Jobs
   class NotifyMailingListSubscribers < ::Jobs::Base
     include Skippable
 
-    RETRY_TIMES = [5.minute, 15.minute, 30.minute, 45.minute, 90.minute, 180.minute, 300.minute]
+    RETRY_TIMES = [
+      5.minutes,
+      15.minutes,
+      30.minutes,
+      45.minutes,
+      90.minutes,
+      180.minutes,
+      300.minutes,
+    ]
 
     sidekiq_options queue: "low"
 
@@ -17,7 +25,7 @@ module Jobs
       # See https://github.com/mperham/sidekiq/blob/3330df0ee37cfd3e0cd3ef01e3e66b584b99d488/lib/sidekiq/job_retry.rb#L216-L234
       case exception.wrapped
       when SocketError
-        return RETRY_TIMES[count]
+        next RETRY_TIMES[count]
       end
     end
 

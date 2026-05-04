@@ -9,9 +9,9 @@ require "find"
 
 class BulkImport::VBulletin5 < BulkImport::Base
   DB_PREFIX = ""
-  SUSPENDED_TILL ||= Date.new(3000, 1, 1)
-  ATTACH_DIR ||= ENV["ATTACH_DIR"] || "/shared/import/data/attachments"
-  AVATAR_DIR ||= ENV["AVATAR_DIR"] || "/shared/import/data/customavatars"
+  SUSPENDED_TILL = Date.new(3000, 1, 1)
+  ATTACH_DIR = ENV["ATTACH_DIR"] || "/shared/import/data/attachments"
+  AVATAR_DIR = ENV["AVATAR_DIR"] || "/shared/import/data/customavatars"
   ROOT_NODE = 2
 
   def initialize
@@ -58,7 +58,7 @@ class BulkImport::VBulletin5 < BulkImport::Base
 
   def execute
     # enable as per requirement:
-    #SiteSetting.automatic_backups_enabled = false
+    #SiteSetting.backup_frequency = 0
     #SiteSetting.disable_emails = "non-staff"
     #SiteSetting.authorized_extensions = '*'
     #SiteSetting.max_image_size_kb = 102400

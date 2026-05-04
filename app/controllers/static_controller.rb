@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 
 class StaticController < ApplicationController
-  skip_before_action :check_xhr, :redirect_to_login_if_required
+  skip_before_action :check_xhr, :redirect_to_login_if_required, :redirect_to_profile_if_required
   skip_before_action :verify_authenticity_token,
-                     only: %i[cdn_asset enter favicon service_worker_asset]
-  skip_before_action :preload_json, only: %i[cdn_asset enter favicon service_worker_asset]
-  skip_before_action :handle_theme, only: %i[cdn_asset enter favicon service_worker_asset]
+                     only: %i[cdn_asset enter favicon llms_txt service_worker_asset]
+  skip_before_action :preload_json, only: %i[cdn_asset enter favicon llms_txt service_worker_asset]
+  skip_before_action :handle_theme, only: %i[cdn_asset enter favicon llms_txt service_worker_asset]
 
   before_action :apply_cdn_headers, only: %i[cdn_asset enter favicon service_worker_asset]
 
@@ -27,13 +27,50 @@ class StaticController < ApplicationController
   }
   CUSTOM_PAGES = {} # Add via `#add_topic_static_page` in plugin API
 
+  def extract_redirect_param
+    return "/" if params[:redirect].blank?
+
+    uri = URI(params[:redirect])
+    return "/" unless valid_redirect_uri?(uri)
+
+    uri.query ? "#{uri.path}?#{uri.query}" : uri.path
+  rescue URI::Error, ArgumentError
+    "/"
+  end
+
+  def valid_redirect_uri?(uri)
+    return false if uri.path.blank?
+    return false if uri.path.starts_with?("#{Discourse.base_path}/login")
+    return false if uri.host.present? && uri.host != URI(Discourse.base_url).host
+    return false if !uri.path.match?(%r{\A/[^\.\s]*\z})
+
+    true
+  end
+
   def show
-    if current_user && (params[:id] == "login" || params[:id] == "signup")
-      return redirect_to(path "/")
+    if params[:id] == "login"
+      destination = extract_redirect_param
+
+      if current_user
+        return redirect_to(path(destination), allow_other_host: false)
+      elsif destination != "/"
+        cookies[:destination_url] = path(destination)
+      end
+    elsif params[:id] == "signup" && current_user
+      return redirect_to path("/")
     end
 
-    if SiteSetting.login_required? && current_user.nil? && %w[faq guidelines].include?(params[:id])
+    if SiteSetting.login_required? && current_user.nil? &&
+         %w[faq guidelines rules conduct].include?(params[:id])
       return redirect_to path("/login")
+    end
+
+    rename_faq = UpcomingChanges.enabled_for_user?(:rename_faq_to_guidelines, current_user)
+
+    if rename_faq
+      redirect_paths = %w[/rules /conduct]
+      redirect_paths << "/faq" if SiteSetting.faq_url.blank?
+      return redirect_to(path("/guidelines")) if redirect_paths.include?(request.path)
     end
 
     map = DEFAULT_PAGES.deep_merge(CUSTOM_PAGES)
@@ -58,16 +95,23 @@ class StaticController < ApplicationController
       @topic = Topic.find_by_id(SiteSetting.get(topic_id))
       raise Discourse::NotFound unless @topic
 
+      page_name =
+        if @page == "faq"
+          rename_faq ? "guidelines" : "faq"
+        else
+          @page
+        end
+
       title_prefix =
-        if I18n.exists?("js.#{@page}")
-          I18n.t("js.#{@page}")
+        if I18n.exists?("js.#{page_name}")
+          I18n.t("js.#{page_name}")
         else
           @topic.title
         end
       @title = "#{title_prefix} - #{SiteSetting.title}"
       @body = @topic.posts.first.cooked
-      @faq_overridden = !SiteSetting.faq_url.blank?
-      @experimental_rename_faq_to_guidelines = SiteSetting.experimental_rename_faq_to_guidelines
+      @faq_overridden = SiteSetting.faq_url.present?
+      @rename_faq_to_guidelines = rename_faq
 
       render :show, layout: !request.xhr?, formats: [:html]
       return
@@ -108,28 +152,29 @@ class StaticController < ApplicationController
     params.delete(:username)
     params.delete(:password)
 
-    destination = path("/")
+    destination = extract_redirect_param
+    allow_other_host = false
 
-    redirect_location = params[:redirect]
-    if redirect_location.present? && !redirect_location.is_a?(String)
-      raise Discourse::InvalidParameters.new(:redirect)
-    elsif redirect_location.present? && !redirect_location.match(login_path)
+    # We need this to redirect the user back when Discourse Connect Provider is used.
+    if cookies[:sso_destination_url]
+      sso_url = cookies.delete(:sso_destination_url)
+
       begin
-        forum_uri = URI(Discourse.base_url)
-        uri = URI(redirect_location)
-
-        if uri.path.present? && (uri.host.blank? || uri.host == forum_uri.host) && uri.path !~ /\./
-          destination = "#{uri.path}#{uri.query ? "?#{uri.query}" : ""}"
+        uri = URI(sso_url)
+        if valid_sso_redirect_uri?(uri)
+          destination = sso_url
+          allow_other_host = true
         end
-      rescue URI::Error
-        # Do nothing if the URI is invalid
+      rescue URI::Error, ArgumentError
+        # Invalid URI, ignore and use default destination
       end
     end
 
-    redirect_to destination
+    destination = path(destination) if destination == "/"
+    redirect_to(destination, allow_other_host:)
   end
 
-  FAVICON ||= -"favicon"
+  FAVICON = -"favicon"
 
   # We need to be able to draw our favicon on a canvas, this happens when you enable the feature
   # that draws the notification count on top of favicon (per user default off)
@@ -170,7 +215,7 @@ class StaticController < ApplicationController
               file&.unlink
             end
           else
-            File.read(Rails.root.join("public", favicon.url[1..-1]))
+            File.read(Rails.public_path.join(favicon.url[1..-1]))
           end
         end
 
@@ -185,6 +230,30 @@ class StaticController < ApplicationController
         response.headers["Last-Modified"] = Time.new(2000, 01, 01).httpdate
         render body: data, content_type: "image/png"
       end
+    end
+  end
+
+  def llms_txt
+    upload = SiteSetting.llms_txt
+    return head(:not_found) if upload.blank?
+
+    if Discourse.store.external?
+      content =
+        Discourse
+          .cache
+          .fetch("llms_txt_content:#{upload.sha1}") do
+            path = Discourse.store.download(upload)
+            File.read(path) if path
+          end
+
+      return head(:not_found) if content.blank?
+
+      render plain: content, content_type: "text/plain"
+    else
+      path = Discourse.store.path_for(upload)
+      return head(:not_found) if path.blank? || !File.exist?(path)
+
+      send_file(path, type: "text/plain", disposition: "inline")
     end
   end
 
@@ -203,34 +272,32 @@ class StaticController < ApplicationController
         # Maximum cache that the service worker will respect is 24 hours.
         # However, ensure that these may be cached and served for longer on servers.
         immutable_for 1.year
-
-        if Rails.application.assets_manifest.assets["service-worker.js"]
-          path =
-            File.expand_path(
-              Rails.root +
-                "public/assets/#{Rails.application.assets_manifest.assets["service-worker.js"]}",
-            )
-          response.headers["Last-Modified"] = File.ctime(path).httpdate
-        end
-        content = Rails.application.assets_manifest.find_sources("service-worker.js").first
-
-        base_url = File.dirname(helpers.script_asset_path("service-worker"))
-        content =
-          content.sub(%r{^//# sourceMappingURL=(service-worker-.+\.map)$}) do
-            "//# sourceMappingURL=#{base_url}/#{Regexp.last_match(1)}"
-          end
-        render(plain: content, content_type: "application/javascript")
+        render "service-worker"
       end
     end
   end
 
   protected
 
+  def valid_sso_redirect_uri?(uri)
+    return false unless SiteSetting.enable_discourse_connect_provider
+    return false if uri.host.blank?
+
+    provider_domains =
+      SiteSetting
+        .discourse_connect_provider_secrets
+        .split("\n")
+        .map { |row| row.split("|", 2).first }
+        .compact
+
+    provider_domains.any? { |domain| WildcardDomainChecker.check_domain(domain, uri.host) }
+  end
+
   def serve_asset(suffix = nil)
     path = File.expand_path(Rails.root + "public/assets/#{params[:path]}#{suffix}")
 
     # SECURITY what if path has /../
-    raise Discourse::NotFound unless path.start_with?(Rails.root.to_s + "/public/assets")
+    raise Discourse::NotFound unless path.start_with?(Rails.root.to_s + "/public/assets/")
 
     response.headers["Expires"] = 1.year.from_now.httpdate
     response.headers["Access-Control-Allow-Origin"] = params[:origin] if params[:origin]
@@ -241,6 +308,12 @@ class StaticController < ApplicationController
       begin
         if GlobalSetting.fallback_assets_path.present?
           path = File.expand_path("#{GlobalSetting.fallback_assets_path}/#{params[:path]}#{suffix}")
+
+          # fallback path should not escape the fallback directory with /../
+          unless path.start_with?(File.expand_path(GlobalSetting.fallback_assets_path))
+            raise Discourse::NotFound
+          end
+
           response.headers["Last-Modified"] = File.ctime(path).httpdate
         else
           raise
@@ -248,7 +321,7 @@ class StaticController < ApplicationController
       rescue Errno::ENOENT
         expires_in 1.second, public: true, must_revalidate: false
 
-        render plain: "can not find #{params[:path]}", status: 404
+        render plain: "can not find #{params[:path]}", status: :not_found
         return
       end
     end

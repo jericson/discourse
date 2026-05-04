@@ -1,7 +1,15 @@
 # frozen_string_literal: true
 
 class QunitController < ApplicationController
-  skip_before_action *%i[check_xhr preload_json redirect_to_login_if_required]
+  # Same list maintained in discourse-test-load-dynamic-js.js
+  ALWAYS_LOADED_PLUGINS = %w[discourse-local-dates]
+
+  skip_before_action *%i[
+                       check_xhr
+                       preload_json
+                       redirect_to_login_if_required
+                       redirect_to_profile_if_required
+                     ]
   layout false
 
   def theme
@@ -39,6 +47,15 @@ class QunitController < ApplicationController
           .pluck(:id, :name)
       return
     end
+
+    about_json =
+      JSON.parse(theme.theme_fields.find_by(target_id: Theme.targets[:about])&.value || "{}")
+    @required_plugins =
+      about_json
+        .dig("tests", "requiredPlugins")
+        &.map { |p| p.split("/").last.delete_suffix(".git") } || []
+
+    @required_plugins.push(*ALWAYS_LOADED_PLUGINS)
 
     request.env[:resolved_theme_id] = theme.id
     request.env[:skip_theme_ids_transformation] = true

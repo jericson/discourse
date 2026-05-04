@@ -1,11 +1,13 @@
 # frozen_string_literal: true
 
 RSpec.describe SiteSettingsTask do
-  before { Discourse::Application.load_tasks }
-
   describe "export" do
     it "creates a hash of all site settings" do
       sso_url = "https://somewhere.over.com"
+
+      # Clear all overrides first
+      SiteSetting.provider.all.each { |setting| SiteSetting.remove_override!(setting.name) }
+
       SiteSetting.discourse_connect_url = sso_url
       SiteSetting.enable_discourse_connect = true
       hash = SiteSettingsTask.export_to_hash

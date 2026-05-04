@@ -89,23 +89,9 @@ RSpec.describe TopicEmbed do
       HTML
 
       parsed = TopicEmbed.parse_html(html, "https://blog.discourse.com/somepost.html")
+      expected = "<div><div> article content cats cats </div></div>"
 
-      expected = <<-HTML
-        <div><div>
-  
-    article content
-    
-      
-        
-          cats
-          cats
-        
-      
-    
-  
-</div></div>
-      HTML
-      expect(parsed.body.strip).to eq(expected.strip)
+      expect(parsed.body.squish).to eq(expected.squish)
     end
 
     context "when creating a post" do
@@ -177,6 +163,21 @@ RSpec.describe TopicEmbed do
         cased_url = "http://eviltrout.com/abcd"
         post = TopicEmbed.import(user, cased_url, title, "some random content")
         expect(post.cooked).to match(/#{cased_url}/)
+      end
+
+      it "falls back to the url when the title is blank" do
+        blank_title_url = "http://eviltrout.com/blank-title"
+        imported_post = TopicEmbed.import(user, blank_title_url, "", contents)
+
+        expect(imported_post.topic.title).to eq(blank_title_url)
+      end
+
+      it "preserves an existing title when a later import has a blank title" do
+        imported_post = TopicEmbed.import(user, url, title, contents)
+
+        TopicEmbed.import(user, url, "", "<p>updated content</p>")
+
+        expect(imported_post.topic.reload.title).to eq(title)
       end
 
       shared_examples "topic is unlisted" do
@@ -284,6 +285,10 @@ RSpec.describe TopicEmbed do
           headers: {
           },
         )
+        stub_request(
+          :get,
+          "https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=K56soYl0U1w",
+        ).to_return(status: 200, body: "", headers: {})
 
         imported_post =
           TopicEmbed.import(
@@ -346,6 +351,42 @@ RSpec.describe TopicEmbed do
 
         # It uses regular rendering
         expect(post.cook_method).to eq(Post.cook_methods[:regular])
+      end
+    end
+
+    context "when importing a topic embed with string tags" do
+      fab!(:tag1) { Fabricate(:tag, name: "interesting") }
+      fab!(:tag2) { Fabricate(:tag, name: "article") }
+      let(:tags) { [tag1.name, tag2.name] }
+
+      it "associates the specified tags with the existing topic" do
+        imported_page = TopicEmbed.import(user, url, title, contents, tags: tags)
+        expect(imported_page.topic.tags).to match_array([tag1, tag2])
+      end
+    end
+
+    context "when updating an existing topic embed with string tags" do
+      fab!(:tag1) { Fabricate(:tag, name: "interesting") }
+      fab!(:tag2) { Fabricate(:tag, name: "article") }
+      let(:tags) { [tag1, tag2] }
+
+      before { TopicEmbed.import(user, url, title, contents, tags: [tag1.name]) }
+
+      it "associates the specified tags with the existing topic" do
+        imported_page = TopicEmbed.import(user, url, title, contents, tags: tags)
+        expect(imported_page.topic.tags).to match_array([tag1, tag2])
+      end
+
+      it "does not update tags if tags are nil or unspecified" do
+        imported_page = TopicEmbed.import(user, url, title, contents)
+        expect(imported_page.topic.tags).to match_array([tag1])
+        imported_page = TopicEmbed.import(user, url, title, contents, tags: nil)
+        expect(imported_page.topic.tags).to match_array([tag1])
+      end
+
+      it "does update tags if tags are empty" do
+        imported_page = TopicEmbed.import(user, url, title, contents, tags: [])
+        expect(imported_page.topic.tags).to match_array([])
       end
     end
 
@@ -523,31 +564,31 @@ RSpec.describe TopicEmbed do
       let(:contents) do
         "my normal size emoji <p class='foo'>Hi</p> <img class='emoji other foo' src='/images/smiley.jpg'>"
       end
+      let(:response) { TopicEmbed.find_remote(url) }
 
       before do
         SiteSetting.allowed_embed_classnames = "emoji, foo"
         stub_request(:get, url).to_return(status: 200, body: contents)
-        @response = TopicEmbed.find_remote(url)
       end
 
       it "has no author tag" do
-        expect(@response.author).to be_blank
+        expect(response.author).to be_blank
       end
 
       it "img node has emoji class" do
-        expect(@response.body).to have_tag("img", with: { class: "emoji" })
+        expect(response.body).to have_tag("img", with: { class: "emoji" })
       end
 
       it "img node has foo class" do
-        expect(@response.body).to have_tag("img", with: { class: "foo" })
+        expect(response.body).to have_tag("img", with: { class: "foo" })
       end
 
       it "p node has foo class" do
-        expect(@response.body).to have_tag("p", with: { class: "foo" })
+        expect(response.body).to have_tag("p", with: { class: "foo" })
       end
 
       it "nodes removes classes other than emoji" do
-        expect(@response.body).to have_tag("img", without: { class: "other" })
+        expect(response.body).to have_tag("img", without: { class: "other" })
       end
     end
 
@@ -573,27 +614,27 @@ RSpec.describe TopicEmbed do
       let(:contents) do
         "my normal size emoji <p class='foo'>Hi</p> <img class='emoji other foo' src='/images/smiley.jpg'>"
       end
+      let(:response) { TopicEmbed.find_remote(url) }
 
       before(:each) do
         SiteSetting.allowed_embed_classnames = ""
         stub_request(:get, url).to_return(status: 200, body: contents)
-        @response = TopicEmbed.find_remote(url)
       end
 
       it 'img node doesn\'t have emoji class' do
-        expect(@response.body).to have_tag("img", without: { class: "emoji" })
+        expect(response.body).to have_tag("img", without: { class: "emoji" })
       end
 
       it 'img node doesn\'t have foo class' do
-        expect(@response.body).to have_tag("img", without: { class: "foo" })
+        expect(response.body).to have_tag("img", without: { class: "foo" })
       end
 
       it 'p node doesn\'t foo class' do
-        expect(@response.body).to have_tag("p", without: { class: "foo" })
+        expect(response.body).to have_tag("p", without: { class: "foo" })
       end
 
       it 'img node doesn\'t have other class' do
-        expect(@response.body).to have_tag("img", without: { class: "other" })
+        expect(response.body).to have_tag("img", without: { class: "other" })
       end
     end
 

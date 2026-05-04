@@ -25,6 +25,18 @@ RSpec.describe SidebarSectionsController do
         ["Community", "public section", "private section"],
       )
     end
+
+    it "returns Community section first even when public sections are alphabetically before it" do
+      sign_in(user)
+      Fabricate(:sidebar_section, title: "Apple", public: true)
+
+      get "/sidebar_sections.json"
+      expect(response.status).to eq(200)
+
+      titles = response.parsed_body["sidebar_sections"].map { |section| section["title"] }
+
+      expect(titles).to eq(["Community", "Apple", "public section", "private section"])
+    end
   end
 
   describe "#create" do
@@ -54,8 +66,8 @@ RSpec.describe SidebarSectionsController do
                  value: "http://#{Discourse.current_hostname}/categories",
                },
                { icon: "address-book", name: "tags", value: "/tags" },
-               { icon: "external-link-alt", name: "Discourse", value: "https://discourse.org" },
-               { icon: "external-link-alt", name: "My preferences", value: "/my/preferences" },
+               { icon: "up-right-from-square", name: "Discourse", value: "https://discourse.org" },
+               { icon: "up-right-from-square", name: "My preferences", value: "/my/preferences" },
              ],
            }
 
@@ -77,11 +89,11 @@ RSpec.describe SidebarSectionsController do
       expect(sidebar_section.sidebar_urls.second.name).to eq("tags")
       expect(sidebar_section.sidebar_urls.second.value).to eq("/tags")
       expect(sidebar_section.sidebar_urls.second.external).to be false
-      expect(sidebar_section.sidebar_urls.third.icon).to eq("external-link-alt")
+      expect(sidebar_section.sidebar_urls.third.icon).to eq("up-right-from-square")
       expect(sidebar_section.sidebar_urls.third.name).to eq("Discourse")
       expect(sidebar_section.sidebar_urls.third.value).to eq("https://discourse.org")
       expect(sidebar_section.sidebar_urls.third.external).to be true
-      expect(sidebar_section.sidebar_urls.fourth.icon).to eq("external-link-alt")
+      expect(sidebar_section.sidebar_urls.fourth.icon).to eq("up-right-from-square")
       expect(sidebar_section.sidebar_urls.fourth.name).to eq("My preferences")
       expect(sidebar_section.sidebar_urls.fourth.value).to eq("/my/preferences")
       expect(sidebar_section.sidebar_urls.fourth.external).to be false
@@ -94,7 +106,7 @@ RSpec.describe SidebarSectionsController do
 
       links =
         6.times.map do
-          { icon: "external-link-alt", name: "My preferences", value: "/my/preferences" }
+          { icon: "up-right-from-square", name: "My preferences", value: "/my/preferences" }
         end
 
       post "/sidebar_sections.json", params: { title: "custom section", links: links }
@@ -261,7 +273,7 @@ RSpec.describe SidebarSectionsController do
 
       links =
         6.times.map do
-          { icon: "external-link-alt", name: "My preferences", value: "/my/preferences" }
+          { icon: "up-right-from-square", name: "My preferences", value: "/my/preferences" }
         end
 
       put "/sidebar_sections/#{sidebar_section.id}.json",
@@ -274,6 +286,18 @@ RSpec.describe SidebarSectionsController do
       expect(response.parsed_body["errors"]).to eq(
         ["Maximum 5 records are allowed. Got 6 records instead."],
       )
+    end
+
+    it "returns 404 when updating a non-existent section" do
+      sign_in(user)
+
+      put "/sidebar_sections/99999999.json",
+          params: {
+            title: "custom section edited",
+            links: [{ icon: "link", name: "latest", value: "/latest" }],
+          }
+
+      expect(response.status).to eq(404)
     end
 
     it "doesn't allow to edit other's sections" do
@@ -344,7 +368,7 @@ RSpec.describe SidebarSectionsController do
       sign_in(admin)
 
       topics_link = community_section.sidebar_urls.find_by(name: "Topics")
-      my_posts_link = community_section.sidebar_urls.find_by(name: "My Posts")
+      my_posts_link = community_section.sidebar_urls.find_by(name: "My posts")
 
       community_section
         .sidebar_section_links
@@ -399,6 +423,13 @@ RSpec.describe SidebarSectionsController do
       user_history = UserHistory.last
       expect(user_history.action).to eq(UserHistory.actions[:destroy_public_sidebar_section])
       expect(user_history.subject).to eq("Sidebar section")
+    end
+
+    it "returns 404 when deleting a non-existent section" do
+      sign_in(user)
+      delete "/sidebar_sections/99999999.json"
+
+      expect(response.status).to eq(404)
     end
 
     it "doesn't allow to delete other's sidebar section" do

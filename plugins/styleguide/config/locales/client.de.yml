@@ -5,6 +5,11 @@
 # https://translate.discourse.org/
 
 de:
+  admin_js:
+    admin:
+      site_settings:
+        categories:
+          styleguide: "Discourse Styleguide"
   js:
     styleguide:
       title: "Styleguide"
@@ -25,17 +30,21 @@ de:
           title: "Datum/Uhrzeit"
         menus:
           title: "Menüs"
+        multi_select:
+          title: "Mehrfachauswahl"
         toasts:
           title: "Toasts"
         font_scale:
           title: "Schrift"
         colors:
           title: "Farben"
+        dialog:
+          title: "Dialog"
         icons:
           title: "Symbole"
           full_list: "Siehe vollständige Liste der „Font Awesome“-Symbole"
-        input_fields:
-          title: "Eingabefelder"
+        forms:
+          title: "Formulare"
         buttons:
           title: "Buttons"
         dropdowns:
@@ -53,7 +62,7 @@ de:
         categories_list:
           title: "Kategorienliste"
         topic_link:
-          title: "Link zu Thema"
+          title: "Themenlink und -status"
         topic_list_item:
           title: "Element in Themenliste"
         topic_statuses:
@@ -62,8 +71,6 @@ de:
           title: "Themenliste"
         basic_topic_list:
           title: "Grundlegende Themenliste"
-        footer_message:
-          title: "Fußzeile"
         signup_cta:
           title: "Aufforderung zur Registrierung"
         topic_timer_info:
@@ -74,12 +81,18 @@ de:
           title: "Themen-Benachrichtigungen"
         post:
           title: "Beitrag"
+        post_list:
+          title: "Beitragsliste"
+          empty_example: "<PostList /> leerer Zustand"
+          populated_example: "<PostList /> gefüllter Zustand"
+        post_oneboxes:
+          title: "Oneboxes in Beiträgen"
         topic_map:
-          title: "Thema-Zusammenfassung"
+          title: "Themenübersicht"
         site_header:
           title: "Seitenkopf"
-        suggested_topics:
-          title: "Vorgeschlagene Themen"
+        more_topics:
+          title: "Weitere Themen"
         post_menu:
           title: "Beitrag-Aktionen"
         modal:
@@ -92,6 +105,8 @@ de:
           title: "Header-Symbole"
         spinners:
           title: "Spinner"
+        otp:
+          title: "Einmalpasswort (OTP)"
         empty_state:
           title: "Empty State"
         tooltips:
@@ -102,3 +117,5 @@ de:
         char_counter:
           title: "Zeichenzähler"
           placeholder: "Gib deinen Text hier ein …"
+        segmented_control:
+          title: "Segmentiertes Steuerelement (Schaltflächengruppe)"

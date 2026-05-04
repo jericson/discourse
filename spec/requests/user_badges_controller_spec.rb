@@ -5,6 +5,8 @@ RSpec.describe UserBadgesController do
   fab!(:admin)
   fab!(:badge)
 
+  before { user.user_stat.update!(post_count: 1) }
+
   describe "#index" do
     fab!(:badge) { Fabricate(:badge, target_posts: true, show_posts: false) }
 
@@ -166,9 +168,9 @@ RSpec.describe UserBadgesController do
     end
 
     context "with hidden profiles" do
-      before { user.user_option.update_columns(hide_profile_and_presence: true) }
+      before { user.user_option.update_columns(hide_profile: true) }
 
-      it "returns 404 if `hide_profile_and_presence` user option is checked" do
+      it "returns 404 if `hide_profile` user option is checked" do
         get "/user-badges/#{user.username}.json"
         expect(response.status).to eq(404)
       end
@@ -184,6 +186,7 @@ RSpec.describe UserBadgesController do
 
   describe "#create" do
     it "requires username to be specified" do
+      sign_in(admin)
       post "/user_badges.json", params: { badge_id: badge.id }
       expect(response.status).to eq(400)
     end
@@ -381,6 +384,18 @@ RSpec.describe UserBadgesController do
       )
     end
 
+    it "requires the user to be logged in" do
+      put "/user_badges/#{user_badge.id}/toggle_favorite.json"
+      expect(response.status).to eq(403)
+      expect(response.parsed_body["errors"]).to include(I18n.t("not_logged_in"))
+    end
+
+    it "returns 403 for anonymous users even with nonexistent user_badge_id" do
+      put "/user_badges/#{user_badge.id + 999}/toggle_favorite.json"
+      expect(response.status).to eq(403)
+      expect(response.parsed_body["errors"]).to include(I18n.t("not_logged_in"))
+    end
+
     it "checks that the user is authorized to favorite the badge" do
       sign_in(Fabricate(:admin))
       put "/user_badges/#{user_badge.id}/toggle_favorite.json"
@@ -478,6 +493,21 @@ RSpec.describe UserBadgesController do
       put "/user_badges/#{other_user_badge.id}/toggle_favorite.json"
       expect(response.status).to eq(204)
       expect(other_user_badge.reload.is_favorite).to eq(true)
+
+      user_badge3 =
+        UserBadge.create(
+          badge: badge,
+          user: user,
+          granted_by: Discourse.system_user,
+          granted_at: Time.now,
+          seq: 2,
+        )
+
+      put "/user_badges/#{user_badge3.id}/toggle_favorite.json"
+      expect(response.status).to eq(204)
+      expect(user_badge.reload.is_favorite).to eq(false)
+      expect(user_badge2.reload.is_favorite).to eq(false)
+      expect(user_badge3.reload.is_favorite).to eq(false)
     end
   end
 end

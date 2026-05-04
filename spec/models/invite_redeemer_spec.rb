@@ -150,7 +150,7 @@ RSpec.describe InviteRedeemer do
         error = e
       end
       expect(error).to be_present
-      expect(error.record.errors[:password]).to be_present
+      expect(error.record.errors.errors[0].attribute).to eq :"user_password.password"
     end
 
     it "should unstage user" do
@@ -445,6 +445,8 @@ RSpec.describe InviteRedeemer do
             password: password,
           ).redeem
 
+        user.reload
+
         expect(user.group_users.count).to eq(4)
         expect(user.trust_level).to eq(2)
       end
@@ -648,6 +650,17 @@ RSpec.describe InviteRedeemer do
           expect do
             InviteRedeemer.new(invite: invite_link, redeeming_user: redeeming_user).redeem
           end.not_to change { User.count }
+        end
+
+        it "does not set the redeeming user's invited_by since the user is already present" do
+          redeeming_user.update(created_at: Time.now - 6.seconds)
+          group = Fabricate(:group)
+          group.add_owner(invite_link.invited_by)
+          InvitedGroup.create(group_id: group.id, invite_id: invite_link.id)
+
+          expect do
+            InviteRedeemer.new(invite: invite_link, redeeming_user: redeeming_user).redeem
+          end.not_to change { redeeming_user.invited_by }
         end
       end
     end

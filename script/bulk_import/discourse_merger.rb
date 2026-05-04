@@ -3,7 +3,7 @@
 require_relative "base"
 
 class BulkImport::DiscourseMerger < BulkImport::Base
-  NOW ||= "now()"
+  NOW = "now()"
   CUSTOM_FIELDS = %w[category group post topic user]
 
   # DB_NAME: name of database being merged into the current local db
@@ -223,7 +223,7 @@ class BulkImport::DiscourseMerger < BulkImport::Base
     copy_model(GroupUser, skip_if_merged: true)
   end
 
-  def category_exisits(cat_row)
+  def category_exists(cat_row)
     # Categories with the same name/slug and parent are merged
 
     parent = category_id_from_imported_id(cat_row["parent_category_id"])
@@ -245,12 +245,12 @@ class BulkImport::DiscourseMerger < BulkImport::Base
       source_raw_connection
         .exec(
           "SELECT #{columns.map { |c| "c.\"#{c}\"" }.join(", ")}
-             FROM categories c 
+             FROM categories c
              WHERE parent_category_id IS NULL",
         )
         .each do |row|
           # If a category with the same slug or name, and the same parent, exists
-          existing_category = category_exisits(row)
+          existing_category = category_exists(row)
 
           if existing_category
             @categories[row["id"].to_i] = existing_category
@@ -305,7 +305,7 @@ class BulkImport::DiscourseMerger < BulkImport::Base
         )
         .each do |row|
           # If a category with the same slug or name, and the same parent, exists
-          existing_category = category_exisits(row)
+          existing_category = category_exists(row)
 
           if existing_category
             @categories[row["id"].to_i] = existing_category
@@ -366,12 +366,10 @@ class BulkImport::DiscourseMerger < BulkImport::Base
       next unless category_id
       category = Category.find_by_id(category_id)
       next if category.name == "Uncategorized"
-      category_settings = CategorySetting.find_by(category_id: category_id)
+      category_settings = category.category_setting
       next unless category_settings
-      category_settings["require_topic_approval"] = row["require_topic_approval"]
-      category_settings["require_reply_approval"] = row["require_reply_approval"]
-      category_settings["num_auto_bump_daily"] = row["num_auto_bump_daily"]
-      category_settings["auto_bump_cooldown_days"] = row["auto_bump_cooldown_days"]
+      category_settings.num_auto_bump_daily = row["num_auto_bump_daily"]
+      category_settings.auto_bump_cooldown_days = row["auto_bump_cooldown_days"]
       category_settings.save!
     end
   end
@@ -528,7 +526,12 @@ class BulkImport::DiscourseMerger < BulkImport::Base
       )
     end
 
-    [CategoryFeaturedTopic, CategoryFormTemplate, CategorySearchData].each { |k| copy_model(k) }
+    [
+      CategoryFeaturedTopic,
+      CategoryFormTemplate,
+      CategoryPostingReviewGroup,
+      CategorySearchData,
+    ].each { |k| copy_model(k) }
 
     # Copy custom fields
     [CategoryCustomField].each do |k|
@@ -797,7 +800,7 @@ class BulkImport::DiscourseMerger < BulkImport::Base
             processed =
               (
                 if respond_to?(process_method_name)
-                  send(process_method_name, HashWithIndifferentAccess.new(row))
+                  send(process_method_name, ActiveSupport::HashWithIndifferentAccess.new(row))
                 else
                   row
                 end
@@ -811,7 +814,7 @@ class BulkImport::DiscourseMerger < BulkImport::Base
     @sequences[klass.sequence_name] = last_id + 1 if last_id
 
     if has_custom_fields
-      id_mapping_method_name = "#{klass.name.downcase}_id_from_imported_id".freeze
+      id_mapping_method_name = "#{klass.name.downcase}_id_from_imported_id"
       return unless respond_to?(id_mapping_method_name)
       create_custom_fields(klass.name.downcase, "id", imported_ids) do |imported_id|
         { record_id: send(id_mapping_method_name, imported_id), value: imported_id }
@@ -868,7 +871,7 @@ class BulkImport::DiscourseMerger < BulkImport::Base
     @sequences[klass.sequence_name] = last_id + 1 if last_id
 
     if has_custom_fields
-      id_mapping_method_name = "#{klass.name.downcase}_id_from_imported_id".freeze
+      id_mapping_method_name = "#{klass.name.downcase}_id_from_imported_id"
       return unless respond_to?(id_mapping_method_name)
       create_custom_fields(klass.name.downcase, "id", imported_ids) do |imported_id|
         { record_id: send(id_mapping_method_name, imported_id), value: imported_id }

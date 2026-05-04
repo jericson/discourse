@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "excon"
-
 module Jobs
   class EmitWebHookEvent < ::Jobs::Base
     sidekiq_options queue: "low"
@@ -133,7 +131,7 @@ module Jobs
         "Content-Length" => web_hook_body.bytesize.to_s,
         "Content-Type" => content_type,
         "Host" => uri.host,
-        "User-Agent" => "Discourse/#{Discourse::VERSION::STRING}",
+        "User-Agent" => Discourse.user_agent,
         "X-Discourse-Instance" => Discourse.base_url,
         "X-Discourse-Event-Id" => web_hook_event.id.to_s,
         "X-Discourse-Event-Type" => @arguments[:event_type],

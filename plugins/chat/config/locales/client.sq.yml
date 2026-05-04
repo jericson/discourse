@@ -5,20 +5,63 @@
 # https://translate.discourse.org/
 
 sq:
+  admin_js:
+    admin:
+      site_settings:
+        categories:
+          chat: Biseda
   js:
     admin:
       site_settings:
         chat_separate_sidebar_mode:
           always: "Gjithmonë"
+          fullscreen: "Biseda në ekran të plotë"
           never: "Asnjëherë"
+      logs:
+        staff_actions:
+          actions:
+            chat_channel_status_change: "Statusi i kanalit të bisedës ndryshoi"
+            chat_channel_delete: "Kanali i bisedës u fshi"
+            chat_auto_remove_membership: "Anëtarësimet hiqen automatikisht nga kanalet"
+      api:
+        scopes:
+          descriptions:
+            chat:
+              create_message: "Krijo një hapësirë për mesazhe në një kanal të caktuar."
+      web_hooks:
+        chat_event:
+          group_name: "Temat e bisedës"
+          chat_message_created: "Mesazhi është shkruar"
+          chat_message_edited: "Mesazhi është redaktuar"
+          chat_message_trashed: "Mesazhi është fshirë"
+          chat_message_restored: "Mesazhi është rishkruar"
+    about:
+      chat_messages_count: "Mesazhet e bisedës"
+      chat_channels_count: "Kanalet e bisedës"
+      chat_users_count: "Përdoruesit e bisedës"
     chat:
+      edit_category:
+        tab_title: "Biseda"
+        description: "Përshkrimi"
+        actions: "Veprimet"
+        settings: "Rregullimet"
+      text_copied: Teksti u kopjua në memo
+      link_copied: Linku u kopjua në memo
+      back_to_forum: "Forumi"
       deleted_chat_username: deleted
       dates:
         yesterday: "Dje"
+      all_loaded: "Shfaq mesazhet"
+      already_enabled: "Biseda është aktivizuar tashmë për këtë temë. Rifreskoni faqen."
+      disabled_for_topic: "Biseda është çaktivizuar për këtë temë."
+      bot: "bot"
+      create: "Krijo"
       cancel: "Anulo"
+      pinned: "E përzgjedhur"
       channel_settings:
         edit: "Redakto"
         add: "Shto"
+        notification_settings_context: "Njoftimet"
       close: "Mbyll"
       remove: "Hiq"
       delete: "Fshij"
@@ -37,7 +80,6 @@ sq:
       save: "Ruaj"
       sounds:
         none: "Asnjë"
-      exit: "kthehu mbrapa"
       channel_status:
         open: "Fillo"
       browse:
@@ -47,6 +89,8 @@ sq:
       chat_message_separator:
         today: Sot
         yesterday: Dje
+      search_view:
+        filter_placeholder: Kërko mesazhet
       about_view:
         title: Titulli
         name: Emri
@@ -56,6 +100,8 @@ sq:
         tabs:
           members: Anëtarë
           settings: Rregullimet
+          search: Kërko
+        remove_member: "Hiq"
       new_message_modal:
         filter: "Filtro"
       direct_message_creator:
@@ -83,6 +129,12 @@ sq:
         category_label: "Kategori"
         history_label: "Historia"
         members_label: "Anëtarë"
+      search:
+        short_title: Kërko
+        no_results: "Nuk u gjet asnjë rezultat"
+        sort:
+          relevance: "Rëndësia"
+          latest: "Më të fundit"
       incoming_webhooks:
         back: "Kthehu mbrapa"
         description: "Përshkrimi"
@@ -119,6 +171,8 @@ sq:
             title: "Normal"
           tracking:
             title: "Në gjurmim"
+          watching:
+            title: "Në vëzhgim"
       draft_channel_screen:
         header: "Mesazh i ri"
         cancel: "Anulo"

@@ -76,8 +76,9 @@ RSpec.describe Onebox::Helpers do
     end
 
     context "with canonical link" do
+      let(:uri) { "https://www.example.com" }
+
       it "follows canonical link" do
-        uri = "https://www.example.com"
         stub_request(:get, uri).to_return(
           status: 200,
           body: "<!DOCTYPE html><link rel='canonical' href='http://foobar.com/'/><p>invalid</p>",
@@ -92,7 +93,6 @@ RSpec.describe Onebox::Helpers do
       end
 
       it "does not follow canonical link pointing at localhost" do
-        uri = "https://www.example.com"
         FinalDestination::SSRFDetector
           .stubs(:lookup_ips)
           .with { |h| h == "localhost" }
@@ -103,6 +103,25 @@ RSpec.describe Onebox::Helpers do
         )
 
         expect(described_class.fetch_html_doc(uri).to_s).to match("success")
+      end
+
+      context "when canonical link contains non-ASCII characters" do
+        before do
+          stub_request(:get, uri).to_return(
+            status: 200,
+            body:
+              "<!DOCTYPE html><link rel='canonical' href='http://foobar.com/héhé'/><p>invalid</p>",
+          )
+          stub_request(:get, "http://foobar.com/héhé").to_return(
+            status: 200,
+            body: "<!DOCTYPE html><p>success</p>",
+          )
+          stub_request(:head, "http://foobar.com/héhé").to_return(status: 200, body: "")
+        end
+
+        it "does not break" do
+          expect(described_class.fetch_html_doc(uri).to_s).to match("success")
+        end
       end
     end
   end
@@ -153,20 +172,20 @@ RSpec.describe Onebox::Helpers do
     end
 
     describe "cookie handling" do
-      it "naively forwards cookies to the next request" do
+      it "forwards cookies on same-host redirects, stripping attributes" do
         stub_request(:get, "https://httpbin.org/cookies/set/a/b").to_return(
           status: 302,
           headers: {
             location: "/cookies",
-            "set-cookie": "a=b; Path=/",
+            "set-cookie": ["a=b; Path=/; Secure", "c=d; HttpOnly; Max-Age=3600"],
           },
         )
 
         stub_request(:get, "https://httpbin.org/cookies").with(
           headers: {
-            cookie: "a=b; Path=/",
+            cookie: "a=b; c=d",
           },
-        ).to_return(status: 200, body: "success, cookie readback not implemented")
+        ).to_return(status: 200, body: "success")
 
         expect(described_class.fetch_response("https://httpbin.org/cookies/set/a/b")).to match(
           "success",
@@ -174,8 +193,6 @@ RSpec.describe Onebox::Helpers do
       end
 
       it "does not send cookies to the wrong domain" do
-        skip("unimplemented")
-
         stub_request(:get, "https://httpbin.org/cookies/set/a/b").to_return(
           status: 302,
           headers: {
@@ -184,13 +201,13 @@ RSpec.describe Onebox::Helpers do
           },
         )
 
-        stub_request(:get, "https://evil.com/show_cookies").with(
-          headers: {
-            cookie: nil,
-          },
-        ).to_return(status: 200, body: "success, cookie readback not implemented")
+        stub_request(:get, "https://evil.com/show_cookies").to_return(status: 200, body: "ok")
 
         described_class.fetch_response("https://httpbin.org/cookies/set/a/b")
+
+        expect(WebMock).to have_requested(:get, "https://evil.com/show_cookies").with { |req|
+          !req.headers.key?("Cookie")
+        }
       end
     end
   end
@@ -200,7 +217,7 @@ RSpec.describe Onebox::Helpers do
       it "has the default Discourse user agent" do
         stub_request(:get, "http://example.com/some-resource").with(
           headers: {
-            "user-agent" => /Discourse Forum Onebox/,
+            "user-agent" => Discourse.user_agent,
           },
         ).to_return(status: 200, body: "test")
 
@@ -211,7 +228,7 @@ RSpec.describe Onebox::Helpers do
     context "with custom option" do
       around do |example|
         previous_options = Onebox.options.to_h
-        Onebox.options = { user_agent: "EvilTroutBot v0.1" }
+        Onebox.options = { user_agent: "EvilTroutBot" }
 
         example.run
 
@@ -221,7 +238,7 @@ RSpec.describe Onebox::Helpers do
       it "has the custom user agent" do
         stub_request(:get, "http://example.com/some-resource").with(
           headers: {
-            "user-agent" => "EvilTroutBot v0.1",
+            "user-agent" => "EvilTroutBot v#{Discourse::VERSION::STRING}",
           },
         ).to_return(status: 200, body: "test")
 
@@ -331,8 +348,8 @@ RSpec.describe Onebox::Helpers do
       )
     end
     it do
-      expect(described_class.uri_encode("http://example.com/<pa'th>(foo)?b+a+r")).to eq(
-        "http://example.com/%3Cpa'th%3E(foo)?b%2Ba%2Br",
+      expect(described_class.uri_encode("http://example.com/<+pa'th>(foo)?b+a+r")).to eq(
+        "http://example.com/%3C+pa'th%3E(foo)?b+a+r",
       )
     end
     it do
@@ -388,6 +405,55 @@ RSpec.describe Onebox::Helpers do
       expect(
         described_class.uri_encode("https://gitpod.io/#https://github.com/eclipse-theia/theia"),
       ).to eq("https://gitpod.io/#https://github.com/eclipse-theia/theia")
+    end
+
+    it "does not encode '+' in query parameters because it is a valid way to represent a space" do
+      url = "https://example.com/search?q=ruby+on+rails"
+      expect(described_class.uri_encode(url)).to eq(url)
+    end
+  end
+
+  describe ".normalize_dropbox_url" do
+    subject(:result) { described_class.normalize_dropbox_url(url) }
+
+    context "with non-Dropbox URL" do
+      let(:url) { "https://example.com/video.mp4" }
+
+      it "returns unchanged" do
+        expect(result).to eq(url)
+      end
+    end
+
+    context "with old /s/ format" do
+      let(:url) { "https://www.dropbox.com/s/abc123/file.mp4" }
+
+      it "converts to direct download domain" do
+        expect(result).to eq("https://dl.dropboxusercontent.com/s/abc123/file.mp4")
+      end
+    end
+
+    context "with new /scl/ format" do
+      let(:url) { "https://www.dropbox.com/scl/fi/abc123/file.mp4?rlkey=xyz789&st=test" }
+
+      it "converts to direct download domain" do
+        expect(result).to include("dl.dropboxusercontent.com")
+      end
+
+      it "adds raw=1 for direct file access" do
+        expect(result).to include("raw=1")
+      end
+
+      it "preserves authentication parameters" do
+        expect(result).to include("rlkey=xyz789", "st=test")
+      end
+    end
+
+    context "with /scl/ format without query string" do
+      let(:url) { "https://www.dropbox.com/scl/fi/abc123/file.mp4" }
+
+      it "adds raw=1 for direct file access" do
+        expect(result).to include("raw=1")
+      end
     end
   end
 end

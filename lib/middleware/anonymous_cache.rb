@@ -18,6 +18,8 @@ module Middleware
         t: "key_cache_theme_ids",
         ca: "key_compress_anon",
         l: "key_locale",
+        lso: "key_show_original_content",
+        cm: "key_forced_color_mode",
       }
     end
 
@@ -78,13 +80,21 @@ module Middleware
         @request = request || Rack::Request.new(@env)
       end
 
+      def crawler_identifier
+        @user_agent
+      end
+
       def blocked_crawler?
-        @request.get? && !@request.xhr? && !@request.path.ends_with?("robots.txt") &&
-          !@request.path.ends_with?("srv/status") &&
-          @request[Auth::DefaultCurrentUserProvider::API_KEY].nil? &&
-          @env[Auth::DefaultCurrentUserProvider::USER_API_KEY].nil? &&
-          @env[Auth::DefaultCurrentUserProvider::HEADER_API_KEY].nil? &&
-          CrawlerDetection.is_blocked_crawler?(@user_agent)
+        return false if !@request.get?
+        return false if @request.xhr?
+        return false if @request.path.ends_with?("robots.txt")
+        return false if @request.path.ends_with?("llms.txt")
+        return false if @request.path.ends_with?("srv/status")
+        return false if @request[Auth::DefaultCurrentUserProvider::API_KEY]
+        return false if @env[Auth::DefaultCurrentUserProvider::USER_API_KEY]
+        return false if @env[Auth::DefaultCurrentUserProvider::HEADER_API_KEY]
+
+        CrawlerDetection.is_blocked_crawler?(crawler_identifier)
       end
 
       # rubocop:disable Lint/BooleanSymbol
@@ -156,8 +166,14 @@ module Middleware
       def cache_key
         return @cache_key if defined?(@cache_key)
 
+        # Rack `xhr?` performs a case sensitive comparison, but Rails `xhr?`
+        # performs a case insensitive comparison. We use the latter everywhere
+        # else in the application, so we should use it here as well.
+        is_xhr = @env["HTTP_X_REQUESTED_WITH"]&.casecmp("XMLHttpRequest") == 0 ? "t" : "f"
+
         @cache_key =
-          +"ANON_CACHE_#{@env["HTTP_ACCEPT"]}_#{@env[Rack::RACK_URL_SCHEME]}_#{@env["HTTP_HOST"]}#{@env["REQUEST_URI"]}"
+          +"ANON_CACHE_#{is_xhr}_#{@env["HTTP_ACCEPT"]}_#{@env[Rack::RACK_URL_SCHEME]}_#{@env["HTTP_HOST"]}#{@env["REQUEST_URI"]}"
+
         @cache_key << AnonymousCache.build_cache_key(self)
         @cache_key
       end
@@ -166,8 +182,17 @@ module Middleware
         theme_ids.join(",")
       end
 
+      def key_forced_color_mode
+        val = @request.cookies["forced_color_mode"]
+        %w[light dark].include?(val) ? val : ""
+      end
+
       def key_compress_anon
         GlobalSetting.compress_anon_cache
+      end
+
+      def key_show_original_content
+        @request.cookies.key?(ContentLocalization::SHOW_ORIGINAL_COOKIE)
       end
 
       def theme_ids
@@ -227,7 +252,7 @@ module Middleware
             nil,
             "logged_in_anon_cache_#{@env["HTTP_HOST"]}/#{@env["REQUEST_URI"]}",
             GlobalSetting.force_anonymous_min_per_10_seconds,
-            10,
+            10.seconds,
           )
       end
 
@@ -239,7 +264,7 @@ module Middleware
       ADP = "action_dispatch.request.parameters"
 
       def should_force_anonymous?
-        if (queue_time = @env["REQUEST_QUEUE_SECONDS"]) && get?
+        if (queue_time = @env[Middleware::ProcessingRequest::REQUEST_QUEUE_SECONDS_ENV_KEY]) && get?
           if queue_time > GlobalSetting.force_anonymous_min_queue_seconds
             return check_logged_in_rate_limit!
           elsif queue_time >= MIN_TIME_TO_CHECK
@@ -301,7 +326,8 @@ module Middleware
 
         if status == 200 && cache_duration
           if GlobalSetting.anon_cache_store_threshold > 1
-            count = REDIS_STORE_SCRIPT.eval(Discourse.redis, [cache_key_count], [cache_duration])
+            count =
+              REDIS_STORE_SCRIPT.eval(Discourse.redis, [cache_key_count], [cache_duration.to_i])
 
             # technically lua will cast for us, but might as well be
             # prudent here, hence the to_i
@@ -351,7 +377,7 @@ module Middleware
       return @app.call(env) if defined?(@@disabled) && @@disabled
 
       if PAYLOAD_INVALID_REQUEST_METHODS.include?(env[Rack::REQUEST_METHOD]) &&
-           env[Rack::RACK_INPUT].size > 0
+           env[Rack::RACK_INPUT].read(1).present?
         return 413, { "Cache-Control" => "private, max-age=0, must-revalidate" }, []
       end
 
@@ -368,7 +394,8 @@ module Middleware
         helper.force_anonymous!
       end
 
-      if (env["HTTP_DISCOURSE_BACKGROUND"] == "true") && (queue_time = env["REQUEST_QUEUE_SECONDS"])
+      if (env["HTTP_DISCOURSE_BACKGROUND"] == "true") &&
+           (queue_time = env[Middleware::ProcessingRequest::REQUEST_QUEUE_SECONDS_ENV_KEY])
         max_time = GlobalSetting.background_requests_max_queue_length.to_f
         if max_time > 0 && queue_time.to_f > max_time
           return [

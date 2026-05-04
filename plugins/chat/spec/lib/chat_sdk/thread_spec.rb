@@ -2,7 +2,7 @@
 
 describe ChatSDK::Thread do
   describe ".update_title" do
-    fab!(:thread_1) { Fabricate(:chat_thread) }
+    fab!(:thread_1, :chat_thread)
 
     let(:params) do
       { title: "New Title", thread_id: thread_1.id, guardian: Discourse.system_user.guardian }
@@ -46,7 +46,7 @@ describe ChatSDK::Thread do
       end
     end
 
-    context "when the threadind is not enabled" do
+    context "when the threading is not enabled" do
       before { thread_1.channel.update!(threading_enabled: false) }
 
       it "fails" do
@@ -67,7 +67,7 @@ describe ChatSDK::Thread do
   end
 
   describe ".first_messages" do
-    fab!(:thread_1) { Fabricate(:chat_thread) }
+    fab!(:thread_1, :chat_thread)
     fab!(:messages) do
       Fabricate.times(5, :chat_message, thread: thread_1, chat_channel: thread_1.channel)
     end
@@ -80,7 +80,7 @@ describe ChatSDK::Thread do
   end
 
   describe ".last_messages" do
-    fab!(:thread_1) { Fabricate(:chat_thread) }
+    fab!(:thread_1, :chat_thread)
     fab!(:messages) do
       Fabricate.times(
         5,
@@ -101,7 +101,7 @@ describe ChatSDK::Thread do
   end
 
   describe ".messages" do
-    fab!(:thread_1) { Fabricate(:chat_thread) }
+    fab!(:thread_1, :chat_thread)
     fab!(:messages) do
       Fabricate.times(
         5,

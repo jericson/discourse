@@ -2,17 +2,31 @@ import { visit } from "@ember/test-helpers";
 import { test } from "qunit";
 import { acceptance } from "discourse/tests/helpers/qunit-helpers";
 
-acceptance("Chat | Hashtag CSS Generator", function (needs) {
-  const category1 = { id: 1, color: "ff0000", name: "category1" };
-  const category2 = { id: 2, color: "333", name: "category2" };
+acceptance("Hashtag CSS Generator", function (needs) {
+  const category1 = {
+    id: 1,
+    color: "ff0000",
+    style_type: "square",
+    name: "category1",
+  };
+  const category2 = {
+    id: 2,
+    color: "333",
+    style_type: "square",
+    name: "category2",
+  };
   const category3 = {
     id: 4,
     color: "2B81AF",
+    style_type: "square",
     parent_category_id: 1,
     name: "category3",
   };
 
-  needs.settings({ chat_enabled: true });
+  needs.settings({
+    chat_enabled: true,
+    enable_emoji: true,
+  });
   needs.user({
     has_chat_enabled: true,
   });
@@ -65,13 +79,13 @@ acceptance("Chat | Hashtag CSS Generator", function (needs) {
 
   test("hashtag CSS classes are generated", async function (assert) {
     await visit("/");
-    const cssTag = document.querySelector("style#hashtag-css-generator");
-    assert.equal(
-      cssTag.innerHTML,
-      ".hashtag-category-badge { background-color: var(--primary-medium); }\n" +
-        ".hashtag-color--category-1 { background-color: #ff0000; }\n" +
-        ".hashtag-color--category-2 { background-color: #333; }\n" +
-        ".hashtag-color--category-4 { background: linear-gradient(-90deg, #2B81AF 50%, #ff0000 50%); }"
-    );
+    assert
+      .dom("style#hashtag-css-generator", document.head)
+      .hasHtml(
+        ".hashtag-category-square { background-color: var(--primary-medium); }\n" +
+          ".hashtag-color--category-1 { background-color: #ff0000; }\n" +
+          ".hashtag-color--category-2 { background-color: #333; }\n" +
+          ".hashtag-color--category-4 { background: linear-gradient(-90deg, #2B81AF 50%, #ff0000 50%); }"
+      );
   });
 });

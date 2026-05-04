@@ -30,6 +30,15 @@
                 "text_color": {
                   "type": "string"
                 },
+                "style_type": {
+                  "type": "string"
+                },
+                "emoji": {
+                  "type": ["string", "null"]
+                },
+                "icon": {
+                  "type": ["string", "null"]
+                },
                 "slug": {
                   "type": "string"
                 },
@@ -70,6 +79,12 @@
                   "type": "boolean"
                 },
                 "topic_template": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "topic_title_placeholder": {
                   "type": [
                     "string",
                     "null"
@@ -186,6 +201,9 @@
                 "name",
                 "color",
                 "text_color",
+                "style_type",
+                "emoji",
+                "icon",
                 "slug",
                 "topic_count",
                 "post_count",
@@ -199,6 +217,7 @@
                 "notification_level",
                 "can_edit",
                 "topic_template",
+                "topic_title_placeholder",
                 "has_children",
                 "subcategory_count",
                 "sort_order",

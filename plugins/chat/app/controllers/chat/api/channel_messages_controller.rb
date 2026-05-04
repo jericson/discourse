@@ -1,81 +1,88 @@
 # frozen_string_literal: true
 
 class Chat::Api::ChannelMessagesController < Chat::ApiController
+  MAX_PAGE_SIZE = 50 # Previous limit to avoid abuses
+
   def index
-    with_service(::Chat::ListChannelMessages) do
+    ::Chat::ListChannelMessages.call(
+      options: {
+        max_page_size: MAX_PAGE_SIZE,
+      },
+      **service_params,
+    ) do |result|
       on_success { render_serialized(result, ::Chat::MessagesSerializer, root: false) }
-      on_failure { render(json: failed_json, status: 422) }
+      on_failure { render(json: failed_json, status: :unprocessable_entity) }
       on_failed_policy(:can_view_channel) { raise Discourse::InvalidAccess }
       on_failed_policy(:target_message_exists) { raise Discourse::NotFound }
       on_model_not_found(:channel) { raise Discourse::NotFound }
       on_failed_contract do |contract|
-        render(json: failed_json.merge(errors: contract.errors.full_messages), status: 400)
+        render(json: failed_json.merge(errors: contract.errors.full_messages), status: :bad_request)
       end
     end
   end
 
   def destroy
-    with_service(Chat::TrashMessage) do
+    Chat::TrashMessage.call(service_params) do
       on_success { render(json: success_json) }
-      on_failure { render(json: failed_json, status: 422) }
+      on_failure { render(json: failed_json, status: :unprocessable_entity) }
       on_model_not_found(:message) { raise Discourse::NotFound }
       on_failed_policy(:invalid_access) { raise Discourse::InvalidAccess }
       on_failed_contract do |contract|
-        render(json: failed_json.merge(errors: contract.errors.full_messages), status: 400)
+        render(json: failed_json.merge(errors: contract.errors.full_messages), status: :bad_request)
       end
     end
   end
 
   def bulk_destroy
-    with_service(Chat::TrashMessages) do
+    Chat::TrashMessages.call(service_params) do
       on_success { render(json: success_json) }
-      on_failure { render(json: failed_json, status: 422) }
+      on_failure { render(json: failed_json, status: :unprocessable_entity) }
       on_model_not_found(:messages) { raise Discourse::NotFound }
       on_failed_policy(:invalid_access) { raise Discourse::InvalidAccess }
       on_failed_contract do |contract|
-        render(json: failed_json.merge(errors: contract.errors.full_messages), status: 400)
+        render(json: failed_json.merge(errors: contract.errors.full_messages), status: :bad_request)
       end
     end
   end
 
   def restore
-    with_service(Chat::RestoreMessage) do
+    Chat::RestoreMessage.call(service_params) do
       on_success { render(json: success_json) }
-      on_failure { render(json: failed_json, status: 422) }
+      on_failure { render(json: failed_json, status: :unprocessable_entity) }
       on_failed_policy(:invalid_access) { raise Discourse::InvalidAccess }
       on_model_not_found(:message) { raise Discourse::NotFound }
       on_failed_contract do |contract|
-        render(json: failed_json.merge(errors: contract.errors.full_messages), status: 400)
+        render(json: failed_json.merge(errors: contract.errors.full_messages), status: :bad_request)
       end
     end
   end
 
   def update
-    with_service(Chat::UpdateMessage) do
-      on_success { render json: success_json.merge(message_id: result[:message].id) }
-      on_failure { render(json: failed_json, status: 422) }
+    Chat::UpdateMessage.call(service_params) do
+      on_success { |message:| render json: success_json.merge(message_id: message.id) }
+      on_failure { render(json: failed_json, status: :unprocessable_entity) }
       on_model_not_found(:message) { raise Discourse::NotFound }
       on_model_errors(:message) do |model|
         render_json_error(model.errors.map(&:full_message).join(", "))
       end
       on_failed_contract do |contract|
-        render(json: failed_json.merge(errors: contract.errors.full_messages), status: 400)
+        render(json: failed_json.merge(errors: contract.errors.full_messages), status: :bad_request)
       end
     end
   end
 
   def create
-    # users can't force a thread through JSON API
-    params[:force_thread] = false
-
     Chat::MessageRateLimiter.run!(current_user)
 
-    with_service(Chat::CreateMessage) do
-      on_success { render json: success_json.merge(message_id: result[:message_instance].id) }
-      on_failure { render(json: failed_json, status: 422) }
+    Chat::CreateMessage.call(service_params) do
+      on_success do |message_instance:|
+        render json: success_json.merge(message_id: message_instance.id)
+      end
+      on_failure { render(json: failed_json, status: :unprocessable_entity) }
       on_failed_policy(:no_silenced_user) { raise Discourse::InvalidAccess }
       on_model_not_found(:channel) { raise Discourse::NotFound }
       on_failed_policy(:allowed_to_join_channel) { raise Discourse::InvalidAccess }
+      on_failed_policy(:accept_blocks) { raise Discourse::InvalidAccess }
       on_model_not_found(:membership) { raise Discourse::NotFound }
       on_failed_policy(:ensure_reply_consistency) { raise Discourse::NotFound }
       on_failed_policy(:allowed_to_create_message_in_channel) do |policy|
@@ -91,7 +98,7 @@ class Chat::Api::ChannelMessagesController < Chat::ApiController
         render_json_error(model.errors.map(&:full_message).join(", "))
       end
       on_failed_contract do |contract|
-        render(json: failed_json.merge(errors: contract.errors.full_messages), status: 400)
+        render(json: failed_json.merge(errors: contract.errors.full_messages), status: :bad_request)
       end
     end
   end

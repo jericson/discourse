@@ -4,25 +4,55 @@ module Chat
   # Service responsible for updating a message.
   #
   # @example
-  #  Chat::UpdateMessage.call(message_id: 2, guardian: guardian, message: "A new message")
+  #  Chat::UpdateMessage.call(guardian: guardian, params: { message: "A new message", message_id: 2 })
   #
+
   class UpdateMessage
     include Service::Base
 
-    # @!method call(message_id:, guardian:, message:, upload_ids:)
+    # @!method self.call(guardian:, params:, options:)
     #   @param guardian [Guardian]
-    #   @param message_id [Integer]
-    #   @param message [String]
-    #   @param upload_ids [Array<Integer>] IDs of uploaded documents
+    #   @param [Hash] params
+    #   @option params [Integer] :message_id
+    #   @option params [String] :message
+    #   @option params [Array<Integer>] :upload_ids IDs of uploaded documents
+    #   @param [Hash] options
+    #   @option options [Boolean] (true) :strip_whitespaces
+    #   @option options [Boolean] :process_inline
+    #   @return [Service::Base::Context]
 
-    contract
+    options do
+      attribute :strip_whitespaces, :boolean, default: true
+      attribute :process_inline, :boolean, default: -> { Rails.env.test? }
+    end
+
+    params do
+      attribute :message_id, :string
+      attribute :channel_id, :integer
+      attribute :message, :string
+      attribute :upload_ids, :array
+
+      validates :message_id, presence: true
+      validates :channel_id, presence: true
+      validates :message, presence: true, if: -> { upload_ids.blank? }
+
+      after_validation do
+        next if message.blank?
+        self.message =
+          TextCleaner.clean(
+            message,
+            strip_whitespaces: options.strip_whitespaces,
+            strip_zero_width_spaces: true,
+          )
+      end
+    end
+
     model :message
     model :uploads, optional: true
     step :enforce_membership
     model :membership
     policy :can_modify_channel_message
     policy :can_modify_message
-    step :clean_message
 
     transaction do
       step :modify_message
@@ -32,21 +62,7 @@ module Chat
       step :publish
     end
 
-    class Contract
-      attribute :message_id, :string
-      validates :message_id, presence: true
-
-      attribute :message, :string
-      validates :message, presence: true, if: -> { upload_ids.blank? }
-
-      attribute :upload_ids, :array
-
-      attribute :streaming, :boolean, default: false
-
-      attribute :strip_whitespaces, :boolean, default: true
-
-      attribute :process_inline, :boolean, default: Rails.env.test?
-    end
+    step :index_message
 
     private
 
@@ -54,31 +70,36 @@ module Chat
       message.chat_channel.add(guardian.user) if guardian.user.bot?
     end
 
-    def fetch_message(contract:)
-      ::Chat::Message.includes(
-        :chat_mentions,
-        :bookmarks,
-        :chat_webhook_event,
-        :uploads,
-        :revisions,
-        reactions: [:user],
-        thread: [:channel, last_message: [:user]],
-        chat_channel: [
-          :last_message,
-          :chat_channel_archive,
-          chatable: [:topic_only_relative_url, direct_message_users: [user: :user_option]],
-        ],
-        user: :user_status,
-      ).find_by(id: contract.message_id)
+    def fetch_message(params:)
+      ::Chat::Message
+        .includes(
+          :chat_mentions,
+          :bookmarks,
+          :chat_webhook_event,
+          :revisions,
+          reactions: [:user],
+          thread: [:channel, last_message: [:user]],
+          chat_channel: [
+            :last_message,
+            :chat_channel_archive,
+            chatable: [:topic_only_relative_url, direct_message_users: [user: :user_option]],
+          ],
+          user: :user_status,
+        )
+        .includes(uploads: { optimized_videos: :optimized_upload })
+        .find_by(id: params.message_id, chat_channel_id: params.channel_id)
     end
 
     def fetch_membership(guardian:, message:)
       message.chat_channel.membership_for(guardian.user)
     end
 
-    def fetch_uploads(contract:, guardian:)
+    def fetch_uploads(params:, guardian:)
       return if !SiteSetting.chat_allow_uploads
-      guardian.user.uploads.where(id: contract.upload_ids)
+      Upload
+        .where(id: params.upload_ids)
+        .joins(:user_uploads)
+        .where(user_uploads: { user: guardian.user })
     end
 
     def can_modify_channel_message(guardian:, message:)
@@ -89,21 +110,12 @@ module Chat
       guardian.can_edit_chat?(message)
     end
 
-    def clean_message(contract:)
-      contract.message =
-        TextCleaner.clean(
-          contract.message,
-          strip_whitespaces: contract.strip_whitespaces,
-          strip_zero_width_spaces: true,
-        )
-    end
-
-    def modify_message(contract:, message:, guardian:, uploads:)
-      message.message = contract.message
+    def modify_message(params:, message:, guardian:, uploads:)
+      message.message = params.message
       message.last_editor_id = guardian.user.id
       message.cook
 
-      return if uploads&.size != contract.upload_ids.to_a.size
+      return if uploads&.size != params.upload_ids.to_a.size
 
       new_upload_ids = uploads.map(&:id)
       existing_upload_ids = message.upload_ids
@@ -127,12 +139,11 @@ module Chat
       prev_message = message.message_before_last_save || message.message_was
       return if !should_create_revision(message, prev_message, guardian)
 
-      context.revision =
-        message.revisions.create!(
-          old_message: prev_message,
-          new_message: message.message,
-          user_id: guardian.user.id,
-        )
+      context[:revision] = message.revisions.create!(
+        old_message: prev_message,
+        new_message: message.message,
+        user_id: guardian.user.id,
+      )
     end
 
     def should_create_revision(new_message, prev_message, guardian)
@@ -157,14 +168,14 @@ module Chat
       chars_edited > max_edited_chars
     end
 
-    def publish(message:, guardian:, contract:)
-      edit_timestamp = context.revision&.created_at&.iso8601(6) || Time.zone.now.iso8601(6)
+    def publish(message:, guardian:, options:)
+      edit_timestamp = context[:revision]&.created_at&.iso8601(6) || Time.zone.now.iso8601(6)
 
       ::Chat::Publisher.publish_edit!(message.chat_channel, message)
 
       DiscourseEvent.trigger(:chat_message_edited, message, message.chat_channel, message.user)
 
-      if contract.process_inline
+      if options.process_inline
         Jobs::Chat::ProcessMessage.new.execute(
           { chat_message_id: message.id, edit_timestamp: edit_timestamp },
         )
@@ -177,6 +188,12 @@ module Chat
 
       if message.thread.present?
         ::Chat::Publisher.publish_thread_original_message_metadata!(message.thread)
+      end
+    end
+
+    def index_message(message:)
+      Scheduler::Defer.later "Index chat message for search" do
+        SearchIndexer.index(message)
       end
     end
   end

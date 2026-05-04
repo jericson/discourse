@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-describe "Uploading files in the composer to S3", type: :system do
-  fab!(:current_user) { Fabricate(:admin) }
+describe "Uploading files in the composer to S3" do
+  fab!(:current_user, :admin)
   fab!(:other_user) { Fabricate(:user, username: "otherguy") }
 
   let(:modal) { PageObjects::Modals::Base.new }
@@ -18,14 +18,13 @@ describe "Uploading files in the composer to S3", type: :system do
     def expect_first_post_to_have_secure_upload
       img = first_post_img
       expect(img["src"]).to include("/secure-uploads")
+
       topic = topic_page.current_topic
       expect(topic.first_post.uploads.first.secure).to eq(true)
     end
 
     it "marks uploads inside of private message posts as secure" do
-      skip_unless_s3_system_specs_enabled!
-
-      setup_s3_system_test(enable_secure_uploads: true)
+      setup_or_skip_s3_system_test(enable_secure_uploads: true)
       sign_in(current_user)
 
       topic_page.open_new_message
@@ -34,7 +33,7 @@ describe "Uploading files in the composer to S3", type: :system do
       composer.select_pm_user("otherguy")
 
       file_path = file_from_fixtures("logo.png", "images").path
-      attach_file(file_path) { composer.click_toolbar_button("upload") }
+      attach_file("file-uploader", file_path, make_visible: true)
 
       expect(page).to have_no_css("#file-uploading")
       expect(composer.preview).to have_css(".image-wrapper")
@@ -45,10 +44,8 @@ describe "Uploading files in the composer to S3", type: :system do
     end
 
     it "marks uploads inside of private category posts as secure" do
-      skip_unless_s3_system_specs_enabled!
-
       private_category = Fabricate(:private_category, group: Fabricate(:group))
-      setup_s3_system_test(enable_secure_uploads: true)
+      setup_or_skip_s3_system_test(enable_secure_uploads: true)
       sign_in(current_user)
 
       topic_page.open_new_topic
@@ -57,7 +54,7 @@ describe "Uploading files in the composer to S3", type: :system do
       composer.switch_category(private_category.name)
 
       file_path = file_from_fixtures("logo.png", "images").path
-      attach_file(file_path) { composer.click_toolbar_button("upload") }
+      attach_file("file-uploader", file_path, make_visible: true)
 
       expect(page).to have_no_css("#file-uploading")
       expect(composer.preview).to have_css(".image-wrapper")
@@ -68,10 +65,8 @@ describe "Uploading files in the composer to S3", type: :system do
     end
 
     it "marks uploads for all posts as secure when login_required" do
-      skip_unless_s3_system_specs_enabled!
-
       SiteSetting.login_required = true
-      setup_s3_system_test(enable_secure_uploads: true)
+      setup_or_skip_s3_system_test(enable_secure_uploads: true)
       sign_in(current_user)
 
       topic_page.open_new_topic
@@ -79,7 +74,7 @@ describe "Uploading files in the composer to S3", type: :system do
       composer.fill_title("This is a test PM for secure uploads")
 
       file_path = file_from_fixtures("logo.png", "images").path
-      attach_file(file_path) { composer.click_toolbar_button("upload") }
+      attach_file("file-uploader", file_path, make_visible: true)
 
       expect(page).to have_no_css("#file-uploading")
       expect(composer.preview).to have_css(".image-wrapper")
@@ -90,9 +85,7 @@ describe "Uploading files in the composer to S3", type: :system do
     end
 
     it "doesn't mark uploads for public posts as secure" do
-      skip_unless_s3_system_specs_enabled!
-
-      setup_s3_system_test(enable_secure_uploads: true)
+      setup_or_skip_s3_system_test(enable_secure_uploads: true)
       sign_in(current_user)
 
       topic_page.open_new_topic
@@ -100,7 +93,7 @@ describe "Uploading files in the composer to S3", type: :system do
       composer.fill_title("This is a test PM for secure uploads")
 
       file_path = file_from_fixtures("logo.png", "images").path
-      attach_file(file_path) { composer.click_toolbar_button("upload") }
+      attach_file("file-uploader", file_path, make_visible: true)
 
       expect(page).to have_no_css("#file-uploading")
       expect(composer.preview).to have_css(".image-wrapper")

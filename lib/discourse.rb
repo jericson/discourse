@@ -4,17 +4,16 @@ require "cache"
 require "open3"
 require "plugin/instance"
 require "version"
+require "version_compatibility"
+require "git_utils"
 
 module Discourse
-  DB_POST_MIGRATE_PATH ||= "db/post_migrate"
-  REQUESTED_HOSTNAME ||= "REQUESTED_HOSTNAME"
+  DB_POST_MIGRATE_PATH = "db/post_migrate"
   MAX_METADATA_FILE_SIZE = 64.kilobytes
+  LOCALE_PARAM = "tl"
 
   class Utils
-    URI_REGEXP ||= URI.regexp(%w[http https])
-
-    # TODO: Remove this once we drop support for Ruby 2.
-    EMPTY_KEYWORDS ||= {}
+    URI_REGEXP = URI.regexp(%w[http https])
 
     # Usage:
     #   Discourse::Utils.execute_command("pwd", chdir: 'mydirectory')
@@ -109,6 +108,11 @@ module Discourse
       FileUtils.mkdir_p(File.join(Rails.root, "tmp"))
       temp_destination = File.join(Rails.root, "tmp", SecureRandom.hex)
       execute_command("ln", "-s", source, temp_destination)
+
+      # Remove existing symlink first to prevent FileUtils.mv from moving
+      # the temp file inside the symlinked directory instead of replacing it
+      File.delete(destination) if File.symlink?(destination)
+
       FileUtils.mv(temp_destination, destination)
 
       nil
@@ -116,6 +120,7 @@ module Discourse
 
     class CommandError < RuntimeError
       attr_reader :status, :stdout, :stderr
+
       def initialize(message, status: nil, stdout: nil, stderr: nil)
         super(message)
         @status = status
@@ -168,13 +173,8 @@ module Discourse
         stdout, stderr, status = Open3.capture3(*args, chdir: chdir)
 
         if !status.exited? || !success_status_codes.include?(status.exitstatus)
-          failure_message = "#{failure_message}\n" if !failure_message.blank?
-          raise CommandError.new(
-                  "#{caller[0]}: #{failure_message}#{stderr}",
-                  stdout: stdout,
-                  stderr: stderr,
-                  status: status,
-                )
+          message = [command.join(" "), failure_message, stderr].filter(&:present?).join("\n")
+          raise CommandError.new(message, stdout: stdout, stderr: stderr, status: status)
         end
 
         stdout
@@ -214,7 +214,7 @@ module Discourse
     return if ex.class == Jobs::HandledExceptionWrapper
 
     context ||= {}
-    parent_logger ||= Sidekiq
+    parent_logger ||= Sidekiq.default_configuration
 
     job = context[:job]
 
@@ -309,6 +309,9 @@ module Discourse
   class Deprecation < StandardError
   end
 
+  class MissingIconError < StandardError
+  end
+
   class ScssError < StandardError
   end
 
@@ -329,7 +332,7 @@ module Discourse
   end
 
   # list of pixel ratios Discourse tries to optimize for
-  PIXEL_RATIOS ||= [1, 1.5, 2, 3]
+  PIXEL_RATIOS = [1, 1.5, 2, 3]
 
   def self.avatar_sizes
     # TODO: should cache these when we get a notification system for site settings
@@ -396,11 +399,16 @@ module Discourse
     plugins.find_all { |p| !p.metadata.official? }
   end
 
+  def self.preinstalled_plugins
+    plugins.find_all(&:preinstalled?)
+  end
+
   def self.find_plugins(args)
     plugins.select do |plugin|
       next if args[:include_official] == false && plugin.metadata.official?
       next if args[:include_unofficial] == false && !plugin.metadata.official?
       next if !args[:include_disabled] && !plugin.enabled?
+      next if args[:only] && !args[:only].include?(plugin.directory_name)
 
       true
     end
@@ -453,20 +461,80 @@ module Discourse
 
     plugins = apply_asset_filters(plugins, :js, args[:request])
 
-    plugins.flat_map do |plugin|
-      assets = []
-      assets << "plugins/#{plugin.directory_name}" if plugin.js_asset_exists?
-      assets << "plugins/#{plugin.directory_name}_extra" if plugin.extra_js_asset_exists?
-      # TODO: make admin asset only load for admins
-      assets << "plugins/#{plugin.directory_name}_admin" if plugin.admin_js_asset_exists?
-      assets
+    assets = []
+
+    plugins.each do |plugin|
+      if plugin.js_asset_exists?
+        if logical_path = Plugin::JsManager.digested_logical_path_for(plugin.directory_name, "main")
+          assets << {
+            name: logical_path,
+            imports: Plugin::JsManager.import_paths_for(plugin.directory_name, "main"),
+            plugin: plugin,
+            type_module: true,
+            importmap_name: "discourse/plugins/#{plugin.name}",
+          }
+        end
+      end
+
+      if plugin.extra_js_asset_exists?
+        assets << {
+          name: "plugins/#{plugin.directory_name}_extra",
+          plugin: plugin,
+          type_module: false,
+        }
+      end
+
+      if args[:include_admin_asset] && plugin.admin_js_asset_exists?
+        if logical_path =
+             Plugin::JsManager.digested_logical_path_for(plugin.directory_name, "admin")
+          assets << {
+            name: logical_path,
+            imports: Plugin::JsManager.import_paths_for(plugin.directory_name, "admin"),
+            plugin: plugin,
+            type_module: true,
+          }
+        end
+      end
+
+      if args[:include_test_assets_for]&.include?(plugin.directory_name) &&
+           plugin.test_js_asset_exists?
+        if logical_path = Plugin::JsManager.digested_logical_path_for(plugin.directory_name, "test")
+          assets << {
+            name: logical_path,
+            imports: Plugin::JsManager.import_paths_for(plugin.directory_name, "test"),
+            plugin: plugin,
+            type_module: true,
+          }
+        end
+      end
     end
+
+    assets.each do |asset|
+      asset[:plugin_attributes] = {
+        "data-official": !!asset[:plugin].metadata&.official?,
+        "data-preinstalled": asset[:plugin].preinstalled?,
+        "data-plugin-name": asset[:plugin].name,
+      }
+    end
+
+    assets
   end
 
   def self.assets_digest
     @assets_digest ||=
       begin
-        digest = Digest::MD5.hexdigest(ActionView::Base.assets_manifest.assets.values.sort.join)
+        digest =
+          Digest::MD5.hexdigest(
+            Rails
+              .application
+              .assets
+              .load_path
+              .assets
+              .map(&:digested_path)
+              .map(&:to_s)
+              .sort
+              .join("|"),
+          )
 
         channel = "/global/asset-version"
         message = MessageBus.last_message(channel)
@@ -476,7 +544,11 @@ module Discourse
       end
   end
 
-  BUILTIN_AUTH ||= [
+  BUILTIN_AUTH = [
+    Auth::AuthProvider.new(
+      authenticator: Auth::DiscourseIdAuthenticator.new,
+      icon: "fab-discourse",
+    ),
     Auth::AuthProvider.new(
       authenticator: Auth::FacebookAuthenticator.new,
       frame_width: 580,
@@ -489,7 +561,7 @@ module Discourse
       frame_height: 500,
     ), # Custom icon implemented in client
     Auth::AuthProvider.new(authenticator: Auth::GithubAuthenticator.new, icon: "fab-github"),
-    Auth::AuthProvider.new(authenticator: Auth::TwitterAuthenticator.new, icon: "fab-twitter"),
+    Auth::AuthProvider.new(authenticator: Auth::TwitterAuthenticator.new, icon: "fab-x-twitter"),
     Auth::AuthProvider.new(authenticator: Auth::DiscordAuthenticator.new, icon: "fab-discord"),
     Auth::AuthProvider.new(
       authenticator: Auth::LinkedInOidcAuthenticator.new,
@@ -512,7 +584,7 @@ module Discourse
   end
 
   def self.enabled_authenticators
-    authenticators.select { |authenticator| authenticator.enabled? }
+    authenticators.select(&:enabled?)
   end
 
   def self.cache
@@ -605,6 +677,10 @@ module Discourse
     nil
   end
 
+  def self.beacon_pv_tracking_path
+    "#{Discourse.base_path}/srv/pv"
+  end
+
   class << self
     alias_method :base_url_no_path, :base_url_no_prefix
   end
@@ -657,33 +733,37 @@ module Discourse
 
   LAST_POSTGRES_READONLY_KEY = "postgres:last_readonly"
 
-  READONLY_MODE_KEY_TTL ||= 60
-  READONLY_MODE_KEY ||= "readonly_mode"
-  PG_READONLY_MODE_KEY ||= "readonly_mode:postgres"
-  PG_READONLY_MODE_KEY_TTL ||= 300
-  USER_READONLY_MODE_KEY ||= "readonly_mode:user"
-  PG_FORCE_READONLY_MODE_KEY ||= "readonly_mode:postgres_force"
+  READONLY_MODE_KEY_TTL = 60
+  READONLY_MODE_KEY = "readonly_mode"
+  PG_READONLY_MODE_KEY = "readonly_mode:postgres"
+  PG_READONLY_MODE_KEY_TTL = 300
+  USER_READONLY_MODE_KEY = "readonly_mode:user"
+  PG_FORCE_READONLY_MODE_KEY = "readonly_mode:postgres_force"
 
   # Pseudo readonly mode, where staff can still write
-  STAFF_WRITES_ONLY_MODE_KEY ||= "readonly_mode:staff_writes_only"
+  STAFF_WRITES_ONLY_MODE_KEY = "readonly_mode:staff_writes_only"
 
-  READONLY_KEYS ||= [
+  READONLY_KEYS = [
     READONLY_MODE_KEY,
     PG_READONLY_MODE_KEY,
     USER_READONLY_MODE_KEY,
     PG_FORCE_READONLY_MODE_KEY,
   ]
 
-  def self.enable_readonly_mode(key = READONLY_MODE_KEY)
+  def self.enable_readonly_mode(key = READONLY_MODE_KEY, expires: nil)
     if key == PG_READONLY_MODE_KEY || key == PG_FORCE_READONLY_MODE_KEY
       Sidekiq.pause!("pg_failover") if !Sidekiq.paused?
     end
 
-    if [USER_READONLY_MODE_KEY, PG_FORCE_READONLY_MODE_KEY, STAFF_WRITES_ONLY_MODE_KEY].include?(
-         key,
-       )
-      Discourse.redis.set(key, 1)
-    else
+    if expires.nil?
+      expires = [
+        USER_READONLY_MODE_KEY,
+        PG_FORCE_READONLY_MODE_KEY,
+        STAFF_WRITES_ONLY_MODE_KEY,
+      ].exclude?(key)
+    end
+
+    if expires
       ttl =
         case key
         when PG_READONLY_MODE_KEY
@@ -694,6 +774,8 @@ module Discourse
 
       Discourse.redis.setex(key, ttl, 1)
       keep_readonly_mode(key, ttl: ttl) if !Rails.env.test?
+    else
+      Discourse.redis.set(key, 1)
     end
 
     MessageBus.publish(readonly_channel, true)
@@ -829,42 +911,31 @@ module Discourse
   end
 
   def self.git_version
-    @git_version ||=
-      begin
-        git_cmd = "git rev-parse HEAD"
-        self.try_git(git_cmd, Discourse::VERSION::STRING)
-      end
+    @git_version ||= GitUtils.git_version
   end
 
   def self.git_branch
-    @git_branch ||=
-      self.try_git("git branch --show-current", nil) ||
-        self.try_git("git config user.discourse-version", "unknown")
+    @git_branch ||= GitUtils.git_branch
   end
 
   def self.full_version
-    @full_version ||=
-      begin
-        git_cmd = 'git describe --dirty --match "v[0-9]*" 2> /dev/null'
-        self.try_git(git_cmd, "unknown")
-      end
+    @full_version ||= GitUtils.full_version
   end
 
   def self.last_commit_date
-    @last_commit_date ||=
-      begin
-        git_cmd = 'git log -1 --format="%ct"'
-        seconds = self.try_git(git_cmd, nil)
-        seconds.nil? ? nil : DateTime.strptime(seconds, "%s")
-      end
+    @last_commit_date ||= GitUtils.last_commit_date
   end
 
   def self.try_git(git_cmd, default_value)
-    begin
-      `#{git_cmd}`.strip
-    rescue StandardError
-      default_value
-    end.presence || default_value
+    GitUtils.try_git(git_cmd, default_value)
+  end
+
+  def self.user_agent
+    if git_version.present?
+      @user_agent ||= "Discourse/#{VERSION::STRING}-#{git_version}; +https://www.discourse.org/"
+    else
+      @user_agent ||= "Discourse/#{VERSION::STRING}; +https://www.discourse.org/"
+    end
   end
 
   # Either returns the site_contact_username user or the first admin.
@@ -876,7 +947,7 @@ module Discourse
     user ||= (system_user || User.admins.real.order(:id).first)
   end
 
-  SYSTEM_USER_ID ||= -1
+  SYSTEM_USER_ID = -1
 
   def self.system_user
     @system_users ||= {}
@@ -915,6 +986,45 @@ module Discourse
   end
 
   # all forking servers must call this
+  # before forking, otherwise the forked process might
+  # be in a bad state
+  def self.before_fork
+    if GlobalSetting.mini_racer_single_threaded
+      ObjectSpace.each_object(MiniRacer::Context) { |c| c.low_memory_notification }
+    else
+      # V8 does not support forking, make sure all contexts are disposed
+      ObjectSpace.each_object(MiniRacer::Context) { |c| c.dispose }
+    end
+
+    # get rid of rubbish so we don't share it
+    Process.warmup
+  end
+
+  # Called in web worker processes after fork to apply worker-specific
+  # database variable overrides (e.g. a stricter statement_timeout for
+  # web requests than for sidekiq jobs). Configured via GlobalSettings
+  # with the `unicorn_worker_db_variables_` prefix.
+  def self.apply_worker_db_variables_overrides
+    variables_overrides = {}
+    prefix = "unicorn_worker_db_variables_"
+
+    GlobalSetting.provider.keys.each do |key|
+      if key.start_with?(prefix)
+        variables_overrides[key.to_s.sub(prefix, "").downcase.to_sym] = GlobalSetting.public_send(
+          key,
+        )
+      end
+    end
+
+    if variables_overrides.any?
+      ActiveRecord::Base.configurations =
+        Rails.application.config.database_configuration(variables_overrides:)
+      ActiveRecord::Base.connection_handler.clear_all_connections!(:all)
+      ActiveRecord::Base.establish_connection
+    end
+  end
+
+  # all forking servers must call this
   # after fork, otherwise Discourse will be
   # in a bad state
   def self.after_fork
@@ -925,16 +1035,12 @@ module Discourse
     Rails.cache.reconnect
     Discourse.cache.reconnect
     Logster.store.redis.reconnect
-    # shuts down all connections in the pool
-    Sidekiq.redis_pool.shutdown { |conn| conn.disconnect! }
-    # re-establish
-    Sidekiq.redis = sidekiq_redis_config
+    Sidekiq.redis_pool.reload(&:close)
 
-    # in case v8 was initialized we want to make sure it is nil
-    PrettyText.reset_context
-
-    DiscourseJsProcessor::Transpiler.reset_context if defined?(DiscourseJsProcessor::Transpiler)
-    JsLocaleHelper.reset_context if defined?(JsLocaleHelper)
+    if !GlobalSetting.mini_racer_single_threaded
+      PrettyText.reset_context
+      AssetProcessor.reset_context
+    end
 
     # warm up v8 after fork, that way we do not fork a v8 context
     # it may cause issues if bg threads in a v8 isolate randomly stop
@@ -1014,7 +1120,7 @@ module Discourse
 
   def self.deprecate(warning, drop_from: nil, since: nil, raise_error: false, output_in_test: false)
     location = caller_locations[1].yield_self { |l| "#{l.path}:#{l.lineno}:in \`#{l.label}\`" }
-    warning = ["Deprecation notice:", warning]
+    warning = ["DEPRECATION NOTICE:", warning]
     warning << "(deprecated since Discourse #{since})" if since
     warning << "(removal in Discourse #{drop_from})" if drop_from
     warning << "\nAt #{location}"
@@ -1034,23 +1140,42 @@ module Discourse
       Rails.logger.warn(warning)
       begin
         Discourse.redis.without_namespace.setex(redis_key, 3600, "x")
-      rescue Redis::CommandError => e
-        raise unless e.message =~ /READONLY/
+      rescue Redis::ReadOnlyError
       end
     end
     warning
   end
 
-  SIDEKIQ_NAMESPACE ||= "sidekiq"
+  SIDEKIQ_NAMESPACE = "sidekiq"
 
   def self.sidekiq_redis_config
-    conf = GlobalSetting.redis_config.dup
-    conf[:namespace] = SIDEKIQ_NAMESPACE
-    conf
+    GlobalSetting
+      .redis_config
+      .dup
+      .except(:client_implementation, :custom)
+      .tap { |config| config.merge!(db: config[:db].to_i + 1) }
   end
 
   def self.static_doc_topic_ids
     [SiteSetting.tos_topic_id, SiteSetting.guidelines_topic_id, SiteSetting.privacy_topic_id]
+  end
+
+  def self.site_creation_date
+    @creation_dates ||= {}
+    current_db = RailsMultisite::ConnectionManagement.current_db
+    @creation_dates[current_db] ||= begin
+      result = DB.query_single <<~SQL
+          SELECT created_at
+          FROM schema_migration_details
+          ORDER BY created_at
+          LIMIT 1
+        SQL
+      result.first
+    end
+  end
+
+  def self.clear_site_creation_date_cache
+    @creation_dates = {}
   end
 
   cattr_accessor :last_ar_cache_reset
@@ -1152,6 +1277,12 @@ module Discourse
       Thread.new { LetterAvatar.image_magick_version },
       Thread.new { SvgSprite.core_svgs },
       Thread.new { EmberCli.script_chunks },
+      Thread.new do
+        if GlobalSetting.mini_racer_single_threaded
+          PrettyText.cook("warm up **pretty text**")
+          AssetProcessor.v8
+        end
+      end,
     ].each(&:join)
   ensure
     @preloaded_rails = true
@@ -1163,22 +1294,8 @@ module Discourse
     ENV["RAILS_ENV"] == "test" && ENV["TEST_ENV_NUMBER"]
   end
 
-  CDN_REQUEST_METHODS ||= %w[GET HEAD OPTIONS]
-
-  def self.is_cdn_request?(env, request_method)
-    return if CDN_REQUEST_METHODS.exclude?(request_method)
-
-    cdn_hostnames = GlobalSetting.cdn_hostnames
-    return if cdn_hostnames.blank?
-
-    requested_hostname = env[REQUESTED_HOSTNAME] || env[Rack::HTTP_HOST]
-    cdn_hostnames.include?(requested_hostname)
-  end
-
   def self.apply_cdn_headers(headers)
     headers["Access-Control-Allow-Origin"] = "*"
-    headers["Access-Control-Allow-Methods"] = CDN_REQUEST_METHODS.join(", ")
-    headers
   end
 
   def self.allow_dev_populate?
@@ -1196,12 +1313,25 @@ module Discourse
   end
 
   def self.anonymous_locale(request)
-    locale =
-      HttpLanguageParser.parse(request.cookies["locale"]) if SiteSetting.set_locale_from_cookie
+    locale = request.params[LOCALE_PARAM] if SiteSetting.set_locale_from_param
+    locale ||= request.cookies["locale"] if SiteSetting.set_locale_from_cookie
     locale ||=
-      HttpLanguageParser.parse(
-        request.env["HTTP_ACCEPT_LANGUAGE"],
-      ) if SiteSetting.set_locale_from_accept_language_header
-    locale
+      request.env["HTTP_ACCEPT_LANGUAGE"] if SiteSetting.set_locale_from_accept_language_header
+    HttpLanguageParser.parse(locale)
+  end
+
+  # For test environment only
+  def self.enable_sidekiq_logging
+    @@sidekiq_logging_enabled = true
+  end
+
+  # For test environment only
+  def self.disable_sidekiq_logging
+    @@sidekiq_logging_enabled = false
+  end
+
+  def self.enable_sidekiq_logging?
+    ENV["DISCOURSE_LOG_SIDEKIQ"] == "1" ||
+      (defined?(@@sidekiq_logging_enabled) && @@sidekiq_logging_enabled)
   end
 end

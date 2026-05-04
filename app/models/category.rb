@@ -3,11 +3,7 @@
 class Category < ActiveRecord::Base
   RESERVED_SLUGS = ["none"]
 
-  self.ignored_columns = [
-    :suppress_from_latest, # TODO: Remove when 20240212034010_drop_deprecated_columns has been promoted to pre-deploy
-    :required_tag_group_id, # TODO: Remove when 20240212034010_drop_deprecated_columns has been promoted to pre-deploy
-    :min_tags_from_required_group, # TODO: Remove when 20240212034010_drop_deprecated_columns has been promoted to pre-deploy
-  ]
+  self.ignored_columns = [:reviewable_by_group_id]
 
   include Searchable
   include Positionable
@@ -15,8 +11,10 @@ class Category < ActiveRecord::Base
   include CategoryHashtag
   include AnonCacheInvalidator
   include HasDestroyedWebHook
+  include Localizable
 
   SLUG_REF_SEPARATOR = ":"
+  DEFAULT_TEXT_COLORS = %w[FFFFFF 000000]
 
   belongs_to :topic
   belongs_to :topic_only_relative_url,
@@ -35,9 +33,21 @@ class Category < ActiveRecord::Base
   has_many :category_users
   has_many :category_featured_topics
   has_many :featured_topics, through: :category_featured_topics, source: :topic
+  has_many :category_localizations, dependent: :destroy
 
   has_many :category_groups, dependent: :destroy
+  has_many :category_moderation_groups, dependent: :destroy
+  has_many :category_posting_review_groups, dependent: :destroy
+  has_many :topic_posting_review_records,
+           -> { where(post_type: :topic) },
+           class_name: "CategoryPostingReviewGroup"
+  has_many :reply_posting_review_records,
+           -> { where(post_type: :reply) },
+           class_name: "CategoryPostingReviewGroup"
   has_many :groups, through: :category_groups
+  has_many :moderating_groups, through: :category_moderation_groups, source: :group
+  has_many :topic_posting_review_groups, through: :topic_posting_review_records, source: :group
+  has_many :reply_posting_review_groups, through: :reply_posting_review_records, source: :group
   has_many :topic_timers, dependent: :destroy
   has_many :upload_references, as: :target, dependent: :destroy
 
@@ -52,12 +62,19 @@ class Category < ActiveRecord::Base
            :require_topic_approval,
            :require_topic_approval=,
            :require_topic_approval?,
+           :nested_replies_default,
+           :nested_replies_default=,
+           :topic_posting_review_mode,
+           :topic_posting_review_mode=,
+           :reply_posting_review_mode,
+           :reply_posting_review_mode=,
            to: :category_setting,
            allow_nil: true
 
   has_and_belongs_to_many :web_hooks
 
   accepts_nested_attributes_for :category_setting, update_only: true
+  accepts_nested_attributes_for :category_localizations, allow_destroy: true
 
   validates :user_id, presence: true
 
@@ -83,6 +100,7 @@ class Category < ActiveRecord::Base
   validate :email_in_validator
   validate :ensure_slug
   validate :permissions_compatibility_validator
+  validate :posting_review_groups_validator
 
   validates :default_slow_mode_seconds,
             numericality: {
@@ -97,20 +115,30 @@ class Category < ActiveRecord::Base
             },
             allow_nil: true
   validates :slug, exclusion: { in: RESERVED_SLUGS }
-
-  after_create :create_category_definition
-  after_destroy :trash_category_definition
-  after_destroy :clear_related_site_settings
+  validates :color, format: { with: /\A(\h{6}|\h{3})\z/ }
+  validates :text_color, format: { with: /\A(\h{6}|\h{3})\z/ }
 
   before_save :apply_permissions
   before_save :downcase_email
   before_save :downcase_name
   before_save :ensure_category_setting
+  before_save :clear_posting_review_groups_for_non_group_modes
+  after_create :create_category_definition
+  after_create :delete_category_permalink
+  after_update :rename_category_definition, if: :saved_change_to_name?
+  after_update :create_category_permalink, if: :saved_change_to_slug?
+  after_update :revise_category_definition, if: :saved_change_to_description?
+  after_update :run_plugin_category_update_param_callbacks
+  after_destroy :trash_category_definition
+  after_destroy :clear_related_site_settings
 
+  after_destroy :reset_topic_ids_cache
+  after_destroy :clear_subcategory_ids
+  after_destroy :publish_category_deletion
+  after_destroy :remove_site_settings
   after_save :reset_topic_ids_cache
   after_save :clear_subcategory_ids
   after_save :clear_url_cache
-  after_save :update_reviewables
   after_save :publish_discourse_stylesheet
   after_save :publish_category
 
@@ -126,16 +154,6 @@ class Category < ActiveRecord::Base
       UploadReference.ensure_exist!(upload_ids: upload_ids, target: self)
     end
   end
-
-  after_destroy :reset_topic_ids_cache
-  after_destroy :clear_subcategory_ids
-  after_destroy :publish_category_deletion
-  after_destroy :remove_site_settings
-
-  after_create :delete_category_permalink
-
-  after_update :rename_category_definition, if: :saved_change_to_name?
-  after_update :create_category_permalink, if: :saved_change_to_slug?
 
   after_commit :trigger_category_created_event, on: :create
   after_commit :trigger_category_updated_event, on: :update
@@ -163,8 +181,6 @@ class Category < ActiveRecord::Base
   has_many :category_form_templates, dependent: :destroy
   has_many :form_templates, through: :category_form_templates
 
-  belongs_to :reviewable_by_group, class_name: "Group"
-
   scope :latest, -> { order("topic_count DESC") }
 
   scope :secured,
@@ -181,8 +197,8 @@ class Category < ActiveRecord::Base
           end
         end
 
-  TOPIC_CREATION_PERMISSIONS ||= [:full]
-  POST_CREATION_PERMISSIONS ||= %i[create_post full]
+  TOPIC_CREATION_PERMISSIONS = [:full]
+  POST_CREATION_PERMISSIONS = %i[create_post full]
 
   scope :topic_create_allowed,
         ->(guardian) do
@@ -232,6 +248,12 @@ class Category < ActiveRecord::Base
   # Allows us to skip creating the category definition topic in tests.
   attr_accessor :skip_category_definition
 
+  enum :style_type, { square: 0, icon: 1, emoji: 2 }
+
+  def self.normalize_sql(expr)
+    "lower(unaccent(#{expr}))"
+  end
+
   def self.preload_user_fields!(guardian, categories)
     category_ids = categories.map(&:id)
 
@@ -262,6 +284,19 @@ class Category < ActiveRecord::Base
     end
   end
 
+  def self.set_permission!(guardian, category)
+    category.permission =
+      if guardian.is_admin? || Category.topic_create_allowed(guardian).exists?(id: category.id)
+        CategoryGroup.permission_types[:full]
+      elsif guardian.can_post_in_category?(category)
+        CategoryGroup.permission_types[:create_post]
+      elsif guardian.can_see_category?(category)
+        CategoryGroup.permission_types[:readonly]
+      end
+
+    category
+  end
+
   def self.ancestors_of(category_ids)
     ancestor_ids = []
 
@@ -279,130 +314,6 @@ class Category < ActiveRecord::Base
     where(id: ancestor_ids)
   end
 
-  # Perform a search. If a category exists in the result, its ancestors do too.
-  # Also check for prefix matches. If a category has a prefix match, its
-  # ancestors report a match too.
-  scope :tree_search,
-        ->(only, except, term) do
-          term = term.strip
-          escaped_term = ActiveRecord::Base.connection.quote(term.downcase)
-          prefix_match = "starts_with(LOWER(categories.name), #{escaped_term})"
-
-          word_match = <<~SQL
-            COALESCE(
-              (
-                SELECT BOOL_AND(position(pattern IN LOWER(categories.name)) <> 0)
-                FROM unnest(regexp_split_to_array(#{escaped_term}, '\s+')) AS pattern
-              ),
-              true
-            )
-          SQL
-
-          if except
-            prefix_match =
-              "NOT categories.id IN (#{except.reselect(:id).to_sql}) AND #{prefix_match}"
-            word_match = "NOT categories.id IN (#{except.reselect(:id).to_sql}) AND #{word_match}"
-          end
-
-          if only
-            prefix_match = "categories.id IN (#{only.reselect(:id).to_sql}) AND #{prefix_match}"
-            word_match = "categories.id IN (#{only.reselect(:id).to_sql}) AND #{word_match}"
-          end
-
-          categories =
-            Category.select(
-              "categories.*",
-              "#{prefix_match} AS has_prefix_match",
-              "#{word_match} AS has_word_match",
-            )
-
-          (1...SiteSetting.max_category_nesting).each do
-            categories = Category.from("(#{categories.to_sql}) AS categories")
-
-            subcategory_matches =
-              categories
-                .where.not(parent_category_id: nil)
-                .group("categories.parent_category_id")
-                .select(
-                  "categories.parent_category_id AS id",
-                  "BOOL_OR(categories.has_prefix_match) AS has_prefix_match",
-                  "BOOL_OR(categories.has_word_match) AS has_word_match",
-                )
-
-            categories =
-              Category.joins(
-                "LEFT JOIN (#{subcategory_matches.to_sql}) AS subcategory_matches ON categories.id = subcategory_matches.id",
-              ).select(
-                "categories.*",
-                "#{prefix_match} OR COALESCE(subcategory_matches.has_prefix_match, false) AS has_prefix_match",
-                "#{word_match} OR COALESCE(subcategory_matches.has_word_match, false) AS has_word_match",
-              )
-          end
-
-          categories =
-            Category.from("(#{categories.to_sql}) AS categories").where(has_word_match: true)
-
-          categories.select("has_prefix_match AS matches", :id)
-        end
-
-  # Given a relation, 'matches', which contains category ids and a 'matches'
-  # boolean, and a limit (the maximum number of subcategories per category),
-  # produce a subset of the matches categories annotated with information about
-  # their ancestors.
-  scope :select_descendants,
-        ->(matches, limit) do
-          max_nesting = SiteSetting.max_category_nesting
-
-          categories =
-            joins("INNER JOIN (#{matches.to_sql}) AS matches ON matches.id = categories.id").select(
-              "categories.id",
-              "categories.name",
-              "ARRAY[]::record[] AS ancestors",
-              "0 AS depth",
-              "matches.matches",
-            )
-
-          categories = Category.from("(#{categories.to_sql}) AS c1")
-
-          (1...max_nesting).each { |i| categories = categories.joins(<<~SQL) }
-            INNER JOIN LATERAL (
-              (SELECT c#{i}.id, c#{i}.name, c#{i}.ancestors, c#{i}.depth, c#{i}.matches)
-              UNION ALL
-              (SELECT
-                categories.id,
-                categories.name,
-                c#{i}.ancestors || ARRAY[ROW(NOT c#{i}.matches, c#{i}.name)] AS ancestors,
-                c#{i}.depth + 1 as depth,
-                matches.matches
-              FROM categories
-              INNER JOIN matches
-              ON matches.id = categories.id
-              WHERE categories.parent_category_id = c#{i}.id
-              AND c#{i}.depth = #{i - 1}
-              ORDER BY (NOT matches.matches, categories.name)
-              LIMIT #{limit})
-            ) c#{i + 1} ON true
-          SQL
-
-          categories.select(
-            "c#{max_nesting}.id",
-            "c#{max_nesting}.ancestors",
-            "c#{max_nesting}.name",
-            "c#{max_nesting}.matches",
-          )
-        end
-
-  scope :limited_categories_matching,
-        ->(only, except, parent_id, term) do
-          joins(<<~SQL).order("c.ancestors || ARRAY[ROW(NOT c.matches, c.name)]")
-            INNER JOIN (
-              WITH matches AS (#{Category.tree_search(only, except, term).to_sql})
-              #{Category.where(parent_category_id: parent_id).select_descendants(Category.from("matches").select(:matches, :id), 5).to_sql}
-            ) AS c
-            ON categories.id = c.id
-          SQL
-        end
-
   def self.topic_id_cache
     @topic_id_cache ||= DistributedCache.new("category_topic_ids")
   end
@@ -417,6 +328,25 @@ class Category < ActiveRecord::Base
 
   def reset_topic_ids_cache
     Category.reset_topic_ids_cache
+  end
+
+  def category_types
+    return {} if !SiteSetting.enable_simplified_category_creation
+    Categories::TypeRegistry
+      .all
+      .values
+      .each_with_object({}) do |type_klass, result|
+        result[type_klass.type_id] = type_klass.metadata if type_klass.category_matches?(self)
+      end
+  end
+
+  def category_type_site_setting_names
+    category_types
+      .values
+      .filter_map { |type_metadata| type_metadata.dig(:configuration_schema, :site_settings) }
+      .flatten(1)
+      .map { |setting| setting[:key].to_sym }
+      .uniq
   end
 
   # Accepts an array of slugs with each item in the array
@@ -434,7 +364,7 @@ class Category < ActiveRecord::Base
     sqls =
       slugs.map do |slug|
         category_slugs =
-          slug.split(":").first(SiteSetting.max_category_nesting).map { Slug.for(_1, "") }
+          slug.split(":").first(SiteSetting.max_category_nesting).map { Slug.for(it, "") }
 
         sql = ""
 
@@ -551,29 +481,49 @@ class Category < ActiveRecord::Base
          AND (c.topic_count <> COALESCE(x.topic_count, 0) OR c.post_count <> COALESCE(x.post_count, 0))
     SQL
 
-    # Yes, there are a lot of queries happening below.
-    # Performing a lot of queries is actually faster than using one big update
-    # statement with sub-selects on large databases with many categories,
-    # topics, and posts.
-    #
-    # The old method with the one query is here:
-    # https://github.com/discourse/discourse/blob/5f34a621b5416a53a2e79a145e927fca7d5471e8/app/models/category.rb
-    #
-    # If you refactor this, test performance on a large database.
-
-    Category.all.each do |c|
+    Category.find_each do |c|
       topics = c.topics.visible
-      topics = topics.where(["topics.id <> ?", c.topic_id]) if c.topic_id
-      c.topics_year = topics.created_since(1.year.ago).count
-      c.topics_month = topics.created_since(1.month.ago).count
-      c.topics_week = topics.created_since(1.week.ago).count
-      c.topics_day = topics.created_since(1.day.ago).count
+      topics = topics.where.not(id: c.topic_id) if c.topic_id
 
-      posts = c.visible_posts
-      c.posts_year = posts.created_since(1.year.ago).count
-      c.posts_month = posts.created_since(1.month.ago).count
-      c.posts_week = posts.created_since(1.week.ago).count
-      c.posts_day = posts.created_since(1.day.ago).count
+      # Combine time-based topic counts into a single query
+      topic_counts = DB.query_single(<<~SQL, category_id: c.id, topic_id: c.topic_id)
+        SELECT
+          COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '1 year') AS year,
+          COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '1 month') AS month,
+          COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '1 week') AS week,
+          COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '1 day') AS day
+        FROM topics
+        WHERE category_id = :category_id
+          AND visible = true
+          AND deleted_at IS NULL
+          #{c.topic_id ? "AND id != :topic_id" : ""}
+      SQL
+
+      c.topics_year = topic_counts[0]
+      c.topics_month = topic_counts[1]
+      c.topics_week = topic_counts[2]
+      c.topics_day = topic_counts[3]
+
+      # Combine time-based post counts into a single query
+      post_counts = DB.query_single(<<~SQL, category_id: c.id, topic_id: c.topic_id)
+        SELECT
+          COUNT(*) FILTER (WHERE posts.created_at >= NOW() - INTERVAL '1 year') AS year,
+          COUNT(*) FILTER (WHERE posts.created_at >= NOW() - INTERVAL '1 month') AS month,
+          COUNT(*) FILTER (WHERE posts.created_at >= NOW() - INTERVAL '1 week') AS week,
+          COUNT(*) FILTER (WHERE posts.created_at >= NOW() - INTERVAL '1 day') AS day
+        FROM posts
+        INNER JOIN topics ON topics.id = posts.topic_id
+        WHERE topics.category_id = :category_id
+          AND topics.visible = true
+          AND posts.deleted_at IS NULL
+          AND posts.user_deleted = false
+          #{c.topic_id ? "AND topics.id != :topic_id" : ""}
+      SQL
+
+      c.posts_year = post_counts[0]
+      c.posts_month = post_counts[1]
+      c.posts_week = post_counts[2]
+      c.posts_day = post_counts[3]
 
       c.save if c.changed?
     end
@@ -587,7 +537,7 @@ class Category < ActiveRecord::Base
         .where("topics.visible = true")
         .where("posts.deleted_at IS NULL")
         .where("posts.user_deleted = false")
-    self.topic_id ? query.where(["topics.id <> ?", self.topic_id]) : query
+    self.topic_id ? query.where.not(topics: { id: self.topic_id }) : query
   end
 
   # Internal: Generate the text of post prompting to enter category description.
@@ -619,6 +569,15 @@ class Category < ActiveRecord::Base
     end
   end
 
+  def revise_category_definition
+    return if skip_category_definition
+    return if self.topic.blank? || self.topic.first_post.blank?
+
+    # NOTE: Revising the first post will also update the category description,
+    # see PostRevisor#update_category_description
+    self.topic.first_post.revise(self.user, { raw: self.description }, skip_validations: true)
+  end
+
   def trash_category_definition
     self.topic&.trash!
   end
@@ -629,7 +588,7 @@ class Category < ActiveRecord::Base
 
   def topic_url
     if has_attribute?("topic_slug")
-      Topic.relative_url(topic_id, read_attribute(:topic_slug))
+      Topic.relative_url(topic_id, self[:topic_slug])
     else
       topic_only_relative_url.try(:relative_url)
     end
@@ -871,7 +830,7 @@ class Category < ActiveRecord::Base
 
   def auto_bump_limiter
     return nil if num_auto_bump_daily.to_i == 0
-    RateLimiter.new(nil, "auto_bump_limit_#{self.id}", 1, 86_400 / num_auto_bump_daily.to_i)
+    RateLimiter.new(nil, "auto_bump_limit_#{self.id}", 1, 1.day.to_i / num_auto_bump_daily.to_i)
   end
 
   def clear_auto_bump_cache!
@@ -907,7 +866,7 @@ class Category < ActiveRecord::Base
         .listable_topics
         .exclude_scheduled_bump_topics
         .where(category_id: self.id)
-        .where("id <> ?", self.topic_id)
+        .where.not(id: self.topic_id)
         .where("bumped_at < ?", (self.auto_bump_cooldown_days || 1).days.ago)
         .where("pinned_at IS NULL AND NOT closed AND NOT archived")
         .order("bumped_at ASC")
@@ -1070,6 +1029,10 @@ class Category < ActiveRecord::Base
     end
   end
 
+  def slug_url_without_id
+    "#{Discourse.base_path}/c/#{slug_path.join("/")}"
+  end
+
   alias_method :relative_url, :url
 
   # If the name changes, try and update the category definition topic too if it's an exact match
@@ -1113,10 +1076,8 @@ class Category < ActiveRecord::Base
     )
   end
 
-  def update_reviewables
-    if should_update_reviewables?
-      Reviewable.where(category_id: id).update_all(reviewable_by_group_id: reviewable_by_group_id)
-    end
+  def moderating_group_ids
+    category_moderation_groups.pluck(:group_id)
   end
 
   def self.find_by_slug_path(slug_path)
@@ -1218,7 +1179,7 @@ class Category < ActiveRecord::Base
 
     Category
       .joins("LEFT JOIN topics ON categories.topic_id = topics.id AND topics.deleted_at IS NULL")
-      .where("categories.id <> ?", SiteSetting.uncategorized_category_id)
+      .where.not(id: SiteSetting.uncategorized_category_id)
       .where(topics: { id: nil })
       .find_each { |category| category.create_category_definition }
   end
@@ -1272,14 +1233,68 @@ class Category < ActiveRecord::Base
     tags.count > 0 || tag_groups.count > 0
   end
 
+  def category_localizations=(localizations_params)
+    return self.category_localizations_attributes = localizations_params unless persisted?
+
+    incoming_ids = localizations_params.map { |loc| loc["id"] }
+    category_localizations
+      .where.not(id: incoming_ids)
+      .select(:id)
+      .each { |record| localizations_params << { "id" => record.id, "_destroy" => true } }
+
+    self.category_localizations_attributes = localizations_params
+  end
+
   private
+
+  def run_plugin_category_update_param_callbacks
+    DiscoursePluginRegistry.category_update_param_with_callback.each do |param_name, opts|
+      next if !opts[:plugin].enabled?
+      next if !instance_variable_defined?(:"@#{param_name}_callback_value")
+
+      value = instance_variable_get(:"@#{param_name}_callback_value")
+      begin
+        opts[:callback].call(self, value)
+      ensure
+        if instance_variable_defined?(:"@#{param_name}_callback_value")
+          remove_instance_variable(:"@#{param_name}_callback_value")
+        end
+      end
+    end
+  end
 
   def ensure_category_setting
     self.build_category_setting if self.category_setting.blank?
   end
 
-  def should_update_reviewables?
-    SiteSetting.enable_category_group_moderation? && saved_change_to_reviewable_by_group_id?
+  def group_based_posting_review_mode?(post_type)
+    mode = category_setting&.public_send(:"#{post_type}_posting_review_mode")
+    CategorySetting::GROUP_BASED_MODES.include?(mode)
+  end
+
+  def posting_review_groups_validator
+    %i[topic reply].each do |post_type|
+      next unless group_based_posting_review_mode?(post_type)
+
+      group_ids = public_send(:"#{post_type}_posting_review_group_ids")
+      if group_ids.blank?
+        errors.add(
+          :base,
+          I18n.t(
+            "category.errors.groups_required_for_mode",
+            setting: "#{post_type}_posting_review_mode",
+          ),
+        )
+      end
+    end
+  end
+
+  def clear_posting_review_groups_for_non_group_modes
+    %i[topic reply].each do |post_type|
+      unless group_based_posting_review_mode?(post_type)
+        public_send(:"#{post_type}_posting_review_group_ids=", [])
+      end
+    end
   end
 
   def check_permissions_compatibility(parent_permissions, child_permissions)
@@ -1333,61 +1348,65 @@ end
 # Table name: categories
 #
 #  id                                        :integer          not null, primary key
-#  name                                      :string(50)       not null
-#  color                                     :string(6)        default("0088CC"), not null
-#  topic_id                                  :integer
-#  topic_count                               :integer          default(0), not null
-#  created_at                                :datetime         not null
-#  updated_at                                :datetime         not null
-#  user_id                                   :integer          not null
-#  topics_year                               :integer          default(0)
-#  topics_month                              :integer          default(0)
-#  topics_week                               :integer          default(0)
-#  slug                                      :string           not null
-#  description                               :text
-#  text_color                                :string(6)        default("FFFFFF"), not null
-#  read_restricted                           :boolean          default(FALSE), not null
+#  all_topics_wiki                           :boolean          default(FALSE), not null
+#  allow_badges                              :boolean          default(TRUE), not null
+#  allow_global_tags                         :boolean          default(FALSE), not null
+#  allow_unlimited_owner_edits_on_first_post :boolean          default(FALSE), not null
+#  auto_close_based_on_last_post             :boolean          default(FALSE)
 #  auto_close_hours                          :float
-#  post_count                                :integer          default(0), not null
-#  latest_post_id                            :integer
-#  latest_topic_id                           :integer
-#  position                                  :integer
-#  parent_category_id                        :integer
-#  posts_year                                :integer          default(0)
-#  posts_month                               :integer          default(0)
-#  posts_week                                :integer          default(0)
+#  color                                     :string(6)        default("0088CC"), not null
+#  contains_messages                         :boolean
+#  default_list_filter                       :string(20)       default("all")
+#  default_slow_mode_seconds                 :integer
+#  default_top_period                        :string(20)       default("all")
+#  default_view                              :string(50)
+#  description                               :text
 #  email_in                                  :string
 #  email_in_allow_strangers                  :boolean          default(FALSE)
-#  topics_day                                :integer          default(0)
-#  posts_day                                 :integer          default(0)
-#  allow_badges                              :boolean          default(TRUE), not null
-#  name_lower                                :string(50)       not null
-#  auto_close_based_on_last_post             :boolean          default(FALSE)
-#  topic_template                            :text
-#  contains_messages                         :boolean
-#  sort_order                                :string
-#  sort_ascending                            :boolean
-#  uploaded_logo_id                          :integer
-#  uploaded_background_id                    :integer
-#  topic_featured_link_allowed               :boolean          default(TRUE)
-#  all_topics_wiki                           :boolean          default(FALSE), not null
-#  show_subcategory_list                     :boolean          default(FALSE)
-#  num_featured_topics                       :integer          default(3)
-#  default_view                              :string(50)
-#  subcategory_list_style                    :string(50)       default("rows_with_featured_topics")
-#  default_top_period                        :string(20)       default("all")
+#  emoji                                     :string
+#  icon                                      :string
+#  locale                                    :string(20)
 #  mailinglist_mirror                        :boolean          default(FALSE), not null
 #  minimum_required_tags                     :integer          default(0), not null
+#  name                                      :string(50)       not null
+#  name_lower                                :string(50)       not null
 #  navigate_to_first_post_after_read         :boolean          default(FALSE), not null
-#  search_priority                           :integer          default(0)
-#  allow_global_tags                         :boolean          default(FALSE), not null
-#  reviewable_by_group_id                    :integer
+#  num_featured_topics                       :integer          default(3)
+#  position                                  :integer
+#  post_count                                :integer          default(0), not null
+#  posts_day                                 :integer          default(0)
+#  posts_month                               :integer          default(0)
+#  posts_week                                :integer          default(0)
+#  posts_year                                :integer          default(0)
 #  read_only_banner                          :string
-#  default_list_filter                       :string(20)       default("all")
-#  allow_unlimited_owner_edits_on_first_post :boolean          default(FALSE), not null
-#  default_slow_mode_seconds                 :integer
-#  uploaded_logo_dark_id                     :integer
+#  read_restricted                           :boolean          default(FALSE), not null
+#  search_priority                           :integer          default(0)
+#  show_subcategory_list                     :boolean          default(FALSE)
+#  slug                                      :string           not null
+#  sort_ascending                            :boolean
+#  sort_order                                :string
+#  style_type                                :integer          default("square"), not null
+#  subcategory_list_style                    :string(50)       default("rows_with_featured_topics")
+#  text_color                                :string(6)        default("FFFFFF"), not null
+#  topic_count                               :integer          default(0), not null
+#  topic_featured_link_allowed               :boolean          default(TRUE)
+#  topic_template                            :text
+#  topic_title_placeholder                   :string
+#  topics_day                                :integer          default(0)
+#  topics_month                              :integer          default(0)
+#  topics_week                               :integer          default(0)
+#  topics_year                               :integer          default(0)
+#  created_at                                :datetime         not null
+#  updated_at                                :datetime         not null
+#  latest_post_id                            :integer
+#  latest_topic_id                           :integer
+#  parent_category_id                        :integer
+#  topic_id                                  :integer
 #  uploaded_background_dark_id               :integer
+#  uploaded_background_id                    :integer
+#  uploaded_logo_dark_id                     :integer
+#  uploaded_logo_id                          :integer
+#  user_id                                   :integer          not null
 #
 # Indexes
 #

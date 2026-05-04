@@ -3,7 +3,7 @@
 # mixin for all guardian methods dealing with post permissions
 module PostGuardian
   def unrestricted_link_posting?
-    authenticated? && (is_staff? || @user.in_any_groups?(SiteSetting.post_links_allowed_groups_map))
+    authenticated? && @user.in_any_groups?(SiteSetting.post_links_allowed_groups_map)
   end
 
   def link_posting_access
@@ -28,27 +28,36 @@ module PostGuardian
     return false if !(can_see_post.nil? && can_see_post?(post)) && !can_see_post
 
     # no warnings except for staff
-    if action_key == :notify_user &&
-         (
-           post.user.blank? ||
-             (!is_staff? && opts[:is_warning].present? && opts[:is_warning] == "true")
-         )
+    if action_key == :notify_user && (post.user.blank? || (!is_staff? && opts[:is_warning]))
       return false
     end
 
     taken = opts[:taken_actions].try(:keys).to_a
+    post_action_type_view = opts[:post_action_type_view] || PostActionTypeView.new
     is_flag =
-      PostActionType.notify_flag_types[action_key] || PostActionType.custom_types[action_key]
-    already_taken_this_action = taken.any? && taken.include?(PostActionType.types[action_key])
-    already_did_flagging = taken.any? && (taken & PostActionType.notify_flag_types.values).any?
+      if (opts[:notify_flag_types] && opts[:additional_message_types])
+        opts[:notify_flag_types][action_key] || opts[:additional_message_types][action_key]
+      else
+        post_action_type_view.notify_flag_types[action_key] ||
+          post_action_type_view.additional_message_types[action_key]
+      end
+    already_taken_this_action =
+      taken.any? && taken.include?(post_action_type_view.types[action_key])
+    already_did_flagging =
+      taken.any? && (taken & post_action_type_view.notify_flag_types.values).any?
 
     result =
       if authenticated? && post
         # Allow anonymous users to like if feature is enabled and short-circuit otherwise
-        return SiteSetting.allow_anonymous_likes? && (action_key == :like) if @user.anonymous?
+        if @user.anonymous?
+          return SiteSetting.allow_likes_in_anonymous_mode? && (action_key == :like)
+        end
 
         # Silenced users can't flag
         return false if is_flag && @user.silenced?
+
+        # Silenced users can't like
+        return false if action_key == :like && @user.silenced?
 
         # Hidden posts can't be flagged
         return false if is_flag && post.hidden?
@@ -56,7 +65,9 @@ module PostGuardian
         # post made by staff, but we don't allow staff flags
         return false if is_flag && (!SiteSetting.allow_flagging_staff?) && post&.user&.staff?
 
-        return false if is_flag && PostActionType.disabled_flag_types.keys.include?(action_key)
+        if is_flag && post_action_type_view.disabled_flag_types.keys.include?(action_key)
+          return false
+        end
 
         if action_key == :notify_user &&
              !@user.in_any_groups?(SiteSetting.personal_message_enabled_groups_map)
@@ -83,7 +94,7 @@ module PostGuardian
               @user.in_any_groups?(SiteSetting.flag_post_allowed_groups_map) ||
                 post.topic.private_message?
             )
-        ) ||
+        ) || (action_key == :illegal && SiteSetting.allow_all_users_to_flag_illegal_content) ||
           # not a flagging action, and haven't done it already
           not(is_flag || already_taken_this_action) &&
             # nothing except flagging on archived topics
@@ -106,18 +117,19 @@ module PostGuardian
     return true if is_admin?
     return false unless topic
 
-    type_symbol = PostActionType.types[post_action_type_id]
+    post_action_type_view = PostActionTypeView.new
+    type_symbol = post_action_type_view.types[post_action_type_id]
 
     return false if type_symbol == :bookmark
     return false if type_symbol == :notify_user && !is_moderator?
 
-    return can_see_flags?(topic) if PostActionType.is_flag?(type_symbol)
+    return can_see_flags?(topic) if post_action_type_view.is_flag?(type_symbol)
 
     true
   end
 
   def can_delete_all_posts?(user)
-    is_staff? && user && !user.admin? &&
+    is_staff? && user && !user.admin? && (!user.moderator? || is_admin?) &&
       (
         is_admin? ||
           (
@@ -146,9 +158,10 @@ module PostGuardian
     # Must be staff to edit a locked post
     return false if post.locked? && !is_staff?
 
-    if (is_staff? || is_in_edit_post_groups? || is_category_group_moderator?(post.topic&.category))
+    if is_in_edit_post_groups? || is_category_group_moderator?(post.topic&.category)
       return can_create_post?(post.topic)
     end
+    return false if !can_see_post_topic?(post)
 
     return false if post.topic&.archived? || post.user_deleted || post.deleted_at
 
@@ -187,8 +200,7 @@ module PostGuardian
   end
 
   def is_in_edit_post_groups?
-    SiteSetting.edit_all_post_groups.present? &&
-      user.in_any_groups?(SiteSetting.edit_all_post_groups.to_s.split("|").map(&:to_i))
+    user.in_any_groups?(SiteSetting.edit_all_post_groups_map)
   end
 
   def can_edit_hidden_post?(post)
@@ -198,7 +210,11 @@ module PostGuardian
   end
 
   def can_delete_post_or_topic?(post)
-    post.is_first_post? ? post.topic && can_delete_topic?(post.topic) : can_delete_post?(post)
+    if post.is_first_post?
+      post.topic && can_delete_topic?(post.topic)
+    else
+      can_delete_post?(post)
+    end
   end
 
   def can_delete_post?(post)
@@ -207,7 +223,7 @@ module PostGuardian
     # Can't delete the first post
     return false if post.is_first_post?
 
-    return true if is_staff? || is_category_group_moderator?(post.topic&.category)
+    return true if is_category_group_moderator?(post.topic&.category)
 
     return true if user.in_any_groups?(SiteSetting.delete_all_posts_and_topics_allowed_groups_map)
 
@@ -272,7 +288,7 @@ module PostGuardian
     # used when !authenticated?
     if authenticated? && is_anonymous?
       return(
-        ok_to_delete && SiteSetting.allow_anonymous_likes? && post_action.is_like? &&
+        ok_to_delete && SiteSetting.allow_likes_in_anonymous_mode? && post_action.is_like? &&
           is_my_own?(post_action)
       )
     end
@@ -285,7 +301,9 @@ module PostGuardian
 
     if is_admin? && SiteSetting.suppress_secured_categories_from_admin
       topic = post.topic
-      if !topic.private_message? && topic.category.read_restricted
+      if topic.private_message?
+        return can_see_post_topic?(post)
+      elsif topic.category.read_restricted
         return secure_category_ids.include?(topic.category_id)
       end
     end
@@ -296,9 +314,7 @@ module PostGuardian
     return false if post.blank?
     return true if is_admin?
     return false unless can_see_post_topic?(post)
-    unless post.user == @user || Topic.visible_post_types(@user).include?(post.post_type)
-      return false
-    end
+    return false unless is_my_own?(post) || Topic.visible_post_types(@user).include?(post.post_type)
     return true if is_moderator? || is_category_group_moderator?(post.topic.category)
     if (!post.trashed? || can_see_deleted_post?(post)) &&
          (!post.hidden? || can_see_hidden_post?(post))
@@ -320,7 +336,9 @@ module PostGuardian
     end
     return false if anonymous?
     return true if is_staff?
-    post.user_id == @user.id || @user.in_any_groups?(SiteSetting.hidden_post_visible_groups_map)
+    return true if is_my_own?(post)
+
+    @user.in_any_groups?(SiteSetting.hidden_post_visible_groups_map)
   end
 
   def can_view_edit_history?(post)
@@ -330,13 +348,17 @@ module PostGuardian
       return true if post.wiki || SiteSetting.edit_history_visible_to_public
     end
 
-    authenticated? && (is_staff? || @user.id == post.user_id) && can_see_post?(post)
+    return false if !authenticated?
+    return false if !can_see_post?(post)
+
+    is_staff? || is_my_own?(post)
   end
 
   def can_change_post_owner?
     return true if is_admin?
-
-    SiteSetting.moderators_change_post_ownership && is_staff?
+    return true if SiteSetting.moderators_change_post_ownership && is_staff?
+    return true if @user.in_any_groups?(SiteSetting.change_post_ownership_allowed_groups_map)
+    false
   end
 
   def can_change_post_timestamps?
@@ -363,13 +385,13 @@ module PostGuardian
     is_staff? || @user.has_trust_level?(TrustLevel[4])
   end
 
-  def can_see_flagged_posts?
-    is_staff?
+  def can_see_deleted_posts?(category = nil)
+    is_category_group_moderator?(category) ||
+      @user.in_any_groups?(SiteSetting.delete_all_posts_and_topics_allowed_groups_map)
   end
 
-  def can_see_deleted_posts?(category = nil)
-    is_staff? || is_category_group_moderator?(category) ||
-      @user.in_any_groups?(SiteSetting.delete_all_posts_and_topics_allowed_groups_map)
+  def can_see_deleted_posts_for_user?
+    is_staff?
   end
 
   def can_view_raw_email?(post)
@@ -385,24 +407,22 @@ module PostGuardian
   end
 
   def trusted_with_post_edits?
-    is_staff? || @user.in_any_groups?(SiteSetting.edit_post_allowed_groups_map)
+    @user.in_any_groups?(SiteSetting.edit_post_allowed_groups_map)
   end
 
   private
 
   def can_create_post_in_topic?(topic)
-    if !SiteSetting.enable_system_message_replies? && topic.try(:subtype) == "system_message"
+    if !SiteSetting.enable_system_message_replies? && topic&.subtype == "system_message"
       return false
     end
 
-    (
-      !SpamRule::AutoSilence.prevent_posting?(@user) ||
-        (!!topic.try(:private_message?) && topic.allowed_users.include?(@user))
-    ) &&
-      (
-        !topic || !topic.category ||
-          Category.post_create_allowed(self).where(id: topic.category.id).count == 1
-      )
+    is_pm = !!topic&.private_message?
+    return false if is_pm && topic.subtype != "system_message" && !can_see_topic?(topic)
+    return false if !is_pm && SpamRule::AutoSilence.prevent_posting?(@user)
+
+    !topic || !topic.category ||
+      Category.post_create_allowed(self).where(id: topic.category_id).exists?
   end
 
   def topic_memoize_key(topic)

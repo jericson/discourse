@@ -115,6 +115,8 @@ th:
         category_id: "หมวดหมู่"
       user:
         password: "รหัสผ่าน"
+      user_password:
+        password: "รหัสผ่าน"
     errors:
       <<: *errors
   general_category_name: "ทั่วไป"
@@ -163,9 +165,6 @@ th:
         other: "%{count}เดือนที่แล้ว"
   password_reset:
     title: "รีเซ็ทรหัสผ่าน"
-  activation:
-    continue_button: "ดำเนินการต่อไปยัง %{site_name}"
-    welcome_to: "ยินดีต้อนรับสู่ %{site_name}!"
   reviewable_score_types:
     needs_approval:
       title: "ต้องการอนุมัติ"
@@ -194,7 +193,9 @@ th:
       every_month: "ทุกเดือน"
       every_six_months: "ทุกหกเดือน"
   user_api_key:
+    deny: "ยกเลิก"
     read: "อ่าน"
+    copied: "คัดลอกแล้ว!"
     otp_confirmation:
       confirm_title: ดำเนินการต่อไปยัง %{site_name}
       logging_in_as: กำลังเข้าสู่ระบบด้วย %{username}
@@ -215,6 +216,9 @@ th:
     flags_status:
       labels:
         flag: ชนิด
+    visits:
+      xaxis:
+        mobile: "โทรศัพท์"
     consolidated_page_views:
       labels:
         post: โพส
@@ -292,18 +296,14 @@ th:
       labels:
         user: ผู้ใช้
         qtt_like: ได้รับการชอบ
+    topic_view_stats:
+      labels:
+        topic: หัวข้อ
+        anon_views: ไม่ระบุชื่อ
+        total_views: ทั้งหมด
   site_settings:
     disabled: "ปิดใช้งานแล้ว"
     dark_mode_none: "ไม่มี"
-    keywords:
-      clean_up_inactive_users_after_days:
-      - ""
-      - "ไม่ใช้งาน"
-      - ""
-      purge_unactivated_users_grace_period_days:
-      - ""
-      - "ไม่ใช้งาน"
-      - ""
   search:
     within_post: "#%{post_number} ด้วย %{username}"
     types:
@@ -325,8 +325,10 @@ th:
     queued_by_staff:
       title: "โพสต์นี้ต้องได้รับการอนุมัติ"
     welcome_user:
+      preview: "ยินดีต้อนรับสู่ %{site_name}!"
       subject_template: "ยินดีต้อนรับสู่ %{site_name}!"
     welcome_invite:
+      preview: "ยินดีต้อนรับสู่ %{site_name}!"
       subject_template: "ยินดีต้อนรับสู่ %{site_name}!"
   subject_re: "ตอบ: "
   subject_pm: "[PM] "
@@ -455,20 +457,19 @@ th:
     digest:
       liked_received: "ได้รับการชอบ"
       new_users: "ผู้ใช้งานใหม่"
+      subject_template_improved: "สรุป"
     forgot_password:
       title: "ลืมรหัสผ่าน"
     set_password:
       title: "ตั้งรหัสผ่าน"
+    admin_login:
+      subject_template_improved: "เข้าสู่ระบบ"
     post_approved:
       title: "โพสต์ของคุณได้รับการอนุมัติ"
   page_not_found:
     page_title: "ไม่พบหน้าดังกล่าว"
-    popular_topics: "ยอดนิยม"
     see_more: "อื่น"
-    search_title: "ค้นหาเว็บไซต์นี้"
     search_button: "ค้นหา"
-  color_schemes:
-    default_theme_name: "ค่าเริ่มต้น"
   csv_export:
     boolean_yes: "ใช่"
     boolean_no: "ไม่ใช่"
@@ -499,27 +500,20 @@ th:
       title: "ส่งอีเมลยืนยันตัวตนอีกครั้ง"
   wizard:
     step:
-      privacy:
+      setup:
         fields:
           login_required:
-            placeholder: "ส่วนตัว"
-      styling:
-        fields:
-          styling_preview:
-            label: "แสดงตัวอย่าง"
-          homepage_style:
             choices:
-              categories_only:
-                label: "หมวดหมู่เท่านั้น"
-              categories_with_featured_topics:
-                label: "หมวดหมู่พร้อมด้วยกระทู้เด่น"
-              categories_and_latest_topics:
-                label: "หมวดหมู่และกระทู้ล่าสุด"
-              categories_and_top_topics:
-                label: "หมวดหมู่และกระทู้ยอดนิยม"
+              public:
+                label: "สาธารณะ"
+              private:
+                label: "ส่วนตัว"
   onebox:
     github:
       closed: "ปิด"
+      status_date:
+        approved: "อนุมัติแล้ว"
+        closed: "ปิด"
   discourse_push_notifications:
     popup:
       mentioned: '%{username} พูดถึงคุณใน "%{topic}" - %{site_title}'
@@ -527,6 +521,7 @@ th:
       quoted: '%{username} อ้างอิงถึงคุณใน "%{topic}" - %{site_title}'
       replied: '%{username} ตอบคุณใน "%{topic}" - %{site_title}'
       posted: '%{username} โพสท์ใน "%{topic}" - %{site_title}'
+      private_message: '%{username}ได้ส่งข้อความส่วนตัวไปหาคุณใน "%{topic}"-%{site_title}'
       linked: '%{username} ลิงค์โพสของคุณจาก "%{topic}" - %{site_title}'
       watching_first_post: '%{username}ได้สร้างกระทู้ใหม่ "%{topic}"-%{site_title}'
       confirm_title: "เปิดการแจ้งเตือนแล้ว - %{site_title}"
@@ -547,19 +542,46 @@ th:
     actions:
       agree:
         title: "ใช่"
-      delete_single:
+      delete:
         title: "ลบ"
-      disagree:
+        complete: "โพสต์ถูกลบ."
+      delete_and_ignore:
+        complete: "โพสต์ถูกลบ."
+      delete_and_agree:
+        complete: "โพสต์ถูกลบ."
+      disagree_bundle:
         title: "ไม่ใช่"
       ignore:
         title: "ไม่สนใจ"
       approve:
-        title: "อนุมัติ"
+        title: "ใช่"
+      approve_post:
+        title: "ใช่"
+      approve_post_closed:
+        title: "ใช่"
+      reject_post_bundle:
+        title: "ไม่ใช่"
+      approve_user:
+        title: "ใช่"
       reject_user:
+        title: "ไม่ใช่"
         delete:
           title: "ลบผู้ใช้"
+          complete: "ผู้ใช้ถูกลบ."
+      confirm_spam:
+        title: "ใช่"
+      not_spam:
+        title: "ไม่ใช่"
       reject:
         title: "ละทิ้ง"
+      approve_and_restore:
+        title: "ใช่"
+      approve_and_unhide:
+        title: "ใช่"
+      delete_post:
+        complete: "โพสต์ถูกลบ"
+      delete_user:
+        complete: "ผู้ใช้ถูกลบ"
   fallback_username: "ผู้ใช้"
   activemodel:
     errors:

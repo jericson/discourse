@@ -4,7 +4,6 @@
 
 // Floats
 // --------------------------------------------------
-
 .pull-left {
   float: left;
 }
@@ -15,7 +14,6 @@
 
 // Element visibility
 // --------------------------------------------------
-
 .show {
   display: block;
 }
@@ -36,27 +34,26 @@
   padding: 0;
   margin: -1px;
   overflow: hidden;
-  clip: rect(0, 0, 0, 0);
+  clip-path: rect(0 0 0 0);
   border: 0;
 }
 
 // Contain floats
 // --------------------------------------------------
-
 .clearfix {
-  &:before,
-  &:after {
+  &::before,
+  &::after {
     display: table;
     content: " ";
   }
-  &:after {
+
+  &::after {
     clear: both;
   }
 }
 
 // Overflow
 // --------------------------------------------------
-
 .overflow-ellipsis {
   white-space: nowrap;
   overflow: hidden;
@@ -65,7 +62,10 @@
 
 // Clickable elements
 // --------------------------------------------------
-
 .clickable {
   cursor: pointer;
+}
+
+.non-clickable {
+  cursor: default;
 }

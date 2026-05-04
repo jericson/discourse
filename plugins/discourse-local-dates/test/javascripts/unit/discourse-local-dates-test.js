@@ -1,7 +1,7 @@
 import { setupTest } from "ember-qunit";
 import { module, test } from "qunit";
+import freezeTime from "../helpers/freeze-time";
 import { applyLocalDates } from "../initializers/discourse-local-dates";
-import { freezeTime } from "./local-date-builder-test";
 
 module("Unit | discourse-local-dates", function (hooks) {
   setupTest(hooks);
@@ -48,14 +48,8 @@ module("Unit | discourse-local-dates", function (hooks) {
           discourse_local_dates_enabled: true,
         });
 
-        assert.equal(
-          from.querySelector(".relative-time").textContent,
-          "Yesterday 5:21 PM"
-        );
-        assert.equal(
-          to.querySelector(".relative-time").textContent,
-          "10:22 PM (Singapore)"
-        );
+        assert.dom(".relative-time", from).hasText("Yesterday 5:21 PM");
+        assert.dom(".relative-time", to).hasText("10:22 PM (Singapore)");
       }
     );
   });
@@ -73,14 +67,58 @@ module("Unit | discourse-local-dates", function (hooks) {
           discourse_local_dates_enabled: true,
         });
 
-        assert.equal(
-          from.querySelector(".relative-time").textContent,
-          "Yesterday 5:21 PM"
-        );
-        assert.equal(
-          to.querySelector(".relative-time").textContent,
-          "Yesterday"
-        );
+        assert.dom(".relative-time", from).hasText("Yesterday 5:21 PM");
+        assert.dom(".relative-time", to).hasText("Yesterday");
+      }
+    );
+  });
+
+  test("applyLocalDates disables calendar mode when custom format is specified", function (assert) {
+    const element = createElementFromHTML(
+      "<span " +
+        'data-date="2022-10-06" ' +
+        'data-time="17:21:00" ' +
+        'class="discourse-local-date" ' +
+        'data-format="LLL" ' +
+        'data-timezone="Asia/Singapore">' +
+        "</span>"
+    );
+
+    freezeTime(
+      { date: "2022-10-06T10:10:10", timezone: "Asia/Singapore" },
+      () => {
+        applyLocalDates([element], {
+          discourse_local_dates_enabled: true,
+        });
+
+        // With calendar mode, this would show "Today 5:21 PM"
+        // With calendar disabled (due to custom format), it shows full date
+        assert
+          .dom(".relative-time", element)
+          .hasText("October 6, 2022 5:21 PM");
+      }
+    );
+  });
+
+  test("applyLocalDates uses calendar mode when no custom format is specified", function (assert) {
+    const element = createElementFromHTML(
+      "<span " +
+        'data-date="2022-10-06" ' +
+        'data-time="17:21:00" ' +
+        'class="discourse-local-date" ' +
+        'data-timezone="Asia/Singapore">' +
+        "</span>"
+    );
+
+    freezeTime(
+      { date: "2022-10-06T10:10:10", timezone: "Asia/Singapore" },
+      () => {
+        applyLocalDates([element], {
+          discourse_local_dates_enabled: true,
+        });
+
+        // Without custom format, calendar mode is enabled, showing relative date
+        assert.dom(".relative-time", element).hasText("Today 5:21 PM");
       }
     );
   });

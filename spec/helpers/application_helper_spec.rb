@@ -62,7 +62,7 @@ RSpec.describe ApplicationHelper do
       it "deals correctly with subfolder" do
         set_subfolder "/community"
         expect(helper.preload_script("start-discourse")).to include(
-          "https://s3cdn.com/assets/start-discourse.js",
+          %r{https://s3cdn.com/assets/start-discourse-\w{8}.js},
         )
       end
 
@@ -71,7 +71,7 @@ RSpec.describe ApplicationHelper do
         set_cdn_url "https://awesome.com"
         set_subfolder "/community"
         expect(helper.preload_script("start-discourse")).to include(
-          "https://s3cdn.com/s3_subpath/assets/start-discourse.js",
+          %r{https://s3cdn.com/s3_subpath/assets/start-discourse-\w{8}.js},
         )
       end
 
@@ -79,70 +79,77 @@ RSpec.describe ApplicationHelper do
         helper.request.env["HTTP_ACCEPT_ENCODING"] = "br"
         link = helper.preload_script("start-discourse")
 
-        expect(link).to eq(
-          script_tag(
-            "https://s3cdn.com/assets/start-discourse.br.js",
-            "start-discourse",
-            helper.csp_nonce_placeholder,
-          ),
-        )
+        expect(link).to include(%r{https://s3cdn.com/assets/start-discourse-\w{8}.br.js})
       end
 
       it "gives s3 cdn if asset host is not set" do
         link = helper.preload_script("start-discourse")
 
-        expect(link).to eq(
-          script_tag(
-            "https://s3cdn.com/assets/start-discourse.js",
-            "start-discourse",
-            helper.csp_nonce_placeholder,
-          ),
-        )
+        expect(link).to include(%r{https://s3cdn.com/assets/start-discourse-\w{8}.js})
       end
 
       it "can fall back to gzip compression" do
         helper.request.env["HTTP_ACCEPT_ENCODING"] = "gzip"
         link = helper.preload_script("start-discourse")
-        expect(link).to eq(
-          script_tag(
-            "https://s3cdn.com/assets/start-discourse.gz.js",
-            "start-discourse",
-            helper.csp_nonce_placeholder,
-          ),
-        )
+        expect(link).to include(%r{https://s3cdn.com/assets/start-discourse-\w{8}.gz.js})
       end
 
       it "gives s3 cdn even if asset host is set" do
         set_cdn_url "https://awesome.com"
         link = helper.preload_script("start-discourse")
 
-        expect(link).to eq(
-          script_tag(
-            "https://s3cdn.com/assets/start-discourse.js",
-            "start-discourse",
-            helper.csp_nonce_placeholder,
-          ),
-        )
-      end
-
-      it "gives s3 cdn but without brotli/gzip extensions for theme tests assets" do
-        helper.request.env["HTTP_ACCEPT_ENCODING"] = "gzip, br"
-        link = helper.preload_script("discourse/tests/theme_qunit_ember_jquery")
-        expect(link).to eq(
-          script_tag(
-            "https://s3cdn.com/assets/discourse/tests/theme_qunit_ember_jquery.js",
-            "discourse/tests/theme_qunit_ember_jquery",
-            helper.csp_nonce_placeholder,
-          ),
-        )
+        expect(link).to include(%r{https://s3cdn.com/assets/start-discourse-\w{8}.js})
       end
 
       it "uses separate asset CDN if configured" do
         global_setting :s3_asset_cdn_url, "https://s3-asset-cdn.example.com"
         expect(helper.preload_script("start-discourse")).to include(
-          "https://s3-asset-cdn.example.com/assets/start-discourse.js",
+          %r{https://s3-asset-cdn.example.com/assets/start-discourse-\w{8}.js},
         )
       end
+    end
+
+    it "includes extra attrs when provided" do
+      result =
+        helper.preload_script(
+          "plugins/my-plugin",
+          attrs: {
+            "data-plugin-name": "my-plugin",
+            "data-preinstalled": "true",
+            "data-official": "true",
+          },
+        )
+      expect(result).to include('data-plugin-name="my-plugin"')
+      expect(result).to include('data-preinstalled="true"')
+      expect(result).to include('data-official="true"')
+    end
+
+    it "does not include extra attrs when none are provided" do
+      result = helper.preload_script("start-discourse")
+      expect(result).not_to include("data-plugin-name")
+      expect(result).not_to include("data-preinstalled")
+      expect(result).not_to include("data-official")
+    end
+
+    it "escapes attr values" do
+      result =
+        helper.preload_script("plugins/test", attrs: { "data-plugin-name": "<script>xss</script>" })
+      expect(result).not_to include("<script>xss</script>")
+      expect(result).to include("&lt;script&gt;xss&lt;/script&gt;")
+    end
+
+    it "renders preinstalled and official as false for non-preinstalled plugins" do
+      result =
+        helper.preload_script(
+          "plugins/my-plugin",
+          attrs: {
+            "data-plugin-name": "my-plugin",
+            "data-preinstalled": "false",
+            "data-official": "false",
+          },
+        )
+      expect(result).to include('data-preinstalled="false"')
+      expect(result).to include('data-official="false"')
     end
   end
 
@@ -243,7 +250,8 @@ RSpec.describe ApplicationHelper do
           Theme.create(
             name: "Dark",
             user_id: Discourse::SYSTEM_USER_ID,
-            color_scheme_id: ColorScheme.find_by(base_scheme_id: "Dark").id,
+            color_scheme_id:
+              ColorScheme.find_by(base_scheme_id: ColorScheme::NAMES_TO_ID_MAP["Dark"]).id,
           )
         helper.request.env[:resolved_theme_id] = dark_theme.id
       end
@@ -303,7 +311,8 @@ RSpec.describe ApplicationHelper do
           Theme.create(
             name: "Dark",
             user_id: Discourse::SYSTEM_USER_ID,
-            color_scheme_id: ColorScheme.find_by(base_scheme_id: "Dark").id,
+            color_scheme_id:
+              ColorScheme.find_by(base_scheme_id: ColorScheme::NAMES_TO_ID_MAP["Dark"]).id,
           )
       end
 
@@ -328,7 +337,8 @@ RSpec.describe ApplicationHelper do
           Theme.create(
             name: "Dark",
             user_id: Discourse::SYSTEM_USER_ID,
-            color_scheme_id: ColorScheme.find_by(base_scheme_id: "Dark").id,
+            color_scheme_id:
+              ColorScheme.find_by(base_scheme_id: ColorScheme::NAMES_TO_ID_MAP["Dark"]).id,
           )
         helper.request.env[:resolved_theme_id] = dark_theme.id
         SiteSetting.logo_dark = Fabricate(:upload, url: "/images/logo-dark.png")
@@ -565,14 +575,24 @@ RSpec.describe ApplicationHelper do
   end
 
   describe "preloaded_json" do
-    it "returns empty JSON if preloaded is empty" do
-      @preloaded = nil
+    fab!(:user)
+
+    it "returns empty JSON if preloader is not initialized" do
+      @application_layout_preloader = nil
       expect(helper.preloaded_json).to eq("{}")
     end
 
     it "escapes and strips invalid unicode and strips in json body" do
-      @preloaded = { test: %{["< \x80"]} }
-      expect(helper.preloaded_json).to eq(%{{"test":"[\\"\\u003c \uFFFD\\"]"}})
+      @application_layout_preloader =
+        ApplicationLayoutPreloader.new(
+          guardian: Guardian.new(user),
+          theme_id: nil,
+          theme_target: nil,
+          login_method: nil,
+        )
+
+      @application_layout_preloader.store_preloaded("test", %{["< \x80"]})
+      expect(helper.preloaded_json).to include(%{"test":"[\\"\\u003c \uFFFD\\"]"})
     end
   end
 
@@ -616,7 +636,7 @@ RSpec.describe ApplicationHelper do
       it "returns the correct image" do
         SiteSetting.opengraph_image = Fabricate(:upload, url: "/images/og-image.png")
 
-        SiteSetting.twitter_summary_large_image = Fabricate(:upload, url: "/images/twitter.png")
+        SiteSetting.x_summary_large_image = Fabricate(:upload, url: "/images/twitter.png")
 
         SiteSetting.large_icon = Fabricate(:upload, url: "/images/large_icon.png")
 
@@ -629,22 +649,20 @@ RSpec.describe ApplicationHelper do
 
         expect(helper.crawlable_meta_data).to include(SiteSetting.site_opengraph_image_url)
 
-        SiteSetting.opengraph_image = nil
+        SiteSetting.opengraph_image = ""
 
-        expect(helper.crawlable_meta_data).to include(
-          SiteSetting.site_twitter_summary_large_image_url,
-        )
+        expect(helper.crawlable_meta_data).to include(SiteSetting.site_x_summary_large_image_url)
 
-        SiteSetting.twitter_summary_large_image = nil
+        SiteSetting.x_summary_large_image = ""
 
         expect(helper.crawlable_meta_data).to include(SiteSetting.site_large_icon_url)
 
-        SiteSetting.large_icon = nil
-        SiteSetting.logo_small = nil
+        SiteSetting.large_icon = ""
+        SiteSetting.logo_small = ""
 
         expect(helper.crawlable_meta_data).to include(SiteSetting.site_logo_url)
 
-        SiteSetting.logo = nil
+        SiteSetting.logo = ""
 
         expect(helper.crawlable_meta_data).to include(
           Upload.find(SiteIconManager::SKETCH_LOGO_ID).url,
@@ -665,13 +683,13 @@ RSpec.describe ApplicationHelper do
         <meta name=\"twitter:image\" content=\"#{SiteSetting.site_logo_url}\" />
         HTML
 
-        SiteSetting.twitter_summary_large_image = Fabricate(:upload, url: "/images/twitter.png")
+        SiteSetting.x_summary_large_image = Fabricate(:upload, url: "/images/twitter.png")
 
         expect(helper.crawlable_meta_data).to include(<<~HTML)
-        <meta name=\"twitter:image\" content=\"#{SiteSetting.site_twitter_summary_large_image_url}\" />
+        <meta name=\"twitter:image\" content=\"#{SiteSetting.site_x_summary_large_image_url}\" />
         HTML
 
-        SiteSetting.twitter_summary_large_image = Fabricate(:upload, url: "/images/twitter.svg")
+        SiteSetting.x_summary_large_image = Fabricate(:upload, url: "/images/twitter.svg")
 
         expect(helper.crawlable_meta_data).to include(<<~HTML)
         <meta name=\"twitter:image\" content=\"#{SiteSetting.site_logo_url}\" />
@@ -680,6 +698,33 @@ RSpec.describe ApplicationHelper do
         SiteSetting.logo = Fabricate(:upload, url: "/images/d-logo-sketch.svg")
 
         expect(helper.crawlable_meta_data).not_to include("twitter:image")
+      end
+    end
+
+    context "with opengraph image dimensions" do
+      it "includes og:image:width and og:image:height when provided" do
+        result =
+          helper.crawlable_meta_data(image: "some-image.png", image_width: 1024, image_height: 768)
+        expect(result).to include('<meta property="og:image:width" content="1024" />')
+        expect(result).to include('<meta property="og:image:height" content="768" />')
+      end
+
+      it "does not include og:image dimensions when not provided" do
+        result = helper.crawlable_meta_data(image: "some-image.png")
+        expect(result).not_to include("og:image:width")
+        expect(result).not_to include("og:image:height")
+      end
+    end
+
+    context "with opengraph image type" do
+      it "includes og:image:type when provided" do
+        result = helper.crawlable_meta_data(image: "some-image.png", image_type: "image/png")
+        expect(result).to include('<meta property="og:image:type" content="image/png" />')
+      end
+
+      it "does not include og:image:type when not provided" do
+        result = helper.crawlable_meta_data(image: "some-image.png")
+        expect(result).not_to include("og:image:type")
       end
     end
 
@@ -735,6 +780,129 @@ RSpec.describe ApplicationHelper do
         )
       end
     end
+
+    context "with reading time and likes" do
+      it "uses translated strings for reading time and likes" do
+        result = helper.crawlable_meta_data(read_time: 5, like_count: 10)
+
+        expect(result).to include(
+          "<meta name=\"twitter:label1\" value=\"#{I18n.t("reading_time")}\" />",
+        )
+        expect(result).to include(
+          "<meta name=\"twitter:data1\" value=\"#{I18n.t("reading_time_minutes", count: 5)}\" />",
+        )
+        expect(result).to include("<meta name=\"twitter:label2\" value=\"#{I18n.t("likes")}\" />")
+        expect(result).to include(
+          "<meta name=\"twitter:data2\" value=\"#{I18n.t("likes_count", count: 10)}\" />",
+        )
+      end
+
+      it "handles singular reading time correctly" do
+        result = helper.crawlable_meta_data(read_time: 1, like_count: 1)
+
+        expect(result).to include("1 min 🕑")
+        expect(result).not_to include("1 mins")
+      end
+
+      it "does not include twitter card labels when read_time or like_count is missing" do
+        result = helper.crawlable_meta_data(read_time: 5)
+        expect(result).not_to include("twitter:label1")
+
+        result = helper.crawlable_meta_data(like_count: 10)
+        expect(result).not_to include("twitter:label1")
+      end
+    end
+  end
+
+  describe "#title_content" do
+    it "returns the correct title" do
+      SiteSetting.title = "Test Title"
+      result = helper.title_content
+
+      expect(result).to include("Test Title")
+    end
+
+    it "accepts a content argument" do
+      helper.stubs(:content_for?).with(:title).returns(true)
+      helper.stubs(:content_for).with(:title).returns("Custom Title")
+
+      result = helper.title_content
+
+      expect(result).to include("Custom Title")
+    end
+  end
+
+  describe "#description_content" do
+    it "returns the correct description" do
+      SiteSetting.site_description = "Test Description"
+      result = helper.description_content
+
+      expect(result).to include("Test Description")
+    end
+
+    it "accepts a content argument" do
+      @description_meta = "Custom Description"
+
+      result = helper.description_content
+
+      expect(result).to include("Custom Description")
+    end
+  end
+
+  describe "when a plugin registers the :meta_data_content modifier" do
+    let!(:plugin) { Plugin::Instance.new }
+    let!(:modifier) { :meta_data_content }
+    let!(:block) do
+      Proc.new do |content, property, opts|
+        next "modified by plugin" if property == :description
+        next "BIG TITLE" if property == :title
+        content
+      end
+    end
+
+    before { DiscoursePluginRegistry.register_modifier(plugin, modifier, &block) }
+    after { DiscoursePluginRegistry.unregister_modifier(plugin, modifier, &block) }
+
+    it "allows the plugin to modify the meta tags" do
+      result =
+        helper.crawlable_meta_data(
+          description: "This is a test description",
+          title: "to be overridden",
+        )
+
+      expect(result).to include(
+        "<meta property=\"og:description\" content=\"modified by plugin\" />",
+      )
+      expect(result).to include("<meta property=\"og:title\" content=\"BIG TITLE\" />")
+    end
+
+    it "modifies the title tag" do
+      title = helper.title_content
+
+      expect(title).to include("BIG TITLE")
+    end
+
+    it "modifies the description tag" do
+      description = helper.description_content
+
+      expect(description).to include("modified by plugin")
+    end
+
+    it "does not modify the `title` SiteSetting" do
+      SiteSetting.title = "Test Title"
+      result = helper.title_content
+
+      expect(result).to include("BIG TITLE")
+      expect(SiteSetting.title).to eq("Test Title")
+    end
+
+    it "does not modify the `site_description` SiteSetting" do
+      SiteSetting.site_description = "Test Description"
+      result = helper.description_content
+
+      expect(result).to include("modified by plugin")
+      expect(SiteSetting.site_description).to eq("Test Description")
+    end
   end
 
   describe "discourse_color_scheme_stylesheets" do
@@ -746,7 +914,7 @@ RSpec.describe ApplicationHelper do
     end
 
     it "returns two color scheme link tags when dark mode is enabled" do
-      SiteSetting.default_dark_mode_color_scheme_id = ColorScheme.where(name: "Dark").pick(:id)
+      Theme.find_default.update!(dark_color_scheme_id: ColorScheme.where(name: "Dark").pick(:id))
       cs_stylesheets = helper.discourse_color_scheme_stylesheets
 
       expect(cs_stylesheets).to include("(prefers-color-scheme: dark)")
@@ -755,7 +923,7 @@ RSpec.describe ApplicationHelper do
 
     it "handles a missing dark color scheme gracefully" do
       scheme = ColorScheme.create!(name: "pyramid")
-      SiteSetting.default_dark_mode_color_scheme_id = scheme.id
+      Theme.find_default.update!(dark_color_scheme_id: scheme.id)
       scheme.destroy!
       cs_stylesheets = helper.discourse_color_scheme_stylesheets
 
@@ -791,18 +959,18 @@ RSpec.describe ApplicationHelper do
 
         color_stylesheets = helper.discourse_color_scheme_stylesheets
         expect(color_stylesheets).not_to include("color_definitions_flamboyant")
-        expect(color_stylesheets).to include("color_definitions_base")
+        expect(color_stylesheets).to include("color_definitions_light-default")
       end
     end
 
     context "with dark scheme with user option and/or cookies" do
       before do
-        user.user_option.dark_scheme_id = -1
+        user.user_option.interface_color_mode = UserOption::LIGHT_MODE
         user.user_option.save!
         helper.request.env[Auth::DefaultCurrentUserProvider::CURRENT_USER_KEY] = user
         @new_cs = Fabricate(:color_scheme, name: "Custom Color Scheme")
 
-        SiteSetting.default_dark_mode_color_scheme_id = ColorScheme.where(name: "Dark").pick(:id)
+        Theme.find_default.update!(dark_color_scheme_id: ColorScheme.where(name: "Dark").pick(:id))
       end
 
       it "returns no dark scheme stylesheet when user has disabled that option" do
@@ -813,7 +981,10 @@ RSpec.describe ApplicationHelper do
       end
 
       it "returns user-selected dark color scheme stylesheet" do
-        user.user_option.update!(dark_scheme_id: @new_cs.id)
+        user.user_option.update!(
+          dark_scheme_id: @new_cs.id,
+          interface_color_mode: UserOption::AUTO_MODE,
+        )
 
         color_stylesheets = helper.discourse_color_scheme_stylesheets
         expect(color_stylesheets).to include("(prefers-color-scheme: dark)")
@@ -821,6 +992,7 @@ RSpec.describe ApplicationHelper do
       end
 
       it "respects cookie value over user option for dark color scheme" do
+        user.user_option.update!(interface_color_mode: UserOption::AUTO_MODE)
         helper.request.cookies["dark_scheme_id"] = @new_cs.id
 
         color_stylesheets = helper.discourse_color_scheme_stylesheets
@@ -847,7 +1019,8 @@ RSpec.describe ApplicationHelper do
         Theme.create(
           name: "Dark",
           user_id: Discourse::SYSTEM_USER_ID,
-          color_scheme_id: ColorScheme.find_by(base_scheme_id: "Dark").id,
+          color_scheme_id:
+            ColorScheme.find_by(base_scheme_id: ColorScheme::NAMES_TO_ID_MAP["Dark"]).id,
         )
       helper.request.env[:resolved_theme_id] = dark_theme.id
 
@@ -895,12 +1068,264 @@ RSpec.describe ApplicationHelper do
     end
 
     it "doesn't render theme-color meta tag for the dark scheme if none is set" do
-      SiteSetting.default_dark_mode_color_scheme_id = -1
+      Theme.find_default.update!(dark_color_scheme_id: -1)
       helper.request.cookies.delete("dark_scheme_id")
 
       expect(helper.discourse_theme_color_meta_tags).to eq(<<~HTML)
         <meta name="theme-color" media="all" content="#abcdef">
       HTML
+    end
+  end
+
+  describe "#discourse_color_scheme_meta_tag" do
+    fab!(:color_scheme)
+
+    before { Theme.find_default.update!(dark_color_scheme_id: -1) }
+
+    it "renders a 'light' color-scheme if no dark scheme is set and the current scheme is light" do
+      ColorSchemeRevisor.revise(
+        color_scheme,
+        { colors: [{ name: "primary", hex: "333333" }, { name: "secondary", hex: "DDDDDD" }] },
+      )
+
+      helper.request.cookies["color_scheme_id"] = color_scheme.id
+
+      expect(helper.discourse_color_scheme_meta_tag).to eq(<<~HTML)
+        <meta name="color-scheme" content="light">
+      HTML
+    end
+
+    it "renders a 'dark' color-scheme if no dark scheme is set and the default scheme is dark" do
+      ColorSchemeRevisor.revise(
+        color_scheme,
+        { colors: [{ name: "primary", hex: "F8F8F8" }, { name: "secondary", hex: "232323" }] },
+      )
+      @scheme_id = color_scheme.id
+
+      expect(helper.discourse_color_scheme_meta_tag).to eq(<<~HTML)
+        <meta name="color-scheme" content="dark">
+      HTML
+    end
+
+    it "renders a 'light dark' color-scheme if a dark scheme is set" do
+      dark = Fabricate(:color_scheme)
+      dark.save!
+      helper.request.cookies["dark_scheme_id"] = dark.id
+
+      expect(helper.discourse_color_scheme_meta_tag).to eq(<<~HTML)
+        <meta name="color-scheme" content="light dark">
+      HTML
+    end
+  end
+
+  describe "#dark_scheme_id" do
+    fab!(:dark_scheme, :color_scheme)
+    fab!(:light_scheme, :color_scheme)
+
+    before do
+      helper.request.cookies["color_scheme_id"] = light_scheme.id
+      helper.request.cookies["dark_scheme_id"] = dark_scheme.id
+    end
+
+    it "returns the value set in the dark_scheme_id cookie" do
+      expect(helper.dark_scheme_id).to eq(dark_scheme.id)
+    end
+  end
+
+  describe "#forced_light_mode?" do
+    fab!(:user)
+
+    context "when the user preference in the database is set to light" do
+      before do
+        user.user_option.update!(interface_color_mode: UserOption::LIGHT_MODE)
+        helper.stubs(:current_user).returns(user)
+      end
+
+      it "returns true if the forced_color_mode cookie is set to `light`" do
+        helper.request.cookies["forced_color_mode"] = "light"
+        expect(helper.forced_light_mode?).to eq(true)
+      end
+
+      it "returns false if the forced_color_mode cookie is set to `dark`" do
+        helper.request.cookies["forced_color_mode"] = "dark"
+        expect(helper.forced_light_mode?).to eq(false)
+      end
+
+      it "returns false if the forced_color_mode cookie is set to `auto`" do
+        helper.request.cookies["forced_color_mode"] = "auto"
+        expect(helper.forced_light_mode?).to eq(false)
+      end
+
+      it "returns true if the forced_color_mode cookie is not set" do
+        helper.request.cookies["forced_color_mode"] = nil
+        expect(helper.forced_light_mode?).to eq(true)
+      end
+    end
+
+    context "when the user preference in the database is set to dark" do
+      before do
+        user.user_option.update!(interface_color_mode: UserOption::DARK_MODE)
+        helper.stubs(:current_user).returns(user)
+      end
+
+      it "returns true if the forced_color_mode cookie is set to `light`" do
+        helper.request.cookies["forced_color_mode"] = "light"
+        expect(helper.forced_light_mode?).to eq(true)
+      end
+
+      it "returns false if the forced_color_mode cookie is set to `dark`" do
+        helper.request.cookies["forced_color_mode"] = "dark"
+        expect(helper.forced_light_mode?).to eq(false)
+      end
+
+      it "returns false if the forced_color_mode cookie is set to `auto`" do
+        helper.request.cookies["forced_color_mode"] = "auto"
+        expect(helper.forced_light_mode?).to eq(false)
+      end
+
+      it "returns false if the forced_color_mode cookie is not set" do
+        helper.request.cookies["forced_color_mode"] = nil
+        expect(helper.forced_light_mode?).to eq(false)
+      end
+    end
+
+    context "when the user preference in the database is set to auto" do
+      before do
+        user.user_option.update!(interface_color_mode: UserOption::AUTO_MODE)
+        helper.stubs(:current_user).returns(user)
+      end
+
+      it "returns true if the forced_color_mode cookie is set to `light`" do
+        helper.request.cookies["forced_color_mode"] = "light"
+        expect(helper.forced_light_mode?).to eq(true)
+      end
+
+      it "returns false if the forced_color_mode cookie is set to `dark`" do
+        helper.request.cookies["forced_color_mode"] = "dark"
+        expect(helper.forced_light_mode?).to eq(false)
+      end
+
+      it "returns false if the forced_color_mode cookie is set to `auto`" do
+        helper.request.cookies["forced_color_mode"] = "auto"
+        expect(helper.forced_light_mode?).to eq(false)
+      end
+
+      it "returns false if the forced_color_mode cookie is not set" do
+        helper.request.cookies["forced_color_mode"] = nil
+        expect(helper.forced_light_mode?).to eq(false)
+      end
+    end
+  end
+
+  describe "#forced_dark_mode?" do
+    fab!(:user)
+
+    context "when the user preference in the database is set to light" do
+      before do
+        user.user_option.update!(interface_color_mode: UserOption::LIGHT_MODE)
+        helper.stubs(:current_user).returns(user)
+      end
+
+      it "returns false if the forced_color_mode cookie is set to `light`" do
+        helper.request.cookies["forced_color_mode"] = "light"
+        expect(helper.forced_dark_mode?).to eq(false)
+      end
+
+      it "returns true if the forced_color_mode cookie is set to `dark`" do
+        helper.request.cookies["forced_color_mode"] = "dark"
+        expect(helper.forced_dark_mode?).to eq(true)
+      end
+
+      it "returns false if the forced_color_mode cookie is set to `auto`" do
+        helper.request.cookies["forced_color_mode"] = "auto"
+        expect(helper.forced_dark_mode?).to eq(false)
+      end
+
+      it "returns true if the forced_color_mode cookie is not set" do
+        helper.request.cookies["forced_color_mode"] = nil
+        expect(helper.forced_dark_mode?).to eq(false)
+      end
+    end
+
+    context "when the user preference in the database is set to dark" do
+      before do
+        user.user_option.update!(interface_color_mode: UserOption::DARK_MODE)
+        helper.stubs(:current_user).returns(user)
+      end
+
+      it "returns false if the forced_color_mode cookie is set to `light`" do
+        helper.request.cookies["forced_color_mode"] = "light"
+        expect(helper.forced_dark_mode?).to eq(false)
+      end
+
+      it "returns true if the forced_color_mode cookie is set to `dark`" do
+        helper.request.cookies["forced_color_mode"] = "dark"
+        expect(helper.forced_dark_mode?).to eq(true)
+      end
+
+      it "returns false if the forced_color_mode cookie is set to `auto`" do
+        helper.request.cookies["forced_color_mode"] = "auto"
+        expect(helper.forced_dark_mode?).to eq(false)
+      end
+
+      it "returns true if the forced_color_mode cookie is not set" do
+        helper.request.cookies["forced_color_mode"] = nil
+        expect(helper.forced_dark_mode?).to eq(true)
+      end
+    end
+
+    context "when the user preference in the database is set to auto" do
+      before do
+        user.user_option.update!(interface_color_mode: UserOption::AUTO_MODE)
+        helper.stubs(:current_user).returns(user)
+      end
+
+      it "returns false if the forced_color_mode cookie is set to `light`" do
+        helper.request.cookies["forced_color_mode"] = "light"
+        expect(helper.forced_dark_mode?).to eq(false)
+      end
+
+      it "returns true if the forced_color_mode cookie is set to `dark`" do
+        helper.request.cookies["forced_color_mode"] = "dark"
+        expect(helper.forced_dark_mode?).to eq(true)
+      end
+
+      it "returns false if the forced_color_mode cookie is set to `auto`" do
+        helper.request.cookies["forced_color_mode"] = "auto"
+        expect(helper.forced_dark_mode?).to eq(false)
+      end
+
+      it "returns false if the forced_color_mode cookie is not set" do
+        helper.request.cookies["forced_color_mode"] = nil
+        expect(helper.forced_dark_mode?).to eq(false)
+      end
+    end
+  end
+
+  describe "#crawler_topic_container_schema" do
+    fab!(:topic)
+
+    it "returns DiscussionForumPosting schema attributes by default" do
+      result = helper.crawler_topic_container_schema(topic)
+      expect(result).to include("itemscope")
+      expect(result).to include('itemtype="http://schema.org/DiscussionForumPosting"')
+    end
+  end
+
+  describe "#crawler_post_schema" do
+    fab!(:topic)
+    fab!(:first_post) { Fabricate(:post, topic: topic) }
+    fab!(:reply) { Fabricate(:post, topic: topic) }
+
+    it "returns empty string for the first post" do
+      expect(helper.crawler_post_schema(first_post, topic)).to eq("")
+    end
+
+    it "returns Comment schema attributes for reply posts" do
+      result = helper.crawler_post_schema(reply, topic)
+      expect(result).to include('itemprop="comment"')
+      expect(result).to include("itemscope")
+      expect(result).to include('itemtype="http://schema.org/Comment"')
     end
   end
 end

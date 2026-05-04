@@ -14,7 +14,8 @@ class PostActionCreator
       message: nil,
       created_at: nil,
       reason: nil,
-      silent: false
+      silent: false,
+      context: nil
     )
       new(
         created_by,
@@ -24,6 +25,7 @@ class PostActionCreator
         created_at: created_at,
         reason: reason,
         silent: silent,
+        context: context,
       ).perform
     end
 
@@ -50,14 +52,16 @@ class PostActionCreator
     created_at: nil,
     queue_for_review: false,
     reason: nil,
-    silent: false
+    silent: false,
+    context: nil
   )
     @created_by = created_by
     @created_at = created_at || Time.zone.now
 
     @post = post
     @post_action_type_id = post_action_type_id
-    @post_action_name = PostActionType.types[@post_action_type_id]
+    @post_action_type_view = PostActionTypeView.new
+    @post_action_name = @post_action_type_view.types[@post_action_type_id]
 
     @is_warning = is_warning
     @take_action = take_action && guardian.is_staff?
@@ -72,6 +76,8 @@ class PostActionCreator
     @reason = "queued_by_staff" if reason.nil? && @queue_for_review
 
     @silent = silent
+
+    @context = context
   end
 
   def post_can_act?
@@ -96,7 +102,7 @@ class PostActionCreator
     if !post_can_act? || (@queue_for_review && !guardian.is_staff?)
       result.forbidden = true
 
-      if taken_actions&.keys&.include?(PostActionType.types[@post_action_name])
+      if taken_actions&.keys&.include?(@post_action_type_view.types[@post_action_name])
         result.add_error(I18n.t("action_already_performed"))
       else
         result.add_error(I18n.t("invalid_access"))
@@ -115,7 +121,9 @@ class PostActionCreator
 
     # create meta topic / post if needed
     if @message.present? &&
-         %i[notify_moderators notify_user spam illegal].include?(@post_action_name)
+         (@post_action_type_view.additional_message_types.keys | %i[spam illegal]).include?(
+           @post_action_name,
+         )
       creator = create_message_creator
       # We need to check if the creator exists because it's possible `create_message_creator` returns nil
       # in the event that a `post_action_notify_user_handler` evaluated to false, haulting the post creation.
@@ -168,11 +176,11 @@ class PostActionCreator
   private
 
   def flagging_post?
-    PostActionType.notify_flag_type_ids.include?(@post_action_type_id)
+    @post_action_type_view.notify_flag_type_ids.include?(@post_action_type_id)
   end
 
   def cannot_flag_again?(reviewable)
-    return false if @post_action_type_id == PostActionType.types[:notify_moderators]
+    return false if @post_action_type_id == @post_action_type_view.types[:notify_moderators]
     flag_type_already_used =
       reviewable.reviewable_scores.any? do |rs|
         rs.reviewable_score_type == @post_action_type_id && !rs.pending?
@@ -217,7 +225,11 @@ class PostActionCreator
       true,
       Discourse.system_user,
       message:
-        I18n.t("temporarily_closed_due_to_flags", count: SiteSetting.num_hours_to_close_topic),
+        I18n.t(
+          "temporarily_closed_due_to_flags",
+          count: SiteSetting.num_hours_to_close_topic,
+          locale: SiteSetting.default_locale,
+        ),
     )
 
     topic.set_or_create_timer(
@@ -231,7 +243,8 @@ class PostActionCreator
     return if @post.hidden?
     return if !@created_by.staff? && @post.user&.staff?
 
-    not_auto_action_flag_type = !PostActionType.auto_action_flag_types.include?(@post_action_name)
+    not_auto_action_flag_type =
+      !@post_action_type_view.auto_action_flag_types.include?(@post_action_name)
     return if not_auto_action_flag_type && !@queue_for_review
 
     if @queue_for_review
@@ -287,7 +300,7 @@ class PostActionCreator
     }
 
     # First try to revive a trashed record
-    post_action = PostAction.where(where_attrs).with_deleted.where("deleted_at IS NOT NULL").first
+    post_action = PostAction.where(where_attrs).with_deleted.where.not(deleted_at: nil).first
 
     if post_action
       post_action.recover!
@@ -302,14 +315,14 @@ class PostActionCreator
 
     if post_action
       case @post_action_type_id
-      when *PostActionType.notify_flag_type_ids
+      when *@post_action_type_view.notify_flag_type_ids
         DiscourseEvent.trigger(:flag_created, post_action, self)
-      when PostActionType.types[:like]
+      when @post_action_type_view.types[:like]
         DiscourseEvent.trigger(:like_created, post_action, self)
       end
     end
 
-    if @post_action_type_id == PostActionType.types[:like]
+    if @post_action_type_id == @post_action_type_view.types[:like]
       GivenDailyLike.increment_for(@created_by.id)
     end
 
@@ -325,6 +338,7 @@ class PostActionCreator
         "post_action_types.#{@post_action_name}.email_title",
         title: @post.topic.title,
         locale: SiteSetting.default_locale,
+        default: I18n.t("post_action_types.illegal.email_title"),
       )
 
     body =
@@ -333,6 +347,7 @@ class PostActionCreator
         message: @message,
         link: "#{Discourse.base_url}#{@post.url}",
         locale: SiteSetting.default_locale,
+        default: I18n.t("post_action_types.illegal.email_body"),
       )
 
     create_args = {
@@ -342,32 +357,32 @@ class PostActionCreator
       raw: body,
     }
 
-    if %i[notify_moderators spam illegal].include?(@post_action_name)
-      create_args[:subtype] = TopicSubtype.notify_moderators
-      create_args[:target_group_names] = [Group[:moderators].name]
-
-      if SiteSetting.enable_category_group_moderation? &&
-           @post.topic&.category&.reviewable_by_group_id?
-        create_args[:target_group_names] << @post.topic.category.reviewable_by_group.name
-      end
-    else
+    if @post_action_name == :notify_user
       create_args[:subtype] = TopicSubtype.notify_user
 
-      if @post_action_name == :notify_user
-        create_args[:target_usernames] = @post.user.username
+      create_args[:target_usernames] = @post.user.username
 
-        # Evaluate DiscoursePluginRegistry.post_action_notify_user_handlers.
-        # If any return false, return early from this method
-        handler_values =
-          DiscoursePluginRegistry.post_action_notify_user_handlers.map do |handler|
-            handler.call(@created_by, @post, @message)
-          end
-        return if handler_values.any? { |value| value == false }
-      elsif @post_action_name != :notify_moderators
-        # this is a hack to allow a PM with no recipients, we should think through
-        # a cleaner technique, a PM with myself is valid for flagging
-        "x"
+      # Evaluate DiscoursePluginRegistry.post_action_notify_user_handlers.
+      # If any return false, return early from this method
+      handler_values =
+        DiscoursePluginRegistry.post_action_notify_user_handlers.map do |handler|
+          handler.call(@created_by, @post, @message)
+        end
+      return if handler_values.any? { |value| value == false }
+    else
+      create_args[:subtype] = TopicSubtype.notify_moderators
+      group_names = Set[Group[:moderators].name]
+
+      if SiteSetting.enable_category_group_moderation? && @post.topic&.category
+        group_names.merge(
+          Group
+            .joins(:category_moderation_groups)
+            .where("category_moderation_groups.category_id": @post.topic.category.id)
+            .pluck(:name),
+        )
       end
+
+      create_args[:target_group_names] = group_names.to_a
     end
 
     PostCreator.new(@created_by, create_args)
@@ -375,7 +390,17 @@ class PostActionCreator
 
   def create_reviewable(result)
     return unless flagging_post?
-    return if @post.user_id.to_i < 0
+
+    # Return early if the reviewable is being created for a user with a negative user_id.
+    # Plugin apply_modifier can remove this early return for special cases.
+    is_bot_post = @post.user_id.to_i < 0
+    if DiscoursePluginRegistry.apply_modifier(
+         :post_action_creator_block_reviewable_for_bot,
+         is_bot_post,
+         @post,
+       )
+      return
+    end
 
     result.reviewable =
       ReviewableFlaggedPost.needs_review!(
@@ -383,7 +408,8 @@ class PostActionCreator
         target: @post,
         topic: @post.topic,
         reviewable_by_moderator: true,
-        potential_spam: @post_action_type_id == PostActionType.types[:spam],
+        potential_spam: @post_action_type_id == @post_action_type_view.types[:spam],
+        potentially_illegal: @post_action_type_id == @post_action_type_view.types[:illegal],
         payload: {
           targets_topic: @targets_topic,
         },
@@ -398,6 +424,7 @@ class PostActionCreator
         meta_topic_id: @meta_post&.topic_id,
         reason: @reason,
         force_review: trusted_spam_flagger?,
+        context: @context,
       )
   end
 

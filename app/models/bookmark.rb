@@ -28,6 +28,25 @@ class Bookmark < ActiveRecord::Base
   belongs_to :user
   belongs_to :bookmarkable, polymorphic: true
 
+  has_many :dependent_reminder_notifications,
+           ->(bookmark) do
+             # we keep these notifications otherwise they would be deleted when the bookmark is deleted
+             # and user would never have a chance to see them
+             if bookmark.auto_delete_preference ==
+                  Bookmark.auto_delete_preferences[:when_reminder_sent]
+               where("false")
+             else
+               where(notification_type: Notification.types[:bookmark_reminder]).where(
+                 "data::jsonb->>'bookmark_id' = ?",
+                 bookmark.id.to_s,
+               )
+             end
+           end,
+           class_name: "Notification",
+           foreign_key: :user_id,
+           primary_key: :user_id,
+           dependent: :destroy
+
   def self.auto_delete_preferences
     @auto_delete_preferences ||=
       Enum.new(never: 0, when_reminder_sent: 1, on_owner_reply: 2, clear_reminder: 3)
@@ -119,15 +138,21 @@ class Bookmark < ActiveRecord::Base
     (reminder_at + offset).strftime(I18n.t("datetime_formats.formats.calendar_ics"))
   end
 
-  def clear_reminder!
-    update!(reminder_last_sent_at: Time.zone.now, reminder_set_at: nil, reminder_at: nil)
+  def clear_reminder!(force_clear_reminder_at: false)
+    reminder_update_attrs = { reminder_last_sent_at: Time.zone.now, reminder_set_at: nil }
+
+    if self.auto_clear_reminder_when_reminder_sent? || force_clear_reminder_at
+      reminder_update_attrs[:reminder_at] = nil
+    end
+
+    update!(reminder_update_attrs)
   end
 
   def reminder_at_in_zone(timezone)
     self.reminder_at.in_time_zone(timezone)
   end
 
-  scope :with_reminders, -> { where("reminder_at IS NOT NULL") }
+  scope :with_reminders, -> { where.not(reminder_at: nil) }
 
   scope :pending_reminders,
         ->(before_time = Time.now.utc) do
@@ -200,7 +225,7 @@ end
 #  reminder_set_at        :datetime
 #  auto_delete_preference :integer          default(0), not null
 #  pinned                 :boolean          default(FALSE)
-#  bookmarkable_id        :integer
+#  bookmarkable_id        :bigint
 #  bookmarkable_type      :string
 #
 # Indexes

@@ -88,22 +88,43 @@ RSpec.describe Badge do
 
     context "when has query" do
       before { badge.query = "SELECT id FROM users" }
-      it { is_expected.to be false }
+      it { is_expected.to be true }
     end
 
-    context "when neither system nor has query" do
-      before { badge.update_columns(system: false, query: nil) }
+    context "when not a system badge" do
+      before { badge.update_columns(system: false) }
       it { is_expected.to be true }
     end
   end
 
   describe "#image_url" do
-    it "has CDN url" do
+    before do
       SiteSetting.enable_s3_uploads = true
       SiteSetting.s3_cdn_url = "https://some-s3-cdn.amzn.com"
-      upload = Fabricate(:upload_s3)
-      badge = Fabricate(:badge, image_upload_id: upload.id)
-      expect(badge.image_url).to start_with("https://some-s3-cdn.amzn.com")
+    end
+
+    context "when the badge has an existing image" do
+      it "has a CDN url" do
+        upload = Fabricate(:upload_s3)
+        badge = Fabricate(:badge, image_upload_id: upload.id)
+
+        expect(badge.image_url).to start_with("https://some-s3-cdn.amzn.com")
+      end
+    end
+
+    context "when the badge does not have a related image" do
+      it "does not have a CDN url" do
+        upload = Fabricate(:upload_s3)
+        badge = Fabricate(:badge, image_upload_id: upload.id)
+
+        store = stub
+        store.expects(:remove_upload).returns(true)
+        Discourse.stubs(:store).returns(store)
+
+        upload.destroy!
+
+        expect(badge.reload.image_url).to eq(nil)
+      end
     end
   end
 
@@ -247,6 +268,79 @@ RSpec.describe Badge do
       )
       BadgeGranter.backfill(popular_link_badge)
       expect(UserBadge.where(user_id: post.user.id, badge_id: Badge::PopularLink).count).to eq(0)
+    end
+  end
+
+  describe "FirstFlag badge" do
+    fab!(:flagging_user, :user)
+    fab!(:badge_enabled_category) { Fabricate(:category, allow_badges: true) }
+    fab!(:flagged_post) do
+      Fabricate(:post, topic: Fabricate(:topic, category: badge_enabled_category))
+    end
+    let(:first_flag_badge) { Badge.find(Badge::FirstFlag) }
+
+    context "when using an out-of-the-box flag" do
+      let!(:flag_post_action) do
+        Fabricate(:flag_post_action, post: flagged_post, user: flagging_user)
+      end
+
+      it "grants the badge" do
+        expect { BadgeGranter.backfill(first_flag_badge) }.to change {
+          UserBadge.where(user_id: flagging_user.id, badge_id: Badge::FirstFlag).count
+        }.by(1)
+      end
+    end
+
+    context "when using a custom flag" do
+      let!(:custom_flag) { Fabricate(:flag, name: "stahp", applies_to: %w[Post]) }
+      let!(:flag_post_action) do
+        Fabricate(
+          :flag_post_action,
+          post: flagged_post,
+          user: flagging_user,
+          post_action_type_id: PostActionType.types[:custom_stahp],
+        )
+      end
+
+      it "grants the badge" do
+        expect { BadgeGranter.backfill(first_flag_badge) }.to change {
+          UserBadge.where(user_id: flagging_user.id, badge_id: Badge::FirstFlag).count
+        }.by(1)
+      end
+    end
+
+    context "when the flag requires message" do
+      let!(:flag_post_action) do
+        Fabricate(
+          :flag_post_action,
+          post: flagged_post,
+          user: flagging_user,
+          post_action_type_id: PostActionType.types[:notify_user],
+        )
+      end
+
+      it "does not grant the badge" do
+        expect { BadgeGranter.backfill(first_flag_badge) }.not_to change {
+          UserBadge.where(user_id: flagging_user.id, badge_id: Badge::FirstFlag).count
+        }
+      end
+    end
+
+    context "when the flag is a like" do
+      let!(:flag_post_action) do
+        Fabricate(
+          :flag_post_action,
+          post: flagged_post,
+          user: flagging_user,
+          post_action_type_id: PostActionType.types[:like],
+        )
+      end
+
+      it "does not grant the badge" do
+        expect { BadgeGranter.backfill(first_flag_badge) }.not_to change {
+          UserBadge.where(user_id: flagging_user.id, badge_id: Badge::FirstFlag).count
+        }
+      end
     end
   end
 

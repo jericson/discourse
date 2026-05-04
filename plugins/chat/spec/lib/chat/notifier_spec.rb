@@ -2,9 +2,9 @@
 
 describe Chat::Notifier do
   describe "#notify_new" do
-    fab!(:channel) { Fabricate(:category_channel) }
+    fab!(:channel, :category_channel)
     fab!(:user_1) { Fabricate(:user, refresh_auto_groups: true) }
-    fab!(:user_2) { Fabricate(:user) }
+    fab!(:user_2, :user)
 
     before do
       @chat_group =
@@ -70,6 +70,25 @@ describe Chat::Notifier do
         expect(global_mentions_disabled_message.data[:type].to_sym).to eq(:notice)
         expect(global_mentions_disabled_message.data[:text_content]).to eq(
           I18n.t("chat.mention_warning.global_mentions_disallowed"),
+        )
+      end
+
+      it "will respect user's locale on mention warning" do
+        SiteSetting.allow_user_locale = true
+        user_1.update!(locale: "pt_BR")
+        channel.update!(allow_channel_wide_mentions: false)
+        msg = build_cooked_msg(mention, user_1)
+
+        messages =
+          MessageBus.track_publish("/chat/#{channel.id}") do
+            to_notify = described_class.new(msg, msg.created_at).notify_new
+          end
+
+        global_mentions_disabled_message = messages.first
+
+        expect(global_mentions_disabled_message.data[:type].to_sym).to eq(:notice)
+        expect(global_mentions_disabled_message.data[:text_content]).to eq(
+          I18n.t("chat.mention_warning.global_mentions_disallowed", locale: "pt_BR"),
         )
       end
 
@@ -145,8 +164,10 @@ describe Chat::Notifier do
 
           Chat::UpdateMessage.call(
             guardian: user_1.guardian,
-            message_id: msg.id,
-            message: "hello @all",
+            params: {
+              message_id: msg.id,
+              message: "hello @all",
+            },
           )
 
           described_class.new(msg, msg.created_at).notify_edit
@@ -256,6 +277,25 @@ describe Chat::Notifier do
         expect(to_notify[:direct_mentions]).to contain_exactly(user_2.id)
       end
 
+      it "doesn’t attempt to notify bots not in the channel" do
+        bot = Fabricate(:user, username: "bot", id: -999)
+
+        msg = build_cooked_msg("Hello @bot", user_1)
+        _, inaccessible, _ = described_class.new(msg, msg.created_at).list_users_to_notify
+
+        expect(inaccessible[:welcome_to_join]).to be_empty
+
+        msg =
+          build_cooked_msg(
+            "Hello @bot",
+            user_1,
+            chat_channel: Fabricate(:private_category_channel, group: Fabricate(:group)),
+          )
+        _, inaccessible, _ = described_class.new(msg, msg.created_at).list_users_to_notify
+
+        expect(inaccessible[:unreachable]).to be_empty
+      end
+
       it "include users as direct mentions even if there's a @all mention" do
         msg = build_cooked_msg("Hello @all and @#{user_2.username}", user_1)
 
@@ -295,7 +335,7 @@ describe Chat::Notifier do
     end
 
     describe "group mentions" do
-      fab!(:user_3) { Fabricate(:user) }
+      fab!(:user_3, :user)
       fab!(:group) do
         Fabricate(
           :public_group,
@@ -303,7 +343,7 @@ describe Chat::Notifier do
           mentionable_level: Group::ALIAS_LEVELS[:everyone],
         )
       end
-      fab!(:other_channel) { Fabricate(:category_channel) }
+      fab!(:other_channel, :category_channel)
 
       before { @chat_group.add(user_3) }
 
@@ -400,9 +440,9 @@ describe Chat::Notifier do
     end
 
     describe "unreachable users" do
-      fab!(:user_3) { Fabricate(:user) }
+      fab!(:user_3, :user)
 
-      it "notify poster of users who are not allowed to use chat" do
+      it "notifies poster of users who are not allowed to use chat" do
         msg = build_cooked_msg("Hello @#{user_3.username}", user_1)
 
         messages =
@@ -420,12 +460,38 @@ describe Chat::Notifier do
         )
       end
 
+      it "respects user locale on notice about users who are not allowed to use chat" do
+        SiteSetting.allow_user_locale = true
+        user_1.update!(locale: "pt_BR")
+        msg = build_cooked_msg("Hello @#{user_3.username}", user_1)
+
+        messages =
+          MessageBus.track_publish("/chat/#{channel.id}") do
+            to_notify = described_class.new(msg, msg.created_at).notify_new
+
+            expect(to_notify[:direct_mentions]).to be_empty
+          end
+
+        unreachable_msg = messages.first
+
+        expect(unreachable_msg[:data][:type].to_sym).to eq(:notice)
+        expect(unreachable_msg[:data][:text_content]).to eq(
+          I18n.t(
+            "chat.mention_warning.cannot_see",
+            first_identifier: user_3.username,
+            locale: "pt_BR",
+          ),
+        )
+      end
+
       context "when in a personal message" do
         let(:personal_chat_channel) do
           result =
             Chat::CreateDirectMessageChannel.call(
               guardian: user_1.guardian,
-              target_usernames: [user_1.username, user_2.username],
+              params: {
+                target_usernames: [user_1.username, user_2.username],
+              },
             )
           service_failed!(result) if result.failure?
           result.channel
@@ -484,7 +550,7 @@ describe Chat::Notifier do
     end
 
     describe "users who can be invited to join the channel" do
-      fab!(:user_3) { Fabricate(:user) }
+      fab!(:user_3, :user)
 
       before { @chat_group.add(user_3) }
 
@@ -639,7 +705,7 @@ describe Chat::Notifier do
     end
 
     describe "enforcing limits when mentioning groups" do
-      fab!(:user_3) { Fabricate(:user) }
+      fab!(:user_3, :user)
       fab!(:group) do
         Fabricate(
           :public_group,
@@ -685,6 +751,84 @@ describe Chat::Notifier do
           I18n.t("chat.mention_warning.group_mentions_disabled", first_identifier: group.name),
         )
       end
+
+      it "respects user locale on notice about group disallowing mentions" do
+        SiteSetting.allow_user_locale = true
+        user_1.update!(locale: "pt_BR")
+        group.update!(mentionable_level: Group::ALIAS_LEVELS[:only_admins])
+        msg = build_cooked_msg("Hello @#{group.name}", user_1)
+
+        messages =
+          MessageBus.track_publish("/chat/#{channel.id}") do
+            to_notify = described_class.new(msg, msg.created_at).notify_new
+
+            expect(to_notify[group.name]).to be_nil
+          end
+
+        mentions_disabled_msg = messages.first
+
+        expect(mentions_disabled_msg[:data][:type].to_sym).to eq(:notice)
+        expect(mentions_disabled_msg[:data][:text_content]).to eq(
+          I18n.t(
+            "chat.mention_warning.group_mentions_disabled",
+            first_identifier: group.name,
+            locale: "pt_BR",
+          ),
+        )
+      end
+    end
+  end
+
+  describe ".push_notification_reply_action" do
+    fab!(:user)
+    fab!(:channel, :category_channel)
+    fab!(:thread, :chat_thread)
+
+    it "returns a chat-reply action and channel + message data for non-threaded messages" do
+      message = Fabricate(:chat_message, chat_channel: channel)
+
+      payload = described_class.push_notification_reply_action(message, user)
+
+      expect(payload[:actions]).to match(
+        [
+          a_hash_including(
+            action: "chat-reply",
+            type: "text",
+            title: I18n.t("discourse_push_notifications.actions.chat_reply.title"),
+            placeholder: I18n.t("discourse_push_notifications.actions.chat_reply.placeholder"),
+          ),
+        ],
+      )
+      expect(payload[:actions].first[:icon]).to include("inline_reply")
+      expect(payload[:action_data]).to eq(channel_id: channel.id, message_id: message.id)
+    end
+
+    it "includes thread_id when the source message is in a thread" do
+      message = Fabricate(:chat_message, chat_channel: thread.channel, thread_id: thread.id)
+
+      payload = described_class.push_notification_reply_action(message, user)
+
+      expect(payload[:action_data]).to eq(
+        channel_id: thread.channel_id,
+        message_id: message.id,
+        thread_id: thread.id,
+      )
+    end
+
+    it "translates the action title using the user's locale" do
+      SiteSetting.allow_user_locale = true
+      user.update!(locale: "fr")
+      TranslationOverride.upsert!(
+        "fr",
+        "discourse_push_notifications.actions.chat_reply.title",
+        "Répondre",
+      )
+
+      message = Fabricate(:chat_message, chat_channel: channel)
+
+      payload = described_class.push_notification_reply_action(message, user)
+
+      expect(payload[:actions].first[:title]).to eq("Répondre")
     end
   end
 end

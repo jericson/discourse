@@ -1,103 +1,78 @@
 # frozen_string_literal: true
 
 module Chat
-  # Returns a list of chatables (users, groups ,category channels, direct message channels) that can be chatted with.
+  # Searches for chatables (users, groups, category channels, direct message channels).
+  #
+  # Results include a `match_quality` field for ranking:
+  #   - MATCH_QUALITY_EXACT (1): name/username equals search term
+  #   - MATCH_QUALITY_PREFIX (2): name/username starts with search term
+  #   - MATCH_QUALITY_PARTIAL (3): name/username contains search term
   #
   # @example
-  #  Chat::SearchChatable.call(term: "@bob", guardian: guardian)
+  #   Chat::SearchChatable.call(params: { term: "bob" }, guardian: guardian)
   #
   class SearchChatable
     include Service::Base
 
-    # @!method call(term:, guardian:)
-    #   @param [String] term
+    SEARCH_RESULT_LIMIT = 10
+
+    # @!method self.call(guardian:, params:)
     #   @param [Guardian] guardian
+    #   @param [Hash] params
+    #   @option params [String] :term
     #   @return [Service::Base::Context]
 
-    contract
-    step :clean_term
-    model :memberships, optional: true
-    model :users, optional: true
-    model :groups, optional: true
-    model :category_channels, optional: true
-    model :direct_message_channels, optional: true
-
-    # @!visibility private
-    class Contract
+    params do
       attribute :term, :string, default: ""
       attribute :include_users, :boolean, default: true
       attribute :include_groups, :boolean, default: true
       attribute :include_category_channels, :boolean, default: true
       attribute :include_direct_message_channels, :boolean, default: true
       attribute :excluded_memberships_channel_id, :integer
+
+      after_validation { self.term = term&.downcase&.strip&.sub(/\A[@#]+/, "") }
     end
+
+    model :memberships, optional: true
+    model :users, optional: true
+    model :groups, optional: true
+    model :category_channels, optional: true
+    model :direct_message_channels, optional: true
 
     private
-
-    def clean_term(contract:)
-      context.term = contract.term.downcase&.gsub(/^#+/, "")&.gsub(/^@+/, "")&.strip
-    end
 
     def fetch_memberships(guardian:)
       ::Chat::ChannelMembershipManager.all_for_user(guardian.user)
     end
 
-    def fetch_users(guardian:, contract:)
-      return unless contract.include_users
+    def fetch_users(guardian:, params:)
+      return unless params.include_users
       return unless guardian.can_create_direct_message?
-      search_users(context, guardian, contract)
+      search_users(params, guardian)
     end
 
-    def fetch_groups(guardian:, contract:)
-      return unless contract.include_groups
+    def fetch_groups(guardian:, params:)
+      return unless params.include_groups
       return unless guardian.can_create_direct_message?
-      search_groups(context, guardian, contract)
+      search_groups(params, guardian)
     end
 
-    def fetch_category_channels(guardian:, contract:)
-      return unless contract.include_category_channels
-      return if !SiteSetting.enable_public_channels
-
-      ::Chat::ChannelFetcher.secured_public_channel_search(
-        guardian,
-        filter_on_category_name: false,
-        match_filter_on_starts_with: false,
-        filter: context.term,
-        status: :open,
-        limit: 10,
-      )
+    def fetch_category_channels(guardian:, params:)
+      return unless params.include_category_channels
+      return unless SiteSetting.enable_public_channels
+      search_category_channels(params, guardian)
     end
 
-    def fetch_direct_message_channels(guardian:, users:, contract:, **args)
-      return unless contract.include_direct_message_channels
-
-      channels =
-        ::Chat::ChannelFetcher.secured_direct_message_channels_search(
-          guardian.user.id,
-          guardian,
-          limit: 10,
-          match_filter_on_starts_with: false,
-          filter: context.term,
-        ) || []
-
-      if users && contract.include_users
-        user_ids = users.map(&:id)
-        channels =
-          channels.reject do |channel|
-            channel_user_ids = channel.allowed_user_ids - [guardian.user.id]
-            channel.allowed_user_ids.length == 1 &&
-              user_ids.include?(channel.allowed_user_ids.first) ||
-              channel_user_ids.length == 1 && user_ids.include?(channel_user_ids.first)
-          end
-      end
-
-      channels
+    def fetch_direct_message_channels(guardian:, params:, users:)
+      return unless params.include_direct_message_channels
+      return unless guardian.can_create_direct_message?
+      search_direct_message_channels(guardian, params, users)
     end
 
-    def search_users(context, guardian, contract)
-      user_search = ::UserSearch.new(context.term, limit: 10)
+    def search_users(params, guardian)
+      user_search = ::UserSearch.new(params.term, limit: SEARCH_RESULT_LIMIT)
 
-      if context.term.blank?
+      if params.term.blank?
         user_search = user_search.scoped_users
       else
         user_search = user_search.search
@@ -106,32 +81,101 @@ module Chat
       allowed_bot_user_ids =
         DiscoursePluginRegistry.apply_modifier(:chat_allowed_bot_user_ids, [], guardian)
 
-      user_search = user_search.real(allowed_bot_user_ids: allowed_bot_user_ids)
+      user_search = user_search.real(allowed_bot_user_ids:)
       user_search = user_search.includes(:user_option)
 
-      if context.excluded_memberships_channel_id
-        user_search =
-          user_search.where(
-            "NOT EXISTS (
-      SELECT 1
-      FROM user_chat_channel_memberships
-      WHERE user_chat_channel_memberships.user_id = users.id AND user_chat_channel_memberships.chat_channel_id = ?
-    )",
-            context.excluded_memberships_channel_id,
-          )
+      if params.excluded_memberships_channel_id
+        channel =
+          Chat::Channel.includes(:chatable).find_by(id: params.excluded_memberships_channel_id)
+        if channel && guardian.can_preview_chat_channel?(channel)
+          user_search =
+            user_search.where(
+              "NOT EXISTS (SELECT 1 FROM user_chat_channel_memberships WHERE user_id = users.id AND chat_channel_id = ?)",
+              params.excluded_memberships_channel_id,
+            )
+        end
       end
 
-      user_search
+      filter_term = params.term.to_s
+      like_term = User.sanitize_sql_like(filter_term)
+      escaped_exact = User.connection.quote(filter_term)
+      escaped_prefix = User.connection.quote("#{like_term}%")
+
+      select_sql = <<~SQL
+        users.*,
+        CASE
+          WHEN users.username_lower = #{escaped_exact} THEN #{ChannelFetcher::MATCH_QUALITY_EXACT}
+          WHEN users.username_lower LIKE #{escaped_prefix} THEN #{ChannelFetcher::MATCH_QUALITY_PREFIX}
+          ELSE #{ChannelFetcher::MATCH_QUALITY_PARTIAL}
+        END AS match_quality
+      SQL
+
+      # need to `reorder` to override the ordering applied in `UserSearch#search`
+      user_search.select(select_sql).reorder("match_quality ASC, users.username_lower ASC")
     end
 
-    def search_groups(context, guardian, contract)
+    def search_groups(params, guardian)
+      # NOTE: Do NOT eager load users here (e.g. `.includes(users: ...)`).
+      # Groups can have 100k+ members and loading them causes request timeouts.
+      # The serializer uses SQL COUNT queries instead.
+      filter_term = params.term.to_s
+      like_term = Group.sanitize_sql_like(filter_term)
+      escaped_exact = Group.connection.quote(filter_term)
+      escaped_prefix = Group.connection.quote("#{like_term}%")
+
+      select_sql = <<~SQL
+        groups.*,
+        CASE
+          WHEN LOWER(groups.name) = #{escaped_exact} THEN #{ChannelFetcher::MATCH_QUALITY_EXACT}
+          WHEN LOWER(groups.name) LIKE #{escaped_prefix} THEN #{ChannelFetcher::MATCH_QUALITY_PREFIX}
+          ELSE #{ChannelFetcher::MATCH_QUALITY_PARTIAL}
+        END AS match_quality
+      SQL
+
+      where_sql = <<~SQL
+        LOWER(groups.name) = :exact
+        OR LOWER(groups.name) LIKE :prefix
+        OR LOWER(groups.name) LIKE :partial
+        OR LOWER(groups.full_name) LIKE :partial
+      SQL
+
       Group
         .visible_groups(guardian.user)
-        .includes(users: :user_option)
-        .where(
-          "groups.name ILIKE :term_like OR groups.full_name ILIKE :term_like",
-          term_like: "%#{context.term}%",
-        )
+        .members_visible_groups(guardian.user)
+        .where(where_sql, exact: filter_term, prefix: "#{like_term}%", partial: "%#{like_term}%")
+        .select(select_sql)
+        .order("match_quality ASC, groups.name ASC")
+        .limit(SEARCH_RESULT_LIMIT)
+    end
+
+    def search_category_channels(params, guardian)
+      ::Chat::ChannelFetcher.secured_public_channel_search(
+        guardian,
+        status: :open,
+        filter: params.term,
+        filter_on_category_name: false,
+        limit: SEARCH_RESULT_LIMIT,
+      )
+    end
+
+    def search_direct_message_channels(guardian, params, users)
+      channels =
+        ::Chat::ChannelFetcher.secured_direct_message_channels_search(
+          guardian.user.id,
+          guardian,
+          filter: params.term,
+          limit: SEARCH_RESULT_LIMIT,
+        ) || []
+
+      # skip 1:1s when search returns users
+      if params.include_users && users.present?
+        channels.reject! do |channel|
+          other_user_ids = channel.allowed_user_ids - [guardian.user.id]
+          other_user_ids.size <= 1
+        end
+      end
+
+      channels
     end
   end
 end

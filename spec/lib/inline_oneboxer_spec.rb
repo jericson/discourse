@@ -20,19 +20,19 @@ RSpec.describe InlineOneboxer do
   end
 
   describe "caching" do
-    fab!(:topic)
+    url = "https://example.com/good-url"
 
-    before { InlineOneboxer.invalidate(topic.url) }
-
-    it "puts an entry in the cache" do
+    before do
       SiteSetting.enable_inline_onebox_on_all_domains = true
-      url = "https://example.com/good-url"
       stub_request(:get, url).to_return(
         status: 200,
         body: "<html><head><title>a blog</title></head></html>",
       )
 
       InlineOneboxer.invalidate(url)
+    end
+
+    it "puts an entry in the cache" do
       expect(InlineOneboxer.cache_lookup(url)).to be_blank
 
       result = InlineOneboxer.lookup(url)
@@ -41,6 +41,34 @@ RSpec.describe InlineOneboxer do
       cached = InlineOneboxer.cache_lookup(url)
       expect(cached[:url]).to eq(url)
       expect(cached[:title]).to eq("a blog")
+    end
+
+    it "separates cache by default_locale" do
+      expect(InlineOneboxer.cache_lookup(url)).to be_blank
+
+      result = InlineOneboxer.lookup(url)
+      expect(result[:title]).to be_present
+
+      cached = InlineOneboxer.cache_lookup(url)
+      expect(cached[:title]).to eq("a blog")
+
+      SiteSetting.default_locale = "fr"
+
+      expect(InlineOneboxer.cache_lookup(url)).to be_blank
+    end
+
+    it "separates cache by onebox_locale, when set" do
+      expect(InlineOneboxer.cache_lookup(url)).to be_blank
+
+      result = InlineOneboxer.lookup(url)
+      expect(result[:title]).to be_present
+
+      cached = InlineOneboxer.cache_lookup(url)
+      expect(cached[:title]).to eq("a blog")
+
+      SiteSetting.onebox_locale = "fr"
+
+      expect(InlineOneboxer.cache_lookup(url)).to be_blank
     end
   end
 
@@ -345,6 +373,22 @@ RSpec.describe InlineOneboxer do
       end
     end
 
+    it "uses custom user agent when inline_onebox_user_agent is set" do
+      SiteSetting.enable_inline_onebox_on_all_domains = true
+      SiteSetting.inline_onebox_user_agent = "Custom Inline Onebox Agent"
+
+      stub_request(:get, "https://example.com/page").with(
+        headers: {
+          "User-Agent" => "Custom Inline Onebox Agent",
+        },
+      ).to_return(status: 200, body: "<html><head><title>Custom UA Test</title></head></html>")
+
+      onebox = InlineOneboxer.lookup("https://example.com/page", skip_cache: true)
+
+      expect(onebox).to be_present
+      expect(onebox[:title]).to eq("Custom UA Test")
+    end
+
     it "censors external oneboxes" do
       Fabricate(:watched_word, action: WatchedWord.actions[:censor], word: "my")
 
@@ -389,5 +433,19 @@ RSpec.describe InlineOneboxer do
       expect(results[0][:url]).to eq(url)
       expect(results[0][:title]).to eq("Custom Onebox for Wizard")
     end
+  end
+
+  it "returns engine-supplied title and css_class" do
+    url = "https://example.com/foo"
+    allow(Oneboxer).to receive(:inline_data_for).with(url).and_return(
+      title: "Engine title",
+      css_class: "--engine-class",
+    )
+
+    expect(InlineOneboxer.lookup(url, skip_cache: true)).to eq(
+      url: url,
+      title: "Engine title",
+      css_class: "--engine-class",
+    )
   end
 end

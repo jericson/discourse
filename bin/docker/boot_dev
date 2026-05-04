@@ -85,7 +85,6 @@ done
 [[ ! -z "$mount_plugin_symlinks" ]] && echo "Mounting symlinks for plugins: ${mount_plugin_symlinks}"
 
 # 8025 mailhog
-# 3000 puma... if you must (but unicorn is preferred)
 # 9292 unicorn
 # 9405 prometheus exporter
 
@@ -117,11 +116,12 @@ docker run -d \
 echo "Installing gems..."
 "${SCRIPTPATH}/bundle" install
 
-echo "Yarn install..."
-"${SCRIPTPATH}/exec" yarn install --cwd app/assets/javascripts/discourse
+echo "pnpm install..."
+"${SCRIPTPATH}/exec" pnpm install
 
 if [ "${initialize}" = "initialize" ]; then
     echo "Migrating database..."
+    "${SCRIPTPATH}/rake" db:create
     "${SCRIPTPATH}/rake" db:migrate
     RAILS_ENV=test "${SCRIPTPATH}/rake" db:migrate
 

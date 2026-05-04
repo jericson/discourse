@@ -1,26 +1,27 @@
 # frozen_string_literal: true
 
 RSpec.describe Chat::UpdateUserChannelLastRead do
-  describe Chat::UpdateUserChannelLastRead::Contract, type: :model do
+  describe described_class::Contract, type: :model do
     it { is_expected.to validate_presence_of :channel_id }
     it { is_expected.to validate_presence_of :message_id }
   end
 
   describe ".call" do
-    subject(:result) { described_class.call(params) }
+    subject(:result) { described_class.call(params:, **dependencies) }
 
-    fab!(:chatters) { Fabricate(:group) }
+    fab!(:chatters, :group)
     fab!(:current_user) { Fabricate(:user, group_ids: [chatters.id]) }
-    fab!(:channel) { Fabricate(:chat_channel) }
+    fab!(:channel, :chat_channel)
     let(:membership) do
       Fabricate(:user_chat_channel_membership, user: current_user, chat_channel: channel)
     end
     let(:message_1) { Fabricate(:chat_message, chat_channel: membership.chat_channel) }
 
     let(:guardian) { Guardian.new(current_user) }
-    let(:params) { { guardian: guardian, channel_id: channel.id, message_id: message_1.id } }
+    let(:params) { { channel_id: channel.id, message_id: message_1.id } }
+    let(:dependencies) { { guardian: } }
 
-    before { SiteSetting.chat_allowed_groups = [chatters] }
+    before { SiteSetting.chat_allowed_groups = chatters }
 
     context "when params are not valid" do
       before { params.delete(:message_id) }
@@ -91,9 +92,7 @@ RSpec.describe Chat::UpdateUserChannelLastRead do
           )
         end
 
-        it "sets the service result as successful" do
-          expect(result).to be_a_success
-        end
+        it { is_expected.to run_successfully }
 
         it "updates the last_read message id" do
           expect { result }.to change { membership.reload.last_read_message_id }.to(message_1.id)
@@ -118,6 +117,37 @@ RSpec.describe Chat::UpdateUserChannelLastRead do
           old_last_viewed_at = membership.last_viewed_at
           result
           expect(membership.reload.last_viewed_at).not_to eq_time(old_last_viewed_at)
+        end
+
+        context "with DM channel reply threads" do
+          fab!(:other_user, :user)
+          fab!(:dm_channel) do
+            Fabricate(:direct_message_channel, users: [current_user, other_user])
+          end
+          fab!(:first_message) do
+            Fabricate(:chat_message, chat_channel: dm_channel, user: other_user)
+          end
+
+          let(:params) { { channel_id: dm_channel.id, message_id: reply_message.id } }
+          let(:reply_message) do
+            Chat::CreateMessage.call(
+              guardian: Guardian.new(other_user),
+              params: {
+                chat_channel_id: dm_channel.id,
+                message: "This is a reply",
+                in_reply_to_id: first_message.id,
+              },
+            ).message_instance
+          end
+
+          it "marks DM reply thread memberships as read" do
+            thread = reply_message.thread
+            thread_membership = thread.membership_for(current_user)
+
+            expect { result }.to change { thread_membership.reload.last_read_message_id }.to(
+              reply_message.id,
+            )
+          end
         end
       end
     end

@@ -3,12 +3,12 @@ import { tracked } from "@glimmer/tracking";
 import { Input } from "@ember/component";
 import { action } from "@ember/object";
 import { service } from "@ember/service";
-import { htmlSafe } from "@ember/template";
+import { trustHTML } from "@ember/template";
 import DButton from "discourse/components/d-button";
 import DModal from "discourse/components/d-modal";
+import icon from "discourse/helpers/d-icon";
 import { popupAjaxError } from "discourse/lib/ajax-error";
-import icon from "discourse-common/helpers/d-icon";
-import i18n from "discourse-common/helpers/i18n";
+import { i18n } from "discourse-i18n";
 
 export default class ChatModalThreadSettings extends Component {
   @service chatApi;
@@ -59,27 +59,27 @@ export default class ChatModalThreadSettings extends Component {
           @disabled={{this.buttonDisabled}}
           @action={{this.saveThread}}
           @label="chat.save"
-          class="btn-transparent btn-primary"
+          class="btn-transparent --primary"
         />
       </:headerPrimaryAction>
       <:body>
         <Input
           name="thread-title"
           class="chat-modal-thread-settings__title-input"
-          maxlength="50"
+          maxlength="100"
           placeholder={{i18n "chat.thread_title_modal.input_placeholder"}}
           @type="text"
           @value={{this.editedTitle}}
         />
         <div class="thread-title-length">
-          <span>{{this.threadTitleLength}}</span>/50
+          <span>{{this.threadTitleLength}}</span>/100
         </div>
 
         {{#if this.currentUser.admin}}
           <div class="discourse-ai-cta">
-            <p class="discourse-ai-cta__title">{{icon "info-circle"}}
+            <p class="discourse-ai-cta__title">{{icon "circle-info"}}
               {{i18n "chat.thread_title_modal.discourse_ai.title"}}</p>
-            <p class="discourse-ai-cta__description">{{htmlSafe
+            <p class="discourse-ai-cta__description">{{trustHTML
                 (i18n
                   "chat.thread_title_modal.discourse_ai.description"
                   url="<a href='https://www.discourse.org/ai' rel='noopener noreferrer' target='_blank'>Discourse AI</a>"

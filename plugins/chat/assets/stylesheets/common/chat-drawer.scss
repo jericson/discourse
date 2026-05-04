@@ -1,5 +1,6 @@
-body.composer-open .chat-drawer-outlet-container {
-  bottom: 11px; // prevent height of grippie from obscuring ...is typing indicator
+// Only push the drawer above the composer when JS has confirmed it should be
+.chat-drawer-outlet-container.above-composer {
+  padding-bottom: var(--composer-height, 0);
 }
 
 .chat-drawer-resizer {
@@ -8,6 +9,10 @@ body.composer-open .chat-drawer-outlet-container {
   width: 15px;
   height: 15px;
   z-index: z("composer", "content");
+
+  .is-collapsed & {
+    display: none;
+  }
 }
 
 html:not(.rtl) {
@@ -38,14 +43,8 @@ html.rtl {
   pointer-events: none !important;
   bottom: 0;
   box-sizing: border-box;
-  padding-bottom: var(--composer-height, 0);
   transition: all 100ms ease-in;
   transition-property: bottom, padding-bottom;
-
-  .rtl & {
-    left: var(--composer-right, 20px);
-    right: 0;
-  }
 }
 
 .chat-drawer {
@@ -55,14 +54,19 @@ html.rtl {
   min-width: 250px !important; // important to override inline styles
   max-width: calc(100% - var(--composer-right));
   min-height: 300px !important; // important to override inline styles
+  container-type: inline-size;
+
+  .chat-search__filters .filter-input-container {
+    max-width: 250px;
+  }
 
   .chat-drawer-container {
     background: var(--secondary);
-    border: 1px solid var(--primary-low);
+    border: 1px solid var(--content-border-color);
     border-bottom: 0;
     border-top-left-radius: var(--d-border-radius-large);
     border-top-right-radius: var(--d-border-radius-large);
-    box-shadow: 0px 0px 4px rgba(0, 0, 0, 0.125);
+    box-shadow: 0 0 4px rgb(0, 0, 0, 0.125);
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
@@ -76,9 +80,10 @@ html.rtl {
     }
   }
 
-  &:not(.is-expanded) {
+  &.is-collapsed {
     min-height: 0 !important;
     height: auto !important;
+    max-width: 25vw;
   }
 
   .chat-channel,
@@ -89,7 +94,6 @@ html.rtl {
 }
 
 .chat-drawer-content {
-  @include chat-scrollbar();
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
@@ -98,6 +102,8 @@ html.rtl {
   position: relative;
   overflow-y: auto;
   overscroll-behavior: contain;
+
+  @include chat-scrollbar;
 
   .c-channel-settings {
     flex-grow: 1;

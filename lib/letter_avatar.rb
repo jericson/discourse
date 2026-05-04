@@ -71,6 +71,11 @@ class LetterAvatar
 
       filename = fullsize_path(identity)
 
+      # Use NimbusSans-Regular, except for macOS where it is unavailable, use Helvetica there
+      font = RbConfig::CONFIG["host_os"].match?(/darwin/i) ? "Helvetica" : "NimbusSans-Regular"
+      # and adjust vertical offset accordingly
+      vertical_offset = font == "Helvetica" ? 26 : 34
+
       instructions = %W[
         -size
         #{FULLSIZE}x#{FULLSIZE}
@@ -80,18 +85,18 @@ class LetterAvatar
         -fill
         #FFFFFFCC
         -font
-        NimbusSans-Regular
+        #{font}
         -gravity
         Center
         -annotate
-        -0+34
+        -0+#{vertical_offset}
         #{letter}
         -depth
         8
         #{filename}
       ]
 
-      Discourse::Utils.execute_command("convert", *instructions)
+      Discourse::Utils.execute_command("magick", *instructions)
 
       ## do not optimize image, it will end up larger than original
       filename
@@ -109,7 +114,7 @@ class LetterAvatar
             sleep 2
             cleanup_old
           end
-          Digest::MD5.hexdigest(`convert --version` << `convert -list font`)
+          Digest::MD5.hexdigest(`magick --version` << `magick -list font`)
         end
     end
 

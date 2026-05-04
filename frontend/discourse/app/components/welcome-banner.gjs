@@ -1,0 +1,246 @@
+import Component from "@glimmer/component";
+import { service } from "@ember/service";
+import { dasherize } from "@ember/string";
+import { trustHTML } from "@ember/template";
+import { modifier } from "ember-modifier";
+import DButton from "discourse/components/d-button";
+import PluginOutlet from "discourse/components/plugin-outlet";
+import SearchMenu from "discourse/components/search-menu";
+import bodyClass from "discourse/helpers/body-class";
+import concatClass from "discourse/helpers/concat-class";
+import { prioritizeNameFallback } from "discourse/lib/settings";
+import { sanitize } from "discourse/lib/text";
+import { applyValueTransformer } from "discourse/lib/transformer";
+import { defaultHomepage, escapeExpression } from "discourse/lib/utilities";
+import I18n, { i18n } from "discourse-i18n";
+
+export const ALL_PAGES_EXCLUDED_ROUTES = [
+  "account-created.edit-email",
+  "account-created.index",
+  "account-created.resent",
+  "activate-account",
+  "full-page-search",
+  "invites.show",
+  "login",
+  "password-reset",
+  "signup",
+];
+
+export default class WelcomeBanner extends Component {
+  @service router;
+  @service siteSettings;
+  @service currentUser;
+  @service appEvents;
+  @service search;
+
+  checkViewport = modifier((element) => {
+    const checkVisibility = () => {
+      // Use getBoundingClientRect for reliable visibility detection.
+      // IntersectionObserver's isIntersecting can return stale values during
+      // SPA navigation, but getBoundingClientRect is always accurate.
+      const { top, bottom } = element.getBoundingClientRect();
+      const isFullyVisible = top >= 0 && bottom <= window.innerHeight;
+      this.search.welcomeBannerSearchInViewport = isFullyVisible;
+    };
+
+    // Use IntersectionObserver only as a trigger for when to check visibility,
+    // not to determine actual visibility state.
+    const threshold = 1.0;
+    const observer = new IntersectionObserver(checkVisibility, { threshold });
+    observer.observe(element);
+
+    // Set to true immediately when the modifier sets up, since the welcome banner
+    // is always rendered at the top of the page.
+    this.search.welcomeBannerSearchInViewport = true;
+
+    return () => {
+      observer.disconnect();
+      this.search.welcomeBannerSearchInViewport = false;
+    };
+  });
+
+  handleKeyboardShortcut = modifier(() => {
+    const cb = (appEvent) => {
+      if (
+        appEvent.type === "search" &&
+        this.search.welcomeBannerSearchInViewport
+      ) {
+        this.search.focusSearchInput();
+        appEvent.event.preventDefault();
+      }
+    };
+    this.appEvents.on("header:keyboard-trigger", cb);
+    return () => this.appEvents.off("header:keyboard-trigger", cb);
+  });
+
+  get displayForRoute() {
+    const { currentRouteName } = this.router;
+    const { top_menu, welcome_banner_page_visibility } = this.siteSettings;
+
+    const shouldDisplayForRoute = this.#shouldDisplayForRoute(
+      welcome_banner_page_visibility,
+      top_menu,
+      currentRouteName
+    );
+
+    return applyValueTransformer(
+      "welcome-banner-display-for-route",
+      shouldDisplayForRoute,
+      {
+        welcomeBannerPageVisibility: welcome_banner_page_visibility,
+        currentRouteName,
+        homepage: `discovery.${defaultHomepage()}`,
+      }
+    );
+  }
+
+  #shouldDisplayForRoute(
+    welcome_banner_page_visibility,
+    top_menu,
+    currentRouteName
+  ) {
+    switch (welcome_banner_page_visibility) {
+      case "top_menu_pages":
+        return top_menu
+          .split("|")
+          .some((menuItem) => `discovery.${menuItem}` === currentRouteName);
+      case "homepage":
+        return currentRouteName === `discovery.${defaultHomepage()}`;
+      case "discovery":
+        return currentRouteName.startsWith("discovery.");
+      case "all_pages":
+        return (
+          !currentRouteName.startsWith("admin") &&
+          !ALL_PAGES_EXCLUDED_ROUTES.some(
+            (routeName) => routeName === currentRouteName
+          )
+        );
+      default:
+        return false;
+    }
+  }
+
+  get headerText() {
+    const site_name = this.siteSettings.title || "";
+
+    let key, args;
+
+    if (!this.currentUser) {
+      key = "welcome_banner.header.anonymous_members";
+      args = { site_name };
+    } else {
+      const isNewUser = !this.currentUser.previous_visit_at;
+      key = isNewUser
+        ? "welcome_banner.header.new_members"
+        : "welcome_banner.header.logged_in_members";
+      args = {
+        site_name,
+        preferred_display_name: sanitize(
+          prioritizeNameFallback(
+            this.currentUser.name,
+            this.currentUser.username
+          )
+        ),
+      };
+    }
+
+    return i18n(key, args);
+  }
+
+  get subheaderText() {
+    const memberKey = this.currentUser
+      ? "logged_in_members"
+      : "anonymous_members";
+    return I18n.lookup(`welcome_banner.subheader.${memberKey}`);
+  }
+
+  get shouldDisplay() {
+    return this.siteSettings.enable_welcome_banner && this.displayForRoute;
+  }
+
+  get bodyClasses() {
+    return this.shouldDisplay && this.search.welcomeBannerSearchInViewport
+      ? "welcome-banner--enabled welcome-banner--visible"
+      : this.shouldDisplay
+        ? "welcome-banner--enabled"
+        : "";
+  }
+
+  get locationClass() {
+    return `--location-${dasherize(this.siteSettings.welcome_banner_location)}`;
+  }
+
+  get bgImgClass() {
+    if (this.siteSettings.welcome_banner_image) {
+      return `--with-bg-img`;
+    }
+  }
+
+  get bgImgStyle() {
+    if (this.siteSettings.welcome_banner_image) {
+      return trustHTML(
+        `background-image:url(${escapeExpression(
+          this.siteSettings.welcome_banner_image
+        )});`
+      );
+    }
+  }
+
+  get textColorStyle() {
+    if (
+      this.siteSettings.welcome_banner_image &&
+      this.siteSettings.welcome_banner_text_color
+    ) {
+      return trustHTML(
+        `color:${escapeExpression(this.siteSettings.welcome_banner_text_color)};`
+      );
+    }
+  }
+
+  <template>
+    {{bodyClass this.bodyClasses}}
+    {{#if this.shouldDisplay}}
+      <div
+        class={{concatClass
+          "welcome-banner"
+          this.locationClass
+          this.bgImgClass
+        }}
+        {{this.checkViewport}}
+        {{this.handleKeyboardShortcut}}
+      >
+        <div
+          class="custom-search-banner-wrap welcome-banner__wrap"
+          style={{if this.bgImgStyle this.bgImgStyle}}
+        >
+          <div
+            class="welcome-banner__title"
+            style={{if this.textColorStyle this.textColorStyle}}
+          >
+            {{trustHTML this.headerText}}
+            {{#if this.subheaderText}}
+              <p class="welcome-banner__subheader">
+                {{trustHTML this.subheaderText}}
+              </p>
+            {{/if}}
+          </div>
+          <PluginOutlet @name="welcome-banner-below-headline" />
+          <div class="search-menu welcome-banner__search-menu">
+            <DButton
+              @icon="magnifying-glass"
+              @title="search.open_advanced"
+              @href="/search?expanded=true"
+              class="search-icon"
+            />
+            <SearchMenu
+              @location="welcome-banner"
+              @searchInputId="welcome-banner-search-input"
+              @searchInputPlaceholder="welcome_banner.search_placeholder"
+            />
+          </div>
+          <PluginOutlet @name="welcome-banner-below-input" />
+        </div>
+      </div>
+    {{/if}}
+  </template>
+}

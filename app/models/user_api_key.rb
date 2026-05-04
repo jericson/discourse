@@ -2,12 +2,14 @@
 
 class UserApiKey < ActiveRecord::Base
   self.ignored_columns = [
-    "scopes", # TODO: Remove when 20240212034010_drop_deprecated_columns has been promoted to pre-deploy
+    "client_id", # TODO: Add post-migration to remove column after 3.4.0 stable release (not before early 2025)
+    "application_name", # TODO: Add post-migration to remove column after 3.4.0 stable release (not before early 2025)
   ]
 
   REVOKE_MATCHER = RouteMatcher.new(actions: "user_api_keys#revoke", methods: :post, params: [:id])
 
   belongs_to :user
+  belongs_to :client, class_name: "UserApiKeyClient", foreign_key: "user_api_key_client_id"
   has_many :scopes, class_name: "UserApiKeyScope", dependent: :destroy
 
   scope :active, -> { where(revoked_at: nil) }
@@ -39,14 +41,13 @@ class UserApiKey < ActiveRecord::Base
 
   def update_last_used(client_id)
     update_args = { last_used_at: Time.zone.now }
-    if client_id.present? && client_id != self.client_id
-      # invalidate old dupe api key for client if needed
-      UserApiKey
-        .where(client_id: client_id, user_id: self.user_id)
-        .where("id <> ?", self.id)
-        .destroy_all
-
-      update_args[:client_id] = client_id
+    if client_id.present? && client_id != self.client.client_id
+      new_client =
+        UserApiKeyClient.create!(
+          client_id: client_id,
+          application_name: self.client.application_name,
+        )
+      update_args[:user_api_key_client_id] = new_client.id
     end
     self.update_columns(**update_args)
   end
@@ -65,15 +66,23 @@ class UserApiKey < ActiveRecord::Base
       SiteSetting.allowed_user_api_push_urls.include?(push_url)
   end
 
-  def allow?(env)
-    scopes.any? { |s| s.permits?(env) } || is_revoke_self_request?(env)
+  def self.push_clients_for(user)
+    return [] if SiteSetting.allow_user_api_key_scopes.split("|").exclude?("push")
+    return [] if SiteSetting.allowed_user_api_push_urls.blank?
+
+    user
+      .user_api_keys
+      .joins(:scopes, :client)
+      .where("user_api_key_scopes.name IN ('push', 'notifications')")
+      .where("push_url IS NOT NULL AND push_url <> ''")
+      .where("position(push_url IN ?) > 0", SiteSetting.allowed_user_api_push_urls)
+      .where("revoked_at IS NULL")
+      .order("user_api_key_clients.client_id ASC")
+      .pluck("user_api_key_clients.client_id, user_api_keys.push_url")
   end
 
-  def self.invalid_auth_redirect?(auth_redirect)
-    SiteSetting
-      .allowed_user_api_auth_redirects
-      .split("|")
-      .none? { |u| WildcardUrlChecker.check_url(u, auth_redirect) }
+  def allow?(env)
+    scopes.any? { |s| s.permits?(env) } || is_revoke_self_request?(env)
   end
 
   private
@@ -91,20 +100,20 @@ end
 #
 # Table name: user_api_keys
 #
-#  id               :integer          not null, primary key
-#  user_id          :integer          not null
-#  client_id        :string           not null
-#  application_name :string           not null
-#  push_url         :string
-#  created_at       :datetime         not null
-#  updated_at       :datetime         not null
-#  revoked_at       :datetime
-#  last_used_at     :datetime         not null
-#  key_hash         :string           not null
+#  id                     :integer          not null, primary key
+#  user_id                :integer          not null
+#  push_url               :string
+#  created_at             :datetime         not null
+#  updated_at             :datetime         not null
+#  revoked_at             :datetime
+#  last_used_at           :datetime         not null
+#  key_hash               :string           not null
+#  user_api_key_client_id :bigint
 #
 # Indexes
 #
-#  index_user_api_keys_on_client_id  (client_id) UNIQUE
-#  index_user_api_keys_on_key_hash   (key_hash) UNIQUE
-#  index_user_api_keys_on_user_id    (user_id)
+#  index_user_api_keys_on_client_id               (client_id) UNIQUE
+#  index_user_api_keys_on_key_hash                (key_hash) UNIQUE
+#  index_user_api_keys_on_user_api_key_client_id  (user_api_key_client_id)
+#  index_user_api_keys_on_user_id                 (user_id)
 #

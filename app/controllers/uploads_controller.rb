@@ -11,6 +11,7 @@ class UploadsController < ApplicationController
   skip_before_action :preload_json,
                      :check_xhr,
                      :redirect_to_login_if_required,
+                     :redirect_to_profile_if_required,
                      only: %i[show show_short _show_secure_deprecated show_secure]
   protect_from_forgery except: :show
 
@@ -24,26 +25,35 @@ class UploadsController < ApplicationController
   def create
     # capture current user for block later on
     me = current_user
-
     RateLimiter.new(
       current_user,
       "uploads-per-minute",
       SiteSetting.max_uploads_per_minute,
-      1.minute.to_i,
+      1.minute,
     ).performed!
 
-    params.permit(:type, :upload_type)
-    raise Discourse::InvalidParameters if params[:type].blank? && params[:upload_type].blank?
-    # 50 characters ought to be enough for the upload type
     type =
-      (params[:upload_type].presence || params[:type].presence).parameterize(separator: "_")[0..50]
+      if params[:upload_type].presence
+        params[:upload_type]
+      elsif params[:type].presence
+        Discourse.deprecate(
+          "the :type param of `POST /uploads` is deprecated, use the :upload_type param instead",
+          since: "3.4",
+          drop_from: "3.5",
+        )
+        params[:type]
+      else
+        params.require(:upload_type)
+      end
+    # 50 characters ought to be enough for the upload type
+    type = type.parameterize(separator: "_")[0..50]
 
     if type == "avatar" &&
          (
-           SiteSetting.discourse_connect_overrides_avatar ||
+           SiteSetting.discourse_connect_overrides_avatar || SiteSetting.auth_overrides_avatar ||
              !me.in_any_groups?(SiteSetting.uploaded_avatars_allowed_groups_map)
          )
-      return render json: failed_json, status: 422
+      return render json: failed_json, status: :unprocessable_entity
     end
 
     url = params[:url]
@@ -51,6 +61,7 @@ class UploadsController < ApplicationController
     pasted = params[:pasted] == "true"
     for_private_message = params[:for_private_message] == "true"
     for_site_setting = params[:for_site_setting] == "true"
+    site_setting_name = for_site_setting ? params[:site_setting_name] : nil
     is_api = is_api?
     retain_hours = params[:retain_hours].to_i
 
@@ -61,17 +72,19 @@ class UploadsController < ApplicationController
         info =
           UploadsController.create_upload(
             current_user: me,
-            file: file,
-            url: url,
-            type: type,
-            for_private_message: for_private_message,
-            for_site_setting: for_site_setting,
-            pasted: pasted,
-            is_api: is_api,
-            retain_hours: retain_hours,
+            file:,
+            url:,
+            type:,
+            for_private_message:,
+            for_site_setting:,
+            site_setting_name:,
+            pasted:,
+            is_api:,
+            retain_hours:,
           )
       rescue => e
-        render json: failed_json.merge(message: e.message&.split("\n")&.first), status: 422
+        render json: failed_json.merge(message: e.message&.split("\n")&.first),
+               status: :unprocessable_entity
       else
         render json: UploadsController.serialize_upload(info), status: Upload === info ? 200 : 422
       end
@@ -99,21 +112,35 @@ class UploadsController < ApplicationController
 
     return render_404 if !RailsMultisite::ConnectionManagement.has_db?(params[:site])
 
-    RailsMultisite::ConnectionManagement.with_connection(params[:site]) do |db|
-      return render_404 if SiteSetting.prevent_anons_from_downloading_files && current_user.nil?
+    begin
+      request_site_current_user =
+        request.env.delete(Auth::DefaultCurrentUserProvider::CURRENT_USER_KEY)
 
-      if upload =
-           Upload.find_by(sha1: params[:sha]) ||
-             Upload.find_by(id: params[:id], url: request.env["PATH_INFO"])
-        unless Discourse.store.internal?
-          local_store = FileStore::LocalStore.new
-          return render_404 unless local_store.has_been_uploaded?(upload.url)
+      RailsMultisite::ConnectionManagement.with_connection(params[:site]) do |db|
+        begin
+          # current_user here refers to the user for the site that we are operating on
+          # using with_connection. If DB for the target site matches the current site
+          # for the request, then current_user will be the same as the request_site_current_user
+          return render_404 if SiteSetting.prevent_anons_from_downloading_files && current_user.nil?
+
+          upload =
+            Upload.find_by(sha1: params[:sha]) ||
+              Upload.find_by(id: params[:id], url: request.env["PATH_INFO"])
+
+          if upload.present?
+            if !Discourse.store.internal?
+              local_store = FileStore::LocalStore.new
+              return render_404 unless local_store.has_been_uploaded?(upload.url)
+            end
+
+            send_file_local_upload(upload)
+          else
+            render_404
+          end
         end
-
-        send_file_local_upload(upload)
-      else
-        render_404
       end
+    ensure
+      request.env[Auth::DefaultCurrentUserProvider::CURRENT_USER_KEY] = request_site_current_user
     end
   end
 
@@ -150,7 +177,8 @@ class UploadsController < ApplicationController
     # do not serve uploads requested via XHR to prevent XSS
     return xhr_not_allowed if request.xhr?
 
-    path_with_ext = "#{params[:path]}.#{params[:extension]}"
+    path_with_ext =
+      params[:extension].nil? ? params[:path] : "#{params[:path]}.#{params[:extension]}"
     upload = upload_from_path_and_extension(path_with_ext)
 
     return render_404 if upload.blank?
@@ -165,7 +193,12 @@ class UploadsController < ApplicationController
     # if the upload is still secure, that means the ACL is probably still
     # private, so we don't want to go to the CDN url just yet otherwise we
     # will get a 403. if the upload is not secure we assume the ACL is public
-    signed_secure_url = Discourse.store.signed_url_for_path(path_with_ext)
+    signed_secure_url =
+      Discourse.store.signed_url_for_path(
+        path_with_ext,
+        filename: upload.original_filename,
+        include_content_disposition: true,
+      )
     redirect_to upload.secure? ? signed_secure_url : Discourse.store.cdn_url(upload.url),
                 allow_other_host: true
   end
@@ -191,6 +224,8 @@ class UploadsController < ApplicationController
                   path_with_ext,
                   expires_in: SiteSetting.s3_presigned_get_url_expires_after_seconds,
                   force_download: force_download?,
+                  filename: upload.original_filename,
+                  include_content_disposition: true,
                 ),
                 allow_other_host: true
   end
@@ -227,7 +262,7 @@ class UploadsController < ApplicationController
                 "upload.attachments.too_large_humanized",
                 max_size:
                   ActiveSupport::NumberHelper.number_to_human_size(
-                    SiteSetting.max_attachment_size_kb.kilobytes,
+                    UploadsController.max_attachment_size_for_user(current_user).kilobytes,
                   ),
               ),
             )
@@ -268,6 +303,7 @@ class UploadsController < ApplicationController
     type:,
     for_private_message:,
     for_site_setting:,
+    site_setting_name: nil,
     pasted:,
     is_api:,
     retain_hours:
@@ -276,7 +312,7 @@ class UploadsController < ApplicationController
       if url.present? && is_api
         maximum_upload_size = [
           SiteSetting.max_image_size_kb,
-          SiteSetting.max_attachment_size_kb,
+          UploadsController.max_attachment_size_for_user(current_user),
         ].max.kilobytes
         tempfile =
           begin
@@ -298,12 +334,7 @@ class UploadsController < ApplicationController
 
     return { errors: [I18n.t("upload.file_missing")] } if tempfile.nil?
 
-    opts = {
-      type: type,
-      for_private_message: for_private_message,
-      for_site_setting: for_site_setting,
-      pasted: pasted,
-    }
+    opts = { type:, for_private_message:, for_site_setting:, site_setting_name:, pasted: }
 
     upload = UploadCreator.new(tempfile, filename, opts).create_for(current_user.id)
 
@@ -318,12 +349,20 @@ class UploadsController < ApplicationController
 
   private
 
+  def self.max_attachment_size_for_user(user)
+    if user.id == Discourse::SYSTEM_USER_ID && !SiteSetting.system_user_max_attachment_size_kb.zero?
+      SiteSetting.system_user_max_attachment_size_kb
+    else
+      SiteSetting.max_attachment_size_kb
+    end
+  end
+
   # We can preemptively check size for attachments, but not for (most) images
   # as they may be further reduced in size by UploadCreator (at this point
   # they may have already been reduced in size by preprocessors)
   def attachment_too_big?(file_name, file_size)
     !FileHelper.is_supported_image?(file_name) &&
-      file_size >= SiteSetting.max_attachment_size_kb.kilobytes
+      file_size >= UploadsController.max_attachment_size_for_user(current_user).kilobytes
   end
 
   # Gifs are not resized on the client and not reduced in size by UploadCreator
@@ -338,14 +377,16 @@ class UploadsController < ApplicationController
       content_type: MiniMime.lookup_by_filename(upload.original_filename)&.content_type,
     }
 
-    if !FileHelper.is_inline_image?(upload.original_filename)
+    if !FileHelper.is_inline_safe?(upload.original_filename)
       opts[:disposition] = "attachment"
     elsif params[:inline]
       opts[:disposition] = "inline"
     end
 
+    response.headers["Content-Security-Policy"] = "sandbox;"
+
     file_path = Discourse.store.path_for(upload)
-    return render_404 unless file_path
+    return render_404 unless file_path && File.exist?(file_path)
 
     send_file(file_path, opts)
   end

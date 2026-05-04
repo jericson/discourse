@@ -1,13 +1,31 @@
 import { ajax } from "discourse/lib/ajax";
+import { popupAjaxError } from "discourse/lib/ajax-error";
+import { iconHTML } from "discourse/lib/icon-library";
 import { withPluginApi } from "discourse/lib/plugin-api";
-import { iconHTML } from "discourse-common/lib/icon-library";
-import I18n from "discourse-i18n";
+import richEditorExtension from "../../lib/rich-editor-extension";
 
 function initializePlugin(api) {
   const siteSettings = api.container.lookup("service:site-settings");
 
   if (siteSettings.checklist_enabled) {
     api.decorateCookedElement(checklistSyntax);
+    api.registerRichEditorExtension(richEditorExtension);
+
+    api.addComposerToolbarPopupMenuOption({
+      menu: "list",
+      name: "list-checklist",
+      icon: "list-check",
+      label: "checklist.composer.checklist",
+      showActiveIcon: true,
+      active: ({ state }) => state?.inCheckList,
+      action: (toolbarEvent) => {
+        if (toolbarEvent.commands?.toggleChecklist) {
+          toolbarEvent.commands.toggleChecklist();
+        } else {
+          toolbarEvent.applyList("- [ ] ", "list_item");
+        }
+      },
+    });
   }
 }
 
@@ -54,14 +72,9 @@ export function checklistSyntax(elem, postDecorator) {
   const boxes = [...elem.getElementsByClassName("chcklst-box")];
   addUlClasses(boxes);
 
-  if (!postDecorator) {
-    return;
-  }
+  const postModel = postDecorator?.getModel();
 
-  const postWidget = postDecorator.widget;
-  const postModel = postDecorator.getModel();
-
-  if (!postModel.can_edit) {
+  if (!postModel?.can_edit) {
     return;
   }
 
@@ -134,6 +147,11 @@ export function checklistSyntax(elem, postDecorator) {
               return match;
             }
 
+            // skip escaped opening bracket - "\[x]"
+            if (off > 0 && post.raw[off - 1] === "\\") {
+              return match;
+            }
+
             nth += blocks.every(
               (b) => b[0] >= off + match.length || off > b[1]
             );
@@ -147,13 +165,9 @@ export function checklistSyntax(elem, postDecorator) {
           }
         );
 
-        await postModel.save({
-          raw: newRaw,
-          edit_reason: I18n.t("checklist.edit_reason"),
-        });
-
-        postWidget.attrs.isSaving = false;
-        postWidget.scheduleRerender();
+        await postModel.save({ raw: newRaw });
+      } catch (e) {
+        popupAjaxError(e);
       } finally {
         boxes.forEach((e) => e.classList.remove("readonly"));
         box.classList.remove("hidden");
@@ -167,6 +181,6 @@ export default {
   name: "checklist",
 
   initialize() {
-    withPluginApi("0.1", (api) => initializePlugin(api));
+    withPluginApi((api) => initializePlugin(api));
   },
 };

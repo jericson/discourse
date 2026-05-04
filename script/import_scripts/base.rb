@@ -89,14 +89,6 @@ class ImportScripts::Base
   end
 
   def change_site_settings
-    if SiteSetting.bootstrap_mode_enabled
-      SiteSetting.default_trust_level = TrustLevel[0] if SiteSetting.default_trust_level ==
-        TrustLevel[1]
-      SiteSetting.default_email_digest_frequency =
-        10_080 if SiteSetting.default_email_digest_frequency == 1440
-      SiteSetting.bootstrap_mode_enabled = false
-    end
-
     @site_settings_during_import = get_site_settings_for_import
 
     @site_settings_during_import.each do |key, value|
@@ -372,6 +364,9 @@ class ImportScripts::Base
       end
 
       u.activate if opts[:active] && opts[:password].present?
+    rescue ActiveRecord::RecordInvalid => e
+      puts "Invalid user info, skipped: #{original_opts.inspect}"
+      return
     rescue => e
       # try based on email
       if e.try(:record).try(:errors).try(:messages).try(:[], :primary_email).present?
@@ -444,7 +439,7 @@ class ImportScripts::Base
       else
         # Basic massaging on the category name
         params[:name] = "Blank" if params[:name].blank?
-        params[:name].strip!
+        params[:name] = params[:name].strip
         params[:name] = params[:name][0..49]
 
         # make sure categories don't go more than 2 levels deep
@@ -494,7 +489,7 @@ class ImportScripts::Base
         position: opts[:position],
         parent_category_id: opts[:parent_category_id],
         color: opts[:color] || category_color(opts[:parent_category_id]),
-        text_color: opts[:text_color] || "FFF",
+        text_color: opts[:text_color] || "FFFFFF",
         read_restricted: opts[:read_restricted] || false,
       )
 
@@ -586,7 +581,7 @@ class ImportScripts::Base
     [created, skipped]
   end
 
-  STAFF_GUARDIAN ||= Guardian.new(Discourse.system_user)
+  STAFF_GUARDIAN = Guardian.new(Discourse.system_user)
 
   def create_post(opts, import_id)
     user = User.find(opts[:user_id])

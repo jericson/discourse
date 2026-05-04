@@ -3,12 +3,11 @@
 require "sidekiq_long_running_job_logger"
 
 RSpec.describe SidekiqLongRunningJobLogger do
-  before do
-    @orig_logger = Rails.logger
-    Rails.logger = @fake_logger = FakeLogger.new
-  end
+  let(:fake_logger) { FakeLogger.new }
 
-  after { Rails.logger = @orig_logger }
+  before { Rails.logger.broadcast_to(fake_logger) }
+
+  after { Rails.logger.stop_broadcasting_to(fake_logger) }
 
   it "logs long-running jobs" do
     hostname = Discourse.os_hostname
@@ -21,24 +20,26 @@ RSpec.describe SidekiqLongRunningJobLogger do
           [
             "#{hostname}:1234",
             "some_sidekiq_id",
-            {
-              "run_at" => (Time.now - (60 * (stuck_sidekiq_job_minutes + 1))).to_i,
-              "payload" => {
-                "jid" => "job_1",
-                "class" => "TestWorker",
+            Sidekiq::Work.new(
+              "#{hostname}:1234",
+              "some_sidekiq_id",
+              {
+                "run_at" => (Time.now - (60 * (stuck_sidekiq_job_minutes + 1))).to_i,
+                "payload" => Sidekiq.dump_json({ "jid" => "job_1", "class" => "TestWorker" }),
               },
-            },
+            ),
           ],
           [
             "#{hostname}:1234",
             "some_other_sidekiq_id",
-            {
-              "run_at" => Time.now.to_i,
-              "payload" => {
-                "jid" => "job_2",
-                "class" => "AnotherWorker",
+            Sidekiq::Work.new(
+              "#{hostname}:1234",
+              "some_other_sidekiq_id",
+              {
+                "run_at" => Time.now.to_i,
+                "payload" => Sidekiq.dump_json({ "jid" => "job_2", "class" => "AnotherWorker" }),
               },
-            },
+            ),
           ],
         ],
       )
@@ -58,9 +59,9 @@ RSpec.describe SidekiqLongRunningJobLogger do
 
       wait_for { loops == 1 }
 
-      expect(@fake_logger.warnings.size).to eq(1)
+      expect(fake_logger.warnings.size).to eq(1)
 
-      expect(@fake_logger.warnings).to include(
+      expect(fake_logger.warnings).to include(
         "Sidekiq job `TestWorker` has been running for more than 10 minutes\nline\nlines\n",
       )
 
@@ -68,9 +69,9 @@ RSpec.describe SidekiqLongRunningJobLogger do
 
       wait_for { loops == 2 }
 
-      expect(@fake_logger.warnings.size).to eq(1)
+      expect(fake_logger.warnings.size).to eq(1)
 
-      expect(@fake_logger.warnings).to include(
+      expect(fake_logger.warnings).to include(
         "Sidekiq job `TestWorker` has been running for more than 10 minutes\nline\nlines\n",
       )
     ensure

@@ -9,15 +9,13 @@ class ApiKey < ActiveRecord::Base
   belongs_to :created_by, class_name: "User"
 
   scope :active, -> { where("revoked_at IS NULL") }
-  scope :revoked, -> { where("revoked_at IS NOT NULL") }
-
-  scope :with_key,
-        ->(key) do
-          hashed = self.hash_key(key)
-          where(key_hash: hashed)
-        end
+  scope :revoked, -> { where.not(revoked_at: nil) }
+  scope :with_key, ->(key) { where(key_hash: ApiKey.hash_key(key)) }
 
   validates :description, length: { maximum: 255 }
+  validate :at_least_one_granular_scope
+
+  enum :scope_mode, %i[global read_only granular].freeze
 
   after_initialize :generate_key
 
@@ -103,7 +101,9 @@ class ApiKey < ActiveRecord::Base
     if allowed_ips.present? && allowed_ips.none? { |ip| ip.include?(Rack::Request.new(env).ip) }
       return false
     end
-    return true if RouteMatcher.new(methods: :get, actions: "session#scopes").match?(env: env)
+    if RouteMatcher.new(methods: :get, actions: %w[session#scopes about#index]).match?(env: env)
+      return true
+    end
 
     api_key_scopes.blank? || api_key_scopes.any? { |s| s.permits?(env) }
   end
@@ -113,6 +113,17 @@ class ApiKey < ActiveRecord::Base
 
     # using update_column to avoid the AR transaction
     update_column(:last_used_at, now)
+  end
+
+  private
+
+  def at_least_one_granular_scope
+    if scope_mode == "granular" && api_key_scopes.empty?
+      errors.add(
+        :api_key_scopes,
+        I18n.t("activerecord.errors.models.api_key.base.at_least_one_granular_scope"),
+      )
+    end
   end
 end
 
@@ -132,6 +143,7 @@ end
 #  description   :text
 #  key_hash      :string           not null
 #  truncated_key :string           not null
+#  scope_mode    :integer
 #
 # Indexes
 #

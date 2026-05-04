@@ -8,13 +8,12 @@ sv:
   js:
     discourse_automation:
       title: Automatisering
-      create: Skapa
-      update: Uppdatera
+      back: Tillbaka
+      edit: Redigera
       select_script: Välj ett skript
       select_trigger: Välj en utlösare
       confirm_automation_reset: Den här åtgärden återställer skriptet och utlösningsalternativen, det nya tillståndet sparas, vill du fortsätta?
       confirm_automation_trigger: Denna åtgärd kommer att utlösa automatisering, vill du fortsätta?
-      no_automation_yet: Du har inte skapat någon automatisering ännu.
       edit_automation:
         trigger_section:
           forced: Denna utlösare tvingas av skript.
@@ -46,13 +45,17 @@ sv:
             label: Huvuddel
           delay:
             label: Fördröjning (minuter)
-          prefers_encrypt:
-            label: Krypterar PM om tillgängligt
         group:
           label: Grupp
         text:
           label: Text
       triggerables:
+        post_flag_created:
+          fields:
+            categories:
+              label: Kategorier
+            tags:
+              label: Taggar
         not_found: Kunde inte hitta utlösaren `%{trigger}` för automatisering `%{automation}`, se till att det tillhörande insticksprogrammet är installerat.
         user_badge_granted:
           fields:
@@ -142,11 +145,15 @@ sv:
             valid_trust_levels:
               label: Giltiga förtroendenivåer
               description: Kommer att utlösas endast om inlägg skapas av användare inom dessa förtroendenivåer, standard är samtliga förtroendenivåer
-            restricted_category:
-              label: Kategori
-            restricted_group:
-              label: Grupp
+            restricted_tags:
+              label: Taggar
+            restricted_categories:
+              label: Kategorier
           created: Skapade
+          with_images: Bilder
+          with_links: Länkar
+          with_code: Kod
+          with_uploads: Uppladdningar
         category_created_edited:
           fields:
             restricted_category:
@@ -281,6 +288,8 @@ sv:
           fields:
             custom_field_name:
               label: "Användaranpassat fältnamn"
+        set_topic_timer:
+          title: Ställ in ämnestimer
       models:
         script:
           name:
@@ -297,8 +306,8 @@ sv:
             label: Skript
           version:
             label: Version
-          enabled:
-            label: Aktiverad
+          status:
+            label: Status
           disabled:
             label: Inaktiverad
           placeholders:

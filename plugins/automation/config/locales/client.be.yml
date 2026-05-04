@@ -7,7 +7,8 @@
 be:
   js:
     discourse_automation:
-      create: стварыць
+      back: Назад
+      edit: рэдагаваць
       fields:
         user:
           label: карыстальнік
@@ -24,6 +25,12 @@ be:
         group:
           label: група
       triggerables:
+        post_flag_created:
+          fields:
+            categories:
+              label: катэгорыі
+            tags:
+              label: Цэтлікі
         user_badge_granted:
           fields:
             badge:
@@ -40,11 +47,14 @@ be:
               label: Номер тэмы
         post_created_edited:
           fields:
-            restricted_category:
-              label: катэгорыя
-            restricted_group:
-              label: група
+            restricted_tags:
+              label: тэгі
+            restricted_categories:
+              label: катэгорыі
           created: створаны
+          with_images: Выява
+          with_links: Спасылкі
+          with_uploads: Загрузкі
         category_created_edited:
           fields:
             restricted_category:
@@ -118,5 +128,7 @@ be:
             label: Трыггер старту
           version:
             label: версія
+          status:
+            label: Статус
           disabled:
             label: Адключана

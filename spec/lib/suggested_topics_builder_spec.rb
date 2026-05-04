@@ -60,7 +60,7 @@ RSpec.describe SuggestedTopicsBuilder do
     end
 
     context "when adding topics" do
-      fab!(:other_topic) { Fabricate(:topic) }
+      fab!(:other_topic, :topic)
 
       before do
         # Add all topics
@@ -89,13 +89,38 @@ RSpec.describe SuggestedTopicsBuilder do
     end
 
     context "when category definition topics" do
-      fab!(:category) { Fabricate(:category_with_definition) }
+      fab!(:category, :category_with_definition)
 
       it "doesn't add a category definition topic" do
         expect(category.topic_id).to be_present
         builder.add_results(Topic)
         expect(builder.size).to eq(0)
         expect(builder).not_to be_full
+      end
+    end
+
+    context "with suggested_topics_add_results modifier registered" do
+      fab!(:included_topic, :topic)
+      fab!(:excluded_topic, :topic)
+
+      let(:modifier_block) do
+        Proc.new { |results| results.filter { |topic| topic.id != excluded_topic.id } }
+      end
+
+      it "Allows modifications to added results" do
+        plugin_instance = Plugin::Instance.new
+        plugin_instance.register_modifier(:suggested_topics_add_results, &modifier_block)
+
+        builder.add_results(Topic.where(id: [included_topic.id, excluded_topic.id]))
+
+        expect(builder.results).to include(included_topic)
+        expect(builder.results).not_to include(excluded_topic)
+      ensure
+        DiscoursePluginRegistry.unregister_modifier(
+          plugin_instance,
+          :suggested_topics_add_results,
+          &modifier_block
+        )
       end
     end
   end

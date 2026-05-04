@@ -9,8 +9,6 @@ RSpec.describe PostActionCreator do
   describe "rate limits" do
     before { RateLimiter.enable }
 
-    use_redis_snapshotting
-
     it "limits redo/undo" do
       PostActionCreator.like(user, post)
       PostActionDestroyer.destroy(user, post, :like)
@@ -18,6 +16,27 @@ RSpec.describe PostActionCreator do
       PostActionDestroyer.destroy(user, post, :like)
 
       expect { PostActionCreator.like(user, post) }.to raise_error(RateLimiter::LimitExceeded)
+    end
+
+    it "does not count notify_moderators PM against personal message rate limit" do
+      SiteSetting.max_personal_messages_per_day = 1
+      SiteSetting.max_topics_per_day = 0
+      SiteSetting.max_topics_in_first_day = 0
+      SiteSetting.rate_limit_create_topic = 0
+      SiteSetting.rate_limit_create_post = 0
+      SiteSetting.rate_limit_new_user_create_post = 0
+
+      archetype = Archetype.private_message
+
+      create_post(user:, archetype:, target_usernames: [admin.username])
+
+      expect { create_post(user:, archetype:, target_usernames: [admin.username]) }.to raise_error(
+        RateLimiter::LimitExceeded,
+      )
+
+      reason = "This is a 'something else' flag."
+      result = PostActionCreator.notify_moderators(user, post, reason)
+      expect(result).to be_success
     end
   end
 
@@ -148,6 +167,21 @@ RSpec.describe PostActionCreator do
       expect(event[:params].first).to be_instance_of(PostAction)
       expect(event[:params].second).to be_instance_of(PostActionCreator)
     end
+
+    it "forbids non-staff from creating warning post actions" do
+      target_post = Fabricate(:post)
+
+      result =
+        PostActionCreator.new(
+          user,
+          target_post,
+          PostActionType.types[:notify_user],
+          is_warning: true,
+          message: "this is a test",
+        ).perform
+
+      expect(result.forbidden).to eq(true)
+    end
   end
 
   describe "flags" do
@@ -166,6 +200,21 @@ RSpec.describe PostActionCreator do
       expect(score).to be_present
       expect(score.reviewed_by).to be_blank
       expect(score.reviewed_at).to be_blank
+    end
+
+    it "uses the system locale for the message when auto close" do
+      Topic.any_instance.stubs(:auto_close_threshold_reached?).returns(true)
+      I18n.with_locale(:fr) { PostActionCreator.create(user, post, :inappropriate) }
+
+      post.topic.reload
+
+      expect(post.topic.posts.last.raw).to eq(
+        I18n.t(
+          "temporarily_closed_due_to_flags",
+          count: SiteSetting.num_hours_to_close_topic,
+          locale: :en,
+        ),
+      )
     end
 
     describe "Auto hide spam flagged posts" do
@@ -195,6 +244,31 @@ RSpec.describe PostActionCreator do
         reviewable = result.reviewable
 
         expect(reviewable.force_review).to eq(true)
+      end
+    end
+
+    describe "non-human user being flagged" do
+      fab!(:system_post) { Fabricate(:post, user: Discourse.system_user) }
+
+      it "doesn't create reviewable" do
+        result = PostActionCreator.create(user, system_post, :inappropriate)
+        expect(result.success?).to eq(true)
+
+        expect(result.reviewable).to be_blank
+      end
+
+      it "applies modifier and can allow reviewable creation for non-human users" do
+        plugin = Plugin::Instance.new
+        modifier = :post_action_creator_block_reviewable_for_bot
+        proc = Proc.new { false }
+        DiscoursePluginRegistry.register_modifier(plugin, modifier, &proc)
+
+        result = PostActionCreator.create(user, system_post, :inappropriate)
+        expect(result.success?).to eq(true)
+
+        expect(result.reviewable).to be_present
+      ensure
+        DiscoursePluginRegistry.unregister_modifier(plugin, modifier, &proc)
       end
     end
 

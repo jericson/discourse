@@ -16,8 +16,10 @@ te:
           title: "నావిగేషను"
         categories_list:
           title: "వర్గాల జాబితా"
-        suggested_topics:
-          title: "సూచించే విషయాలు"
+        post:
+          title: "పోస్ట్"
+        more_topics:
+          title: "మరిన్ని విషయాలు"
         tooltips:
           description: "వివరణ"
           header: "హెడర్"

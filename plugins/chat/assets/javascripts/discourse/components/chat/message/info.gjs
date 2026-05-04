@@ -4,14 +4,14 @@ import didInsert from "@ember/render-modifiers/modifiers/did-insert";
 import willDestroy from "@ember/render-modifiers/modifiers/will-destroy";
 import { LinkTo } from "@ember/routing";
 import { service } from "@ember/service";
-import { and } from "truth-helpers";
 import BookmarkIcon from "discourse/components/bookmark-icon";
 import UserStatusMessage from "discourse/components/user-status-message";
 import concatClass from "discourse/helpers/concat-class";
+import icon from "discourse/helpers/d-icon";
+import { bind } from "discourse/lib/decorators";
 import { prioritizeNameInUx } from "discourse/lib/settings";
-import dIcon from "discourse-common/helpers/d-icon";
-import i18n from "discourse-common/helpers/i18n";
-import { bind } from "discourse-common/utils/decorators";
+import { and, eq, not } from "discourse/truth-helpers";
+import { i18n } from "discourse-i18n";
 import ChannelTitle from "discourse/plugins/chat/discourse/components/channel-title";
 import formatChatDate from "../../../helpers/format-chat-date";
 
@@ -143,7 +143,10 @@ export default class ChatMessageInfo extends Component {
         {{/if}}
 
         <span class="chat-message-info__date">
-          {{formatChatDate @message (hash threadContext=@threadContext)}}
+          {{formatChatDate
+            @message
+            (hash threadContext=@threadContext mode=@dateMode)
+          }}
         </span>
 
         {{#if @message.bookmark}}
@@ -152,14 +155,25 @@ export default class ChatMessageInfo extends Component {
           </span>
         {{/if}}
 
+        {{#if this.siteSettings.chat_pinned_messages}}
+          {{#if (and @message.pinned (not (eq @context "pinned")))}}
+            <span
+              class="chat-message-info__pinned"
+              title={{i18n "chat.pinned"}}
+            >
+              {{icon "thumbtack"}}
+            </span>
+          {{/if}}
+        {{/if}}
+
         {{#if this.isFlagged}}
           <span class="chat-message-info__flag">
             {{#if @message.reviewableId}}
               <LinkTo @route="review.show" @model={{@message.reviewableId}}>
-                {{dIcon "flag" title="chat.flagged"}}
+                {{icon "flag" title="chat.flagged"}}
               </LinkTo>
             {{else}}
-              {{dIcon "flag" title="chat.you_flagged"}}
+              {{icon "flag" title="chat.you_flagged"}}
             {{/if}}
           </span>
         {{/if}}

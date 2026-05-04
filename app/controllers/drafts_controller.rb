@@ -6,6 +6,7 @@ class DraftsController < ApplicationController
   skip_before_action :check_xhr, :preload_json
 
   INDEX_LIMIT = 50
+  BULK_DESTROY_LIMIT = 30
 
   def index
     params.permit(:offset)
@@ -38,7 +39,7 @@ class DraftsController < ApplicationController
   def create
     raise Discourse::NotFound.new if params[:draft_key].blank?
 
-    if params[:data].size > SiteSetting.max_draft_length
+    if !params[:data].is_a?(String) || params[:data].size > SiteSetting.max_draft_length
       raise Discourse::InvalidParameters.new(:data)
     end
 
@@ -96,16 +97,39 @@ class DraftsController < ApplicationController
 
     json = success_json.merge(draft_sequence: sequence)
 
-    if data.present?
-      # this is a bit of a kludge we need to remove (all the parsing) too many special cases here
-      # we need to catch action edit and action editSharedDraft
-      if data["postId"].present? && data["originalText"].present? &&
-           data["action"].to_s.start_with?("edit")
-        post = Post.find_by(id: data["postId"])
-        if post && post.raw != data["originalText"]
-          conflict_user = BasicUserSerializer.new(post.last_editor, root: false)
-          render json: json.merge(conflict_user: conflict_user)
-          return
+    # check for conflicts when editing a post
+    if data.present? && data["postId"].present? && data["action"].to_s.start_with?("edit")
+      original_text = data["original_text"] || data["originalText"]
+      original_title = data["original_title"]
+      original_tags = data["original_tags"]
+
+      if original_text.present?
+        if post = Draft.allowed_draft_posts_for_user(current_user).find_by(id: data["postId"])
+          conflict = original_text != post.raw
+
+          if post.post_number == 1
+            conflict ||= original_title.present? && original_title != post.topic.title
+
+            # Since the topic might have hidden tags the current editor can't see,
+            # we need to check for conflicts even though there might not be any visible tags in the editor
+            if !conflict
+              original_tags ||= []
+              original_tag_ids = original_tags.filter_map { |t| t["id"] if t.is_a?(Hash) }
+              # old draft format is tag names as strings
+              old_format_names = original_tags.select { |t| t.is_a?(String) }
+              original_tag_ids +=
+                Tag.where(name: old_format_names).pluck(:id) if old_format_names.present?
+
+              current_tag_ids = post.topic.tags.pluck(:id).to_set
+              hidden_tag_ids = DiscourseTagging.hidden_tags(@guardian).pluck(:id).to_set
+              conflict = original_tag_ids.to_set != (current_tag_ids - hidden_tag_ids)
+            end
+          end
+
+          if conflict
+            conflict_user = BasicUserSerializer.new(post.last_editor, root: false)
+            json.merge!(conflict_user:)
+          end
         end
       end
     end
@@ -130,11 +154,75 @@ class DraftsController < ApplicationController
     rescue Draft::OutOfSequence
       # nothing really we can do here, if try clearing a draft that is not ours, just skip it.
       # rendering an error causes issues in the composer
-    rescue StandardError => e
-      return render json: failed_json.merge(errors: e), status: 401
+    rescue StandardError
+      return render json: failed_json, status: :unauthorized
     end
 
     render json: success_json
+  end
+
+  def bulk_destroy
+    params.require(:draft_keys)
+
+    draft_keys = params[:draft_keys]
+
+    if draft_keys.length > BULK_DESTROY_LIMIT
+      raise Discourse::InvalidParameters.new(
+              I18n.t("draft.bulk_destroy_limit", limit: BULK_DESTROY_LIMIT),
+            )
+    end
+
+    sequences = params[:sequences] || {}
+
+    return render json: success_json.merge(deleted_count: 0) if draft_keys.empty?
+
+    user =
+      if is_api?
+        if @guardian.is_admin?
+          fetch_user_from_params
+        else
+          raise Discourse::InvalidAccess
+        end
+      else
+        current_user
+      end
+
+    # Validate all sequences first (fail fast)
+    sequence_errors = []
+    draft_keys.each do |draft_key|
+      begin
+        current_sequence = DraftSequence.current(user, draft_key)
+        provided_sequence = sequences[draft_key].to_i
+        sequence_errors << draft_key if provided_sequence != current_sequence
+      rescue StandardError
+        # If we can't get sequence for some reason, skip validation for this draft
+        # This maintains the same lenient behavior as the single delete
+      end
+    end
+
+    if sequence_errors.any?
+      render json:
+               failed_json.merge(
+                 errors: "Draft sequence conflict for keys: #{sequence_errors.join(", ")}",
+               ),
+             status: :conflict
+      return
+    end
+
+    # Bulk delete in single transaction
+    deleted_count = 0
+    begin
+      ActiveRecord::Base.transaction do
+        deleted_count = Draft.where(user_id: user.id, draft_key: draft_keys).destroy_all.length
+
+        # Update user draft count
+        UserStat.update_draft_count(user.id)
+      end
+    rescue StandardError
+      return render json: failed_json, status: :internal_server_error
+    end
+
+    render json: success_json.merge(deleted_count: deleted_count)
   end
 
   private

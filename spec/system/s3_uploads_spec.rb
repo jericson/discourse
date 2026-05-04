@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-describe "Uploading files in the composer to S3", type: :system do
-  fab!(:current_user) { Fabricate(:admin) }
+describe "Uploading files in the composer to S3" do
+  fab!(:current_user, :admin)
 
   let(:modal) { PageObjects::Modals::Base.new }
   let(:composer) { PageObjects::Components::Composer.new }
@@ -10,18 +10,18 @@ describe "Uploading files in the composer to S3", type: :system do
   describe "direct S3 uploads" do
     describe "single part uploads" do
       it "uploads custom avatars to S3" do
-        skip_unless_s3_system_specs_enabled!
-
-        setup_s3_system_test
+        setup_or_skip_s3_system_test
         sign_in(current_user)
 
         visit "/my/preferences/account"
 
         find("#edit-avatar").click
         find("#uploaded-avatar").click
-        attach_file(File.absolute_path(file_from_fixtures("logo.jpg"))) do
-          find("#avatar-uploader").click
-        end
+        attach_file(
+          "custom-profile-upload",
+          File.absolute_path(file_from_fixtures("logo.jpg")),
+          make_visible: true,
+        )
         expect(page).to have_css(".avatar-uploader .avatar-uploader__button[data-uploaded]")
         modal.click_primary_button
         expect(modal).to be_closed
@@ -37,15 +37,13 @@ describe "Uploading files in the composer to S3", type: :system do
 
     describe "multipart uploads" do
       it "uploads a file in the post composer" do
-        skip_unless_s3_system_specs_enabled!
-
-        setup_s3_system_test
+        setup_or_skip_s3_system_test
         sign_in(current_user)
 
         topic.open_new_topic
 
         file_path = file_from_fixtures("logo.png", "images").path
-        attach_file(file_path) { composer.click_toolbar_button("upload") }
+        attach_file("file-uploader", file_path, make_visible: true)
 
         expect(page).to have_no_css("#file-uploading")
         expect(composer.preview).to have_css(".image-wrapper")

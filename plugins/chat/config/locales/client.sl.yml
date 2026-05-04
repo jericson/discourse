@@ -29,6 +29,11 @@ sl:
       chat_channels_count: "Kanali klepeta"
       chat_users_count: "Uporabniki klepeta"
     chat:
+      edit_category:
+        tab_title: "Klepet"
+        description: "Opis"
+        actions: "Akcije"
+        settings: "Nastavitve"
       text_copied: Besedilo je bilo kopirano v odložišče
       link_copied: Povezava je bila kopirana v odložišče
       deleted_chat_username: izbrisano
@@ -36,9 +41,11 @@ sl:
         yesterday: "Včeraj"
       create: "Ustvari"
       cancel: "Prekliči"
+      pinned: "Pripeto"
       channel_settings:
         edit: "Uredi"
         add: "Dodaj"
+        notification_settings_context: "Obvestila"
         join: "Pridruži se"
         leave: "Zapusti"
       close: "Zapri"
@@ -68,7 +75,6 @@ sl:
         none: "Brez"
       title: "klepet"
       title_capitalized: "Klepet"
-      exit: "nazaj"
       channel_status:
         closed: "Zaprto"
         open: "Odpri"
@@ -80,6 +86,8 @@ sl:
       chat_message_separator:
         today: Danes
         yesterday: Včeraj
+      search_view:
+        filter_placeholder: Išči po zasebnih sporočilih
       members_view:
         add_member: Dodaj člana
       about_view:
@@ -91,6 +99,8 @@ sl:
         tabs:
           members: Člani
           settings: Nastavitve
+          search: Išči
+        remove_member: "Odstrani"
       new_message_modal:
         user_search_placeholder: "...dodaj več članov"
         create_group_placeholder: "Ime skupinskega klepeta (neobvezno)"
@@ -154,6 +164,12 @@ sl:
         title: "Klepet"
         export_messages:
           description: "To izvozi vsa sporočila iz vseh kanalov."
+      search:
+        short_title: Išči
+        no_results: "Iskanje nima zadetkov"
+        sort:
+          relevance: "Pomembnosti"
+          latest: "Najnovejše"
       direct_messages:
         close: "Zapri ta osebni klepet"
       incoming_webhooks:
@@ -201,6 +217,8 @@ sl:
             title: "Običajna"
           tracking:
             title: "Sledim"
+          watching:
+            title: "Opazujem"
         participants_other_count:
           one: "+%{count}"
           two: "+%{count}"

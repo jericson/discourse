@@ -4,6 +4,7 @@ class ExcerptParser < Nokogiri::XML::SAX::Document
   attr_reader :excerpt
 
   CUSTOM_EXCERPT_REGEX = /<\s*(span|div)[^>]*class\s*=\s*['"]excerpt['"][^>]*>/
+  IMAGE_MODES = [%i[strip_images strip], %i[markdown_images markdown], %i[keep_images keep]].freeze
 
   def initialize(length, options = nil)
     @length = length
@@ -11,9 +12,7 @@ class ExcerptParser < Nokogiri::XML::SAX::Document
     @current_length = 0
     options || {}
     @strip_links = options[:strip_links] == true
-    @strip_images = options[:strip_images] == true
     @text_entities = options[:text_entities] == true
-    @markdown_images = options[:markdown_images] == true
     @keep_newlines = options[:keep_newlines] == true
     @keep_emoji_images = options[:keep_emoji_images] == true
     @keep_onebox_source = options[:keep_onebox_source] == true
@@ -24,15 +23,19 @@ class ExcerptParser < Nokogiri::XML::SAX::Document
     @start_excerpt = false
     @start_hashtag_icon = false
     @in_details_depth = 0
-    @summary_contents = +""
-    @detail_contents = +""
+    @image_mode = normalize_image_mode(options)
   end
 
-  def self.get_excerpt(html, length, options)
-    html ||= ""
+  def normalize_image_mode(options)
+    IMAGE_MODES.each { |key, mode| return mode if options[key] }
+  end
+
+  def self.get_excerpt(html, length, options = {})
+    return "" if html.blank?
+
     length = html.length if html.include?("excerpt") && CUSTOM_EXCERPT_REGEX === html
     me = self.new(length, options)
-    parser = Nokogiri::HTML::SAX::Parser.new(me)
+    parser = Nokogiri::HTML4::SAX::Parser.new(me, Encoding::UTF_8)
     catch(:done) { parser.parse(html) }
     excerpt = me.excerpt.strip
     excerpt = excerpt.gsub(/\s*\n+\s*/, "\n\n") if options[:keep_onebox_source] ||
@@ -78,19 +81,20 @@ class ExcerptParser < Nokogiri::XML::SAX::Document
         end
       end
 
-      unless @strip_images
-        # If include_images is set, include the image in markdown
-        characters("!") if @markdown_images
+      return include_tag(name, attributes) if @image_mode == :keep
 
-        if !attributes["alt"].blank?
+      if @image_mode != :strip
+        characters("!") if @image_mode == :markdown
+
+        if attributes["alt"].present?
           characters("[#{attributes["alt"]}]")
-        elsif !attributes["title"].blank?
+        elsif attributes["title"].present?
           characters("[#{attributes["title"]}]")
         else
-          characters("[#{I18n.t "excerpt_image"}]")
+          characters("[#{I18n.t("excerpt_image")}]")
         end
 
-        characters("(#{attributes["src"]})") if @markdown_images
+        characters("(#{attributes["src"]})") if @image_mode == :markdown
       end
     when "a"
       unless @strip_links
@@ -127,12 +131,11 @@ class ExcerptParser < Nokogiri::XML::SAX::Document
         include_tag(name, attributes)
       end
     when "details"
-      @detail_contents = +"" if @in_details_depth == 0
       @in_details_depth += 1
     when "summary"
       if @in_details_depth == 1 && !@in_summary
-        @summary_contents = +""
         @in_summary = true
+        characters("▶ ", truncate: false, count_it: false, encode: false)
       end
     when "svg"
       attributes = Hash[*attributes.flatten]
@@ -162,29 +165,6 @@ class ExcerptParser < Nokogiri::XML::SAX::Document
       @in_quote = false
     when "details"
       @in_details_depth -= 1
-      if @in_details_depth == 0
-        @summary_contents = clean(@summary_contents)
-        @detail_contents = clean(@detail_contents)
-
-        if @current_length + @summary_contents.length >= @length
-          characters(
-            @summary_contents,
-            encode: false,
-            before_string: "<details class='disabled'><summary>",
-            after_string: "</summary></details>",
-          )
-        else
-          characters(
-            @summary_contents,
-            truncate: false,
-            encode: false,
-            before_string: "<details><summary>",
-            after_string: "</summary>",
-          )
-
-          characters(@detail_contents, encode: false, after_string: "</details>")
-        end
-      end
     when "summary"
       @in_summary = false if @in_details_depth == 1
     when "div", "span"
@@ -210,18 +190,10 @@ class ExcerptParser < Nokogiri::XML::SAX::Document
     before_string: nil,
     after_string: nil
   )
-    return if @in_quote
+    return if @in_quote || @in_details_depth > 1 || (@in_details_depth == 1 && !@in_summary)
 
     # we call length on this so might as well ensure we have a string
     string = string.to_s
-    if @in_details_depth > 0
-      if @in_summary
-        @summary_contents << string
-      else
-        @detail_contents << string
-      end
-      return
-    end
 
     @excerpt << before_string if before_string
 

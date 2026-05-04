@@ -1,11 +1,18 @@
 # frozen_string_literal: true
 
-RSpec.describe ::DiscoursePoll::Poll do
+RSpec.describe DiscoursePoll::Poll do
+  describe "#reload" do
+    it "accepts options like ActiveRecord's reload" do
+      poll = Fabricate(:poll)
+      expect { poll.reload(lock: true) }.not_to raise_error
+    end
+  end
+
   describe ".transform_for_user_field_override" do
     it "Transforms UserField name if a matching CustomUserField is present" do
       user_field_name = "Something Cool"
       user_field = Fabricate(:user_field, name: user_field_name)
-      expect(::DiscoursePoll::Poll.transform_for_user_field_override(user_field_name)).to eq(
+      expect(DiscoursePoll::Poll.transform_for_user_field_override(user_field_name)).to eq(
         "user_field_#{user_field.id}",
       )
     end
@@ -13,7 +20,7 @@ RSpec.describe ::DiscoursePoll::Poll do
     it "does not transform UserField name if a matching CustomUserField is not present" do
       user_field_name = "Something Cool"
       user_field = Fabricate(:user_field, name: "Something Else!")
-      expect(::DiscoursePoll::Poll.transform_for_user_field_override(user_field_name)).to eq(
+      expect(DiscoursePoll::Poll.transform_for_user_field_override(user_field_name)).to eq(
         user_field_name,
       )
     end
@@ -34,7 +41,7 @@ RSpec.describe ::DiscoursePoll::Poll do
 
       expect(poll.can_see_results?(user)).to eq(false)
       poll.poll_votes.create!(poll_option_id: option.id, user_id: user.id)
-      expect(poll.can_see_results?(user)).to eq(true)
+      expect(poll.reload.can_see_results?(user)).to eq(true)
     end
 
     it "author can see results when results setting is on_vote" do

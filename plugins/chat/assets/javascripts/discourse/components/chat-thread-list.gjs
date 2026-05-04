@@ -2,21 +2,20 @@ import Component from "@glimmer/component";
 import { cached } from "@glimmer/tracking";
 import { service } from "@ember/service";
 import { modifier as modifierFn } from "ember-modifier";
-import { eq } from "truth-helpers";
 import ConditionalLoadingSpinner from "discourse/components/conditional-loading-spinner";
+import { bind } from "discourse/lib/decorators";
 import isElementInViewport from "discourse/lib/is-element-in-viewport";
-import { bind } from "discourse-common/utils/decorators";
-import I18n from "discourse-i18n";
+import { eq } from "discourse/truth-helpers";
+import { i18n } from "discourse-i18n";
 import ChatThreadListItem from "discourse/plugins/chat/discourse/components/chat/thread-list/item";
 import ChatTrackMessage from "discourse/plugins/chat/discourse/modifiers/chat/track-message";
 
 export default class ChatThreadList extends Component {
-  @service chat;
   @service chatApi;
   @service messageBus;
   @service chatTrackingStateManager;
 
-  noThreadsLabel = I18n.t("chat.threads.none");
+  noThreadsLabel = i18n("chat.threads.none");
 
   subscribe = modifierFn((element, [channel]) => {
     this.messageBus.subscribe(
@@ -84,6 +83,30 @@ export default class ChatThreadList extends Component {
           thread.originalMessage?.id !== thread.lastMessageId
       )
       .sort((threadA, threadB) => {
+        // if both threads have watched unread count, then show latest first
+        if (
+          threadA.tracking.watchedThreadsUnreadCount &&
+          threadB.tracking.watchedThreadsUnreadCount
+        ) {
+          if (
+            threadA.preview.lastReplyCreatedAt >
+            threadB.preview.lastReplyCreatedAt
+          ) {
+            return -1;
+          } else {
+            return 1;
+          }
+        }
+
+        // sort threads by watched unread count
+        if (threadA.tracking.watchedThreadsUnreadCount) {
+          return -1;
+        }
+
+        if (threadB.tracking.watchedThreadsUnreadCount) {
+          return 1;
+        }
+
         // If both are unread we just want to sort by last reply date + time descending.
         if (threadA.tracking.unreadCount && threadB.tracking.unreadCount) {
           if (
@@ -138,9 +161,8 @@ export default class ChatThreadList extends Component {
   }
 
   handleDeleteMessage(data) {
-    const deletedOriginalMessageThread = this.threadsManager.threads.findBy(
-      "originalMessage.id",
-      data.deleted_id
+    const deletedOriginalMessageThread = this.threadsManager.threads.find(
+      (item) => item.originalMessage.id === data.deleted_id
     );
 
     if (!deletedOriginalMessageThread) {
@@ -151,9 +173,8 @@ export default class ChatThreadList extends Component {
   }
 
   handleRestoreMessage(data) {
-    const restoredOriginalMessageThread = this.threadsManager.threads.findBy(
-      "originalMessage.id",
-      data.chat_message.id
+    const restoredOriginalMessageThread = this.threadsManager.threads.find(
+      (item) => item.originalMessage.id === data.chat_message.id
     );
 
     if (!restoredOriginalMessageThread) {

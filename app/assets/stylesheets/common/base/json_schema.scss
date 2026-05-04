@@ -1,14 +1,7 @@
 // styles used for JSON schema settings
-
 .d-modal.json-schema-editor-modal {
   --modal-max-width: 95vw;
   --modal-width: unset;
-  --space-1: 0.25em;
-  --space-2: calc(0.25em * 2);
-  --space-3: calc(0.25em * 3);
-  --space-4: calc(0.25em * 4);
-  --space-5: calc(0.25em * 5);
-  --space-6: calc(0.25em * 6);
 
   .d-modal__container {
     width: unset;
@@ -44,6 +37,7 @@
     .json-editor-btn-add {
       @extend .btn, .ok;
       gap: var(--space-1);
+
       span {
         display: inline;
       }
@@ -52,6 +46,7 @@
     button {
       @extend .btn;
       @extend .no-text;
+
       span {
         display: none;
       }
@@ -66,12 +61,11 @@
     }
 
     select {
-      @include appearance-none;
       @include form-item-sizing;
+      appearance: none;
       display: inline-block;
       margin-bottom: var(--space-2);
       color: var(--primary);
-      background-color: var(--secondary);
       border: 1px solid var(--primary-400);
       border-radius: var(--d-input-border-radius);
       background: svg-uri(
@@ -79,6 +73,7 @@
       ); // down chevron
       background-repeat: no-repeat;
       background-position: 98%;
+
       &:focus {
         @include default-focus;
       }
@@ -109,12 +104,14 @@
       display: flex;
       align-items: center;
       margin: 0;
+
       button.json-editor-btn-collapse.json-editor-btntype-toggle {
         // needs the specificity
         background: transparent;
         margin: 0 0 0 calc(var(--space-2) * -1);
         padding: var(--space-1) var(--space-2);
         font-size: var(--font-down-2);
+
         .d-icon {
           color: var(--primary-medium);
         }
@@ -136,11 +133,13 @@
 
     [data-schemaid="root"] {
       position: relative;
+
       > .je-header {
         label,
         .json-editor-btn-collapse {
           display: none;
         }
+
         button {
           position: absolute;
           right: 0;
@@ -158,14 +157,13 @@
     }
 
     // for "format":"tabs-top"
-
     .je-tabholder--top {
       margin: 0;
       display: flex;
       flex-wrap: wrap;
       width: 80%;
       gap: 0 var(--space-3);
-      border-bottom: 1px solid var(--primary-low);
+      border-bottom: 1px solid var(--content-border-color);
       padding-bottom: var(--space-1);
 
       .je-tab--top {
@@ -208,16 +206,16 @@
     }
 
     // for "format":"table"
-
     table {
       width: 100%;
       margin-bottom: 1em;
 
       td,
       th {
-        &:not(:first-child):not(:last-child) {
+        &:not(:first-child, :last-child) {
           padding: var(--space-2);
         }
+
         &:first-child,
         &:last-child {
           padding: var(--space-2) 0;
@@ -237,9 +235,11 @@
             display: flex;
             flex-direction: column;
             gap: var(--space-1);
+
             button {
               margin: 0;
             }
+
             .delete {
               order: 2;
             }

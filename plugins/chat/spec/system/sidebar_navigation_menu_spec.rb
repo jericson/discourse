@@ -1,10 +1,12 @@
 # frozen_string_literal: true
 
-RSpec.describe "Sidebar navigation menu", type: :system do
-  let(:sidebar_page) { PageObjects::Pages::Sidebar.new }
+RSpec.describe "Sidebar navigation menu" do
+  let(:sidebar_page) { PageObjects::Pages::ChatSidebar.new }
   let(:sidebar_component) { PageObjects::Components::NavigationMenu::Sidebar.new }
 
-  fab!(:current_user) { Fabricate(:user) }
+  fab!(:current_user, :user)
+
+  let(:sidebar) { PageObjects::Components::NavigationMenu::Sidebar.new }
 
   before do
     SiteSetting.navigation_menu = "sidebar"
@@ -14,7 +16,7 @@ RSpec.describe "Sidebar navigation menu", type: :system do
   end
 
   context "when displaying the public channels section" do
-    fab!(:channel_1) { Fabricate(:chat_channel) }
+    fab!(:channel_1, :chat_channel)
 
     before { channel_1.add(current_user) }
 
@@ -23,7 +25,7 @@ RSpec.describe "Sidebar navigation menu", type: :system do
 
       expect(sidebar_page.channels_section).to have_css(
         ".sidebar-section-header-text",
-        text: I18n.t("js.chat.chat_channels"),
+        text: I18n.t("js.chat.chat_channels").upcase,
       )
     end
 
@@ -42,7 +44,7 @@ RSpec.describe "Sidebar navigation menu", type: :system do
     end
 
     context "when the category is private" do
-      fab!(:group_1) { Fabricate(:group) }
+      fab!(:group_1, :group)
       fab!(:private_channel_1) { Fabricate(:private_category_channel, group: group_1) }
 
       before do
@@ -74,7 +76,7 @@ RSpec.describe "Sidebar navigation menu", type: :system do
     end
 
     context "when the channel is muted" do
-      fab!(:channel_2) { Fabricate(:chat_channel) }
+      fab!(:channel_2, :chat_channel)
 
       before do
         Fabricate(
@@ -113,7 +115,7 @@ RSpec.describe "Sidebar navigation menu", type: :system do
 
   context "when displaying the direct message channels section" do
     context "when the channel has two participants" do
-      fab!(:other_user) { Fabricate(:user) }
+      fab!(:other_user, :user)
       fab!(:dm_channel_1) { Fabricate(:direct_message_channel, users: [current_user, other_user]) }
 
       it "displays other user avatar in prefix when two participants" do
@@ -167,14 +169,31 @@ RSpec.describe "Sidebar navigation menu", type: :system do
           ),
         ).to have_content("alansmith, zoesmith")
       end
+
+      context "when the group DM has an emoji in the title" do
+        before { dm_channel_1.update!(name: "test :heart:") }
+
+        it "converts the emoji" do
+          visit("/")
+
+          expect(
+            sidebar_page.dms_section.find(
+              "a.sidebar-section-link:nth-child(1) .sidebar-section-link-content-text",
+            ),
+          ).to have_content("test ❤")
+        end
+      end
     end
 
     context "when username contains malicious content" do
-      fab!(:other_user) { Fabricate(:user) }
+      fab!(:other_user, :user)
       fab!(:dm_channel_1) { Fabricate(:direct_message_channel, users: [current_user, other_user]) }
 
       before do
         other_user.username = "<script>alert('hello')</script>"
+        # Use an uploaded avatar to avoid a letter_avatar request with the
+        # malicious username (which contains `/` and breaks URL routing)
+        other_user.uploaded_avatar_id = Fabricate(:image_upload).id
         other_user.save!(validate: false)
       end
 
@@ -182,8 +201,25 @@ RSpec.describe "Sidebar navigation menu", type: :system do
         visit("/")
 
         expect(sidebar_page.dms_section.find(".channel-#{dm_channel_1.id}")["title"]).to eq(
-          "Chat with @&lt;script&gt;alert(&#x27;hello&#x27;)&lt;/script&gt;",
+          "Chat with &lt;script&gt;alert(&#x27;hello&#x27;)&lt;/script&gt;",
         )
+      end
+    end
+
+    context "as admin" do
+      fab!(:admin)
+      fab!(:channel_1, :chat_channel)
+      before { sign_in admin }
+
+      it "has back to forum button which leads to forum homepage" do
+        visit("/chat/c/#{channel_1.slug}/#{channel_1.id}")
+        page.find("li[data-list-item-name='everything'] a").click
+
+        visit("/admin")
+
+        sidebar.click_back_to_forum
+
+        expect(page).to have_current_path("/")
       end
     end
   end

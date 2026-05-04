@@ -1,7 +1,7 @@
-import { getOwner } from "@ember/application";
+import { getOwner } from "@ember/owner";
 import { cancel } from "@ember/runloop";
 import Service, { service } from "@ember/service";
-import discourseDebounce from "discourse-common/lib/debounce";
+import discourseDebounce from "discourse/lib/debounce";
 import ChatTrackingState from "discourse/plugins/chat/discourse/models/chat-tracking-state";
 
 /**
@@ -23,6 +23,11 @@ export default class ChatTrackingStateManager extends Service {
 
   // NOTE: In future, we may want to preload some thread tracking state
   // as well, but for now we do that on demand when the user opens a channel,
+  willDestroy() {
+    super.willDestroy(...arguments);
+    cancel(this._onTriggerNotificationDebounceHandler);
+  }
+
   // to avoid having to load all the threads across all channels into memory at once.
   setupWithPreloadedState({ channel_tracking = {} }) {
     this.chatChannelsManager.channels.forEach((channel) => {
@@ -41,47 +46,49 @@ export default class ChatTrackingStateManager extends Service {
     });
   }
 
-  get publicChannelUnreadCount() {
-    return this.#publicChannels.reduce((unreadCount, channel) => {
-      return unreadCount + channel.tracking.unreadCount;
+  allChannelMentionCount({ exclude } = {}) {
+    return this.#allChannels.reduce((count, channel) => {
+      if (channel.id === exclude?.id) {
+        return count;
+      }
+      return count + channel.tracking.mentionCount;
     }, 0);
   }
 
-  get directMessageUnreadCount() {
-    return this.#directMessageChannels.reduce((unreadCount, channel) => {
-      return unreadCount + channel.tracking.unreadCount;
-    }, 0);
+  allChannelUrgentCount({ exclude } = {}) {
+    let count = 0;
+    for (const channel of this.#allChannels) {
+      if (channel.id === exclude?.id) {
+        continue;
+      }
+      count += channel.tracking.mentionCount;
+      count += channel.tracking.watchedThreadsUnreadCount;
+      if (channel.isDirectMessageChannel) {
+        count += channel.tracking.unreadCount;
+      }
+    }
+    return count;
   }
 
-  get publicChannelMentionCount() {
-    return this.#publicChannels.reduce((mentionCount, channel) => {
-      return mentionCount + channel.tracking.mentionCount;
-    }, 0);
-  }
-
-  get directMessageMentionCount() {
-    return this.#directMessageChannels.reduce((dmMentionCount, channel) => {
-      return dmMentionCount + channel.tracking.mentionCount;
-    }, 0);
-  }
-
-  get allChannelMentionCount() {
-    return this.publicChannelMentionCount + this.directMessageMentionCount;
-  }
-
-  get allChannelUrgentCount() {
-    return this.publicChannelMentionCount + this.directMessageUnreadCount;
-  }
-
-  get hasUnreadThreads() {
-    return this.#publicChannels.some(
-      (channel) => channel.unreadThreadsCount > 0
+  hasUnreadThreads({ exclude } = {}) {
+    return this.#allChannels.some(
+      (channel) => channel.id !== exclude?.id && channel.unreadThreadsCount > 0
     );
   }
 
-  willDestroy() {
-    super.willDestroy(...arguments);
-    cancel(this._onTriggerNotificationDebounceHandler);
+  publicChannelUnreadCount({ exclude } = {}) {
+    return this.#publicChannels.reduce((count, channel) => {
+      if (channel.id === exclude?.id) {
+        return count;
+      }
+      return count + channel.tracking.unreadCount;
+    }, 0);
+  }
+
+  get watchedThreadsUnreadCount() {
+    return this.#allChannels.reduce((unreadCount, channel) => {
+      return unreadCount + channel.tracking.watchedThreadsUnreadCount;
+    }, 0);
   }
 
   /**
@@ -108,13 +115,15 @@ export default class ChatTrackingStateManager extends Service {
     }
     model.tracking.unreadCount = state.unread_count;
     model.tracking.mentionCount = state.mention_count;
+    model.tracking.watchedThreadsUnreadCount =
+      state.watched_threads_unread_count;
   }
 
   get #publicChannels() {
     return this.chatChannelsManager.publicMessageChannels;
   }
 
-  get #directMessageChannels() {
-    return this.chatChannelsManager.directMessageChannels;
+  get #allChannels() {
+    return this.chatChannelsManager.allChannels;
   }
 }

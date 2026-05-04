@@ -1,4 +1,4 @@
-import { deepMerge } from "discourse-common/lib/object";
+import { deepMerge } from "discourse/lib/object";
 
 export const messageContents = ["Hello world", "What up", "heyo!"];
 
@@ -247,7 +247,9 @@ export const chatChannels = {
     },
     thread_tracking: {},
   },
-  direct_message_channels: directMessageChannels.mapBy("chat_channel"),
+  direct_message_channels: directMessageChannels.map(
+    (item) => item.chat_channel
+  ),
   message_bus_last_ids: {
     channel_metadata: 0,
     channel_edits: 0,

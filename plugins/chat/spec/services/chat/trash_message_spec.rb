@@ -1,24 +1,29 @@
 # frozen_string_literal: true
 
 RSpec.describe Chat::TrashMessage do
-  fab!(:current_user) { Fabricate(:user) }
-  let!(:guardian) { Guardian.new(current_user) }
-  fab!(:message) { Fabricate(:chat_message, user: current_user) }
+  describe described_class::Contract, type: :model do
+    it { is_expected.to validate_presence_of(:message_id) }
+    it { is_expected.to validate_presence_of(:channel_id) }
+  end
 
   describe ".call" do
-    subject(:result) { described_class.call(params) }
+    subject(:result) { described_class.call(params:, **dependencies) }
+
+    fab!(:current_user, :user)
+    fab!(:message) { Fabricate(:chat_message, user: current_user) }
+
+    let(:guardian) { Guardian.new(current_user) }
+    let(:params) { { message_id: message.id, channel_id: } }
+    let(:dependencies) { { guardian: } }
+    let(:channel_id) { message.chat_channel_id }
 
     context "when params are not valid" do
-      let(:params) { { guardian: guardian } }
+      let(:params) { {} }
 
       it { is_expected.to fail_a_contract }
     end
 
     context "when params are valid" do
-      let(:params) do
-        { guardian: guardian, message_id: message.id, channel_id: message.chat_channel_id }
-      end
-
       context "when the user does not have permission to delete" do
         before { message.update!(user: Fabricate(:admin)) }
 
@@ -26,17 +31,13 @@ RSpec.describe Chat::TrashMessage do
       end
 
       context "when the channel does not match the message" do
-        let(:params) do
-          { guardian: guardian, message_id: message.id, channel_id: Fabricate(:chat_channel).id }
-        end
+        let(:channel_id) { -1 }
 
         it { is_expected.to fail_to_find_a_model(:message) }
       end
 
       context "when the user has permission to delete" do
-        it "sets the service result as successful" do
-          expect(result).to be_a_success
-        end
+        it { is_expected.to run_successfully }
 
         it "trashes the message" do
           result
@@ -197,6 +198,22 @@ RSpec.describe Chat::TrashMessage do
               result
               expect(thread.reload.last_message).to eq(thread.original_message)
             end
+          end
+        end
+
+        context "when message is pinned" do
+          fab!(:pin) do
+            Fabricate(
+              :chat_pinned_message,
+              chat_message: message,
+              chat_channel: message.chat_channel,
+            )
+          end
+
+          it "destroys the pin" do
+            pin_id = pin.id
+            expect { result }.to change { Chat::PinnedMessage.count }.by(-1)
+            expect(Chat::PinnedMessage.find_by(id: pin_id)).to be_nil
           end
         end
 

@@ -21,6 +21,133 @@ describe "Recurring" do
     expect(triggerable.settings[DiscourseAutomation::Triggerable::MANUAL_TRIGGER_KEY]).to eq(true)
   end
 
+  describe "scheduling next pending automations" do
+    context "with daily frequency" do
+      it "doesn't fail to schedule if the current time is within subsecond of the time component of start_date" do
+        automation.upsert_field!(
+          "start_date",
+          "date_time",
+          { value: Time.parse("2022-11-01 07:30:00 UTC") },
+          target: "trigger",
+        )
+        automation.upsert_field!(
+          "recurrence",
+          "period",
+          { value: { interval: 1, frequency: "day" } },
+          target: "trigger",
+        )
+
+        freeze_time(Time.parse("2023-09-13 07:30:00.141775363 UTC")) { automation.trigger! }
+
+        pending_automations = automation.reload.pending_automations
+        expect(pending_automations.count).to eq(1)
+        expect(pending_automations.first.execute_at).to eq_time(
+          Time.parse("2023-09-14 07:30:00 UTC"),
+        )
+      end
+    end
+
+    context "with weekday frequency" do
+      it "doesn't fail to schedule if the current time is within subsecond of the time component of start_date" do
+        automation.upsert_field!(
+          "start_date",
+          "date_time",
+          { value: Time.parse("2024-10-01 23:59:59 UTC") },
+          target: "trigger",
+        )
+        automation.upsert_field!(
+          "recurrence",
+          "period",
+          { value: { interval: 1, frequency: "weekday" } },
+          target: "trigger",
+        )
+
+        freeze_time(Time.parse("2024-10-01 23:59:59.141775363 UTC")) { automation.trigger! }
+
+        pending_automations = automation.reload.pending_automations
+        expect(pending_automations.count).to eq(1)
+        expect(pending_automations.first.execute_at).to eq_time(
+          Time.parse("2024-10-02 23:59:59 UTC"),
+        )
+      end
+    end
+
+    context "with weekly frequency" do
+      it "doesn't fail to schedule if the current time is within subsecond of the time component of start_date" do
+        automation.upsert_field!(
+          "start_date",
+          "date_time",
+          { value: Time.parse("2024-09-15 23:59:59 UTC") },
+          target: "trigger",
+        )
+        automation.upsert_field!(
+          "recurrence",
+          "period",
+          { value: { interval: 1, frequency: "week" } },
+          target: "trigger",
+        )
+
+        freeze_time(Time.parse("2024-09-15 23:59:59.141775363 UTC")) { automation.trigger! }
+
+        pending_automations = automation.reload.pending_automations
+        expect(pending_automations.count).to eq(1)
+        expect(pending_automations.first.execute_at).to eq_time(
+          Time.parse("2024-09-22 23:59:59 UTC"),
+        )
+      end
+    end
+
+    context "with monthly frequency" do
+      it "doesn't fail to schedule if the current time is within subsecond of the time component of start_date" do
+        automation.upsert_field!(
+          "start_date",
+          "date_time",
+          { value: Time.parse("2023-10-01 07:30:00 UTC") },
+          target: "trigger",
+        )
+        automation.upsert_field!(
+          "recurrence",
+          "period",
+          { value: { interval: 1, frequency: "month" } },
+          target: "trigger",
+        )
+
+        freeze_time(Time.parse("2023-10-01 07:30:00.141775363 UTC")) { automation.trigger! }
+
+        pending_automations = automation.reload.pending_automations
+        expect(pending_automations.count).to eq(1)
+        expect(pending_automations.first.execute_at).to eq_time(
+          Time.parse("2023-11-05 07:30:00 UTC"),
+        )
+      end
+    end
+
+    context "with yearly frequency" do
+      it "doesn't fail to schedule if the current time is within subsecond of the time component of start_date" do
+        automation.upsert_field!(
+          "start_date",
+          "date_time",
+          { value: Time.parse("2023-01-01 07:30:00 UTC") },
+          target: "trigger",
+        )
+        automation.upsert_field!(
+          "recurrence",
+          "period",
+          { value: { interval: 1, frequency: "year" } },
+          target: "trigger",
+        )
+
+        freeze_time(Time.parse("2023-01-01 07:30:00.141775363 UTC")) { automation.trigger! }
+
+        pending_automations = automation.reload.pending_automations
+        expect(pending_automations.count).to eq(1)
+        expect(pending_automations.first.execute_at).to eq_time(
+          Time.parse("2024-01-01 07:30:00 UTC"),
+        )
+      end
+    end
+  end
+
   describe "updating trigger" do
     context "when date is in future" do
       before { freeze_time Time.parse("2021-06-04 10:00 UTC") }
@@ -116,7 +243,7 @@ describe "Recurring" do
 
           expect(automation.pending_automations.count).to eq(1)
           expect(automation.pending_automations.last.execute_at).to be_within_one_second_of(
-            Time.zone.now + 2.days,
+            2.days.from_now,
           )
         end
       end
@@ -160,7 +287,7 @@ describe "Recurring" do
 
           expect(automation.pending_automations.count).to eq(1)
           expect(automation.pending_automations.last.execute_at).to be_within_one_second_of(
-            Time.zone.now + 2.hour,
+            2.hours.from_now,
           )
         end
       end
@@ -263,7 +390,7 @@ describe "Recurring" do
 
         pending_automation = automation.pending_automations.last
         start_date = Time.parse(automation.trigger_field("start_date")["value"])
-        expect(pending_automation.execute_at).to be_within_one_minute_of(start_date + 3.day)
+        expect(pending_automation.execute_at).to be_within_one_minute_of(start_date + 3.days)
       end
 
       it "creates the next iteration three days after without Saturday/Sunday" do
@@ -295,7 +422,7 @@ describe "Recurring" do
 
         pending_automation = automation.pending_automations.last
         expect(pending_automation.execute_at).to be_within_one_minute_of(
-          (Time.zone.now + 1.hour).beginning_of_hour,
+          1.hour.from_now.beginning_of_hour,
         )
       end
     end
@@ -308,7 +435,7 @@ describe "Recurring" do
 
         pending_automation = automation.pending_automations.last
         expect(pending_automation.execute_at).to be_within_one_minute_of(
-          (Time.zone.now + 1.minute).beginning_of_minute,
+          1.minute.from_now.beginning_of_minute,
         )
       end
     end

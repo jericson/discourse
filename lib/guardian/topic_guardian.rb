@@ -3,11 +3,8 @@
 #mixin for all guardian methods dealing with topic permissions
 module TopicGuardian
   def can_remove_allowed_users?(topic, target_user = nil)
-    is_staff? || (topic.user == @user && @user.has_trust_level?(TrustLevel[2])) ||
-      (
-        topic.allowed_users.count > 1 && topic.user != target_user &&
-          !!(target_user && user == target_user)
-      )
+    is_staff? || (is_my_own?(topic) && @user.has_trust_level?(TrustLevel[2])) ||
+      (topic.allowed_users.count > 1 && topic.user != target_user && !!(is_me?(target_user)))
   end
 
   def can_review_topic?(topic)
@@ -71,7 +68,8 @@ module TopicGuardian
         end
       )
 
-    is_staff? || (can_create_topic_on_category?(category) && !category.require_topic_approval?)
+    is_staff? ||
+      (can_create_topic_on_category?(category) && !topic_posting_review_required?(category))
   end
 
   def can_create_post_on_topic?(topic)
@@ -145,24 +143,24 @@ module TopicGuardian
   end
 
   def can_recover_topic?(topic)
-    if is_staff? || (topic&.category && is_category_group_moderator?(topic.category)) ||
+    return false if topic.blank?
+
+    if is_category_group_moderator?(topic.category) ||
          user&.in_any_groups?(SiteSetting.delete_all_posts_and_topics_allowed_groups_map)
-      !!(topic && topic.deleted_at)
+      topic.deleted_at?
     else
-      topic && can_recover_post?(topic.ordered_posts.first)
+      can_recover_post?(topic.ordered_posts.first)
     end
   end
 
   def can_delete_topic?(topic)
-    !topic.trashed? &&
-      (
-        is_staff? ||
-          (
-            is_my_own?(topic) && topic.posts_count <= 1 && topic.created_at &&
-              topic.created_at > 24.hours.ago
-          ) || is_category_group_moderator?(topic.category) ||
-          user&.in_any_groups?(SiteSetting.delete_all_posts_and_topics_allowed_groups_map)
-      ) && !topic.is_category_topic? && !Discourse.static_doc_topic_ids.include?(topic.id)
+    return false if topic.trashed?
+    return false if topic.is_category_topic?
+    return false if Discourse.static_doc_topic_ids.include?(topic.id)
+    return true if is_category_group_moderator?(topic.category)
+    return true if user&.in_any_groups?(SiteSetting.delete_all_posts_and_topics_allowed_groups_map)
+
+    is_my_own?(topic) && can_delete_own_topic?(topic)
   end
 
   def can_permanently_delete_topic?(topic)
@@ -176,15 +174,7 @@ module TopicGuardian
     # All other posts that were deleted still must be permanently deleted
     # before the topic can be deleted with the exception of small action
     # posts that will be deleted right before the topic is.
-    all_posts_count =
-      Post
-        .with_deleted
-        .where(topic_id: topic.id)
-        .where(
-          post_type: [Post.types[:regular], Post.types[:moderator_action], Post.types[:whisper]],
-        )
-        .count
-    return false if all_posts_count > 1
+    return false if topic.deletable_posts_count > 1
 
     return false if !is_admin? || !can_see_topic?(topic)
     return false if !topic.deleted_at
@@ -216,7 +206,7 @@ module TopicGuardian
   end
 
   def can_see_deleted_topics?(category)
-    is_staff? || is_category_group_moderator?(category) ||
+    is_category_group_moderator?(category) ||
       user&.in_any_groups?(SiteSetting.delete_all_posts_and_topics_allowed_groups_map)
   end
 
@@ -224,7 +214,7 @@ module TopicGuardian
   def can_see_topic_ids(topic_ids: [], hide_deleted: true)
     topic_ids = topic_ids.compact
 
-    return topic_ids if is_admin?
+    return topic_ids if is_admin? && !SiteSetting.suppress_secured_categories_from_admin
     return [] if topic_ids.blank?
 
     default_scope = Topic.unscoped.where(id: topic_ids)
@@ -268,7 +258,7 @@ module TopicGuardian
 
   def can_see_topic?(topic, hide_deleted = true)
     return false unless topic
-    return true if is_admin?
+    return true if is_admin? && !SiteSetting.suppress_secured_categories_from_admin
     return false if hide_deleted && topic.deleted_at && !can_see_deleted_topics?(topic.category)
 
     if topic.private_message?
@@ -281,16 +271,12 @@ module TopicGuardian
     can_see_category?(category) &&
       (
         !category.read_restricted || !is_staged? || secure_category_ids.include?(category.id) ||
-          topic.user == user
+          is_my_own?(topic)
       )
   end
 
   def can_see_unlisted_topics?
     is_staff? || @user.has_trust_level?(TrustLevel[4])
-  end
-
-  def can_get_access_to_topic?(topic)
-    topic&.access_topic_via_group.present? && authenticated?
   end
 
   def filter_allowed_categories(records, category_id_column: "topics.category_id")
@@ -323,7 +309,16 @@ module TopicGuardian
   end
 
   def can_banner_topic?(topic)
-    topic && authenticated? && !topic.private_message? && is_staff?
+    topic && authenticated? && !topic.private_message? && !topic.category&.read_restricted? &&
+      is_staff?
+  end
+
+  def can_change_archetype?(topic, new_archetype)
+    return true if new_archetype == topic.archetype
+    if new_archetype == Archetype.banner || topic.archetype == Archetype.banner
+      return can_banner_topic?(topic)
+    end
+    true
   end
 
   def can_edit_tags?(topic)
@@ -342,6 +337,7 @@ module TopicGuardian
   def can_perform_action_available_to_group_moderators?(topic)
     return false if anonymous? || topic.nil?
     return true if is_staff?
+    return false if !can_see_topic?(topic)
     return true if @user.has_trust_level?(TrustLevel[4])
 
     is_category_group_moderator?(topic.category)
@@ -355,7 +351,9 @@ module TopicGuardian
 
   def can_move_posts?(topic)
     return false if is_silenced?
-    can_perform_action_available_to_group_moderators?(topic)
+    return false unless can_perform_action_available_to_group_moderators?(topic)
+    return false if topic.archetype == "private_message" && !is_staff?
+    true
   end
 
   def affected_by_slow_mode?(topic)
@@ -363,6 +361,10 @@ module TopicGuardian
   end
 
   private
+
+  def can_delete_own_topic?(topic)
+    topic.posts_count <= 1 && topic.created_at? && topic.created_at > 24.hours.ago
+  end
 
   def private_message_topic_scope(scope)
     pm_scope = scope.private_messages_for_user(user)

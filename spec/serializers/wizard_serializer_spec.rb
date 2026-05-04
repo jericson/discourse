@@ -14,7 +14,7 @@ RSpec.describe WizardSerializer do
       json = MultiJson.load(MultiJson.dump(serializer.as_json))
 
       expect(json["wizard"]["current_color_scheme"][0]["name"]).to eq("primary")
-      expect(json["wizard"]["current_color_scheme"][0]["hex"]).to eq("222222")
+      expect(json["wizard"]["current_color_scheme"][0]["hex"]).to eq("222")
     end
 
     it "should provide custom colors correctly" do
@@ -37,8 +37,8 @@ RSpec.describe WizardSerializer do
       json = MultiJson.load(MultiJson.dump(serializer.as_json))
 
       expect(json["wizard"]["current_color_scheme"].to_s).to include(
-        '{"name"=>"header_background", "hex"=>"00FF00"}',
-      )
+        '{"name"=>"header_background", "hex"=>"00FF00"}', # ruby 3.3
+      ).or include('{"name" => "header_background", "hex" => "00FF00"}') # ruby 3.4
     end
   end
 
@@ -54,20 +54,20 @@ RSpec.describe WizardSerializer do
       json = MultiJson.load(MultiJson.dump(serializer.as_json))
       steps = json["wizard"]["steps"]
 
-      expect(steps.first["id"]).to eq("introduction")
-      expect(steps.last["id"]).to eq("corporate")
+      expect(steps.length).to eq(1)
+      expect(steps.first["id"]).to eq("setup")
 
-      privacy_step = steps.find { |s| s["id"] == "privacy" }
-      expect(privacy_step).to_not be_nil
+      setup_step = steps.first
+      expect(setup_step).to_not be_nil
 
-      login_required_field = privacy_step["fields"].find { |f| f["id"] == "login_required" }
-      expect(login_required_field["value"]).to eq(true)
+      login_required_field = setup_step["fields"].find { |f| f["id"] == "login_required" }
+      expect(login_required_field["value"]).to eq("private")
 
-      invite_only_field = privacy_step["fields"].find { |f| f["id"] == "invite_only" }
-      expect(invite_only_field["value"]).to eq(true)
+      invite_only_field = setup_step["fields"].find { |f| f["id"] == "invite_only" }
+      expect(invite_only_field["value"]).to eq("invite_only")
 
-      must_approve_users_field = privacy_step["fields"].find { |f| f["id"] == "must_approve_users" }
-      expect(must_approve_users_field["value"]).to eq(true)
+      must_approve_users_field = setup_step["fields"].find { |f| f["id"] == "must_approve_users" }
+      expect(must_approve_users_field["value"]).to eq("yes")
     end
   end
 end

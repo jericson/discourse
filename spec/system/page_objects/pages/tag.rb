@@ -4,7 +4,7 @@ module PageObjects
   module Pages
     class Tag < PageObjects::Pages::Base
       def visit_tag(tag)
-        page.visit "/tag/#{tag.name}"
+        page.visit "/tag/#{tag.slug_for_url}/#{tag.id}"
         self
       end
 
@@ -12,38 +12,20 @@ module PageObjects
         find("#show-tag-info")
       end
 
-      def edit_synonyms_btn
-        find("#edit-synonyms")
+      def has_tag_info_btn?
+        has_css?("#show-tag-info")
       end
 
-      def add_synonym_btn
-        find(".add-synonyms .ok")
+      def has_no_tag_info_btn?
+        has_no_css?("#show-tag-info")
       end
 
-      def confirm_synonym_btn
-        find(".dialog-footer .btn-primary")
+      def has_no_tag?(name)
+        has_no_css?(".tag-box", text: name)
       end
 
-      def add_synonyms_dropdown
-        PageObjects::Components::SelectKit.new("#add-synonyms")
-      end
-
-      def search_tags(query)
-        add_synonyms_dropdown.search(query)
-      end
-
-      def select_tag(value: nil, index: nil, name: nil)
-        if value
-          add_synonyms_dropdown.select_row_by_value(value)
-        elsif name
-          add_synonyms_dropdown.select_row_by_name(name)
-        elsif index
-          add_synonyms_dropdown.select_row_by_index(index)
-        end
-      end
-
-      def tag_box(tag)
-        find(".tag-box div[data-tag-name='#{tag}']")
+      def tags_dropdown
+        PageObjects::Components::SelectKit.new(".select-kit.tag-drop")
       end
     end
   end

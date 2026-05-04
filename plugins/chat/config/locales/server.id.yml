@@ -15,12 +15,10 @@ id:
     chat_allowed_messages_for_other_trust_levels: "Jumlah pesan yang boleh dikirim oleh pengguna dengan trust level 1-4 dalam 30 detik. Setel ke '0' untuk menonaktifkan batas."
     chat_silence_user_sensitivity: "Kemungkinan pengguna yang ditandai dalam obrolan akan disenyapkan secara otomatis."
     chat_auto_silence_from_flags_duration: "Jumlah menit pengguna akan disenyapkan ketika mereka disenyapkan secara otomatis karena pesan chat yang ditandai."
-    chat_default_channel_id: "Kanal obrolan yang akan dibuka secara bawaan saat pengguna tidak memiliki pesan yang belum dibaca atau sebutan di saluran lain."
     chat_duplicate_message_sensitivity: "Kemungkinan pesan duplikat oleh pengirim yang sama akan diblokir dalam waktu singkat. Angka desimal antara 0 dan 1.0, dengan 1.0 sebagai setelan tertinggi (memblokir pesan lebih sering dalam waktu yang lebih singkat). Setel ke `0` untuk mengizinkan pesan duplikat."
     chat_minimum_message_length: "Jumlah minimum karakter untuk pesan obrolan."
     chat_allow_uploads: "Izinkan unggahan di kanal obrolan publik dan kanal pesan langsung."
     chat_archive_destination_topic_status: "Status topik tujuan setelah arsip kanal selesai. Ini hanya berlaku bila topik tujuan adalah topik baru, bukan topik yang sudah ada."
-    default_emoji_reactions: "Reaksi emoji bawaan untuk pesan obrolan. Tambahkan hingga 5 emoji untuk reaksi cepat."
     direct_message_enabled_groups: "Izinkan pengguna dalam grup ini untuk membuat Obrolan Pribadi pengguna-ke-pengguna. Catatan: staf selalu dapat membuat Obrolan Pribadi, dan pengguna akan dapat membalas Obrolan Pribadi yang dimulai oleh pengguna yang memiliki izin untuk membuatnya."
     max_mentions_per_chat_message: "Jumlah maksimum notifikasi @nama yang dapat digunakan pengguna dalam pesan obrolan."
     chat_max_direct_message_users: "Pengguna tidak dapat menambahkan lebih dari jumlah pengguna lain saat membuat pesan langsung baru. Setel ke 0 untuk hanya mengizinkan pesan untuk diri sendiri. Staf dibebaskan dari pengaturan ini."
@@ -79,8 +77,6 @@ id:
       not_accepting_dms: "Maaf, %{username} tidak menerima pesan saat ini."
       actor_ignoring_target_user: "Anda mengabaikan %{username}, jadi Anda tidak dapat mengirim pesan kepadanya."
       actor_muting_target_user: "Anda membisukan %{username}, jadi Anda tidak dapat mengirim pesan kepadanya."
-      actor_disallowed_dms: "Anda telah memilih untuk mencegah pengguna mengirimi Anda pesan langsung dan pribadi, sehingga Anda tidak dapat membuat pesan langsung baru."
-      actor_preventing_target_user_from_dm: "Anda telah memilih untuk mencegah %{username} mengirimi Anda pesan langsung dan pribadi, sehingga Anda tidak dapat membuat pesan langsung baru untuk dia."
       user_cannot_send_direct_messages: "Maaf, Anda tidak dapat mengirim pesan langsung."
       over_chat_max_direct_message_users_allow_self: "Anda hanya dapat membuat pesan langsung dengan diri Anda sendiri."
       over_chat_max_direct_message_users:
@@ -91,6 +87,10 @@ id:
     reviewables:
       message_already_handled: "Terima kasih, tetapi kami telah meninjau pesan ini dan memutuskan bahwa pesan ini tidak perlu ditandai lagi."
       actions:
+        no_action_message:
+          title: "Tidak ada tindakan"
+        restore_message:
+          description: "Pulihkan pesan agar pengguna dapat melihatnya."
         agree:
           title: "Setuju..."
         agree_and_keep_message:
@@ -112,16 +112,10 @@ id:
           title: "Hapus Pesan"
           description: "Hapus pesan sehingga pengguna tidak dapat melihatnya."
         delete_and_agree:
-          title: "Abaikan Penanda dan Hapus Pesan"
           description: "Abaikan penanda tersebut dengan menghapusnya dari antrean dan menghapus pesannya."
         disagree_and_restore:
           title: "Tidak Setuju dan Pulihkan Pesan"
           description: "Pulihkan pesan agar semua pengguna dapat melihatnya."
-        disagree:
-          title: "Tidak setuju"
-        ignore:
-          title: "Tidak Melakukan Apapun"
-          description: "Abaikan penanda tersebut dengan menghapusnya dari antrean tanpa mengambil tindakan apa pun."
       direct_messages:
         transcript_title: "Transkrip pesan sebelumnya di %{channel_name}"
         transcript_body: "Untuk memberi Anda lebih banyak konteks, kami menyertakan transkrip pesan sebelumnya dalam percakapan ini (hingga sepuluh):\n\n%{transcript}"
@@ -158,7 +152,7 @@ id:
         slug_contains_non_ascii_chars: "berisi karakter non-ascii"
         is_already_in_use: "sedang digunakan"
     bookmarkable:
-      notification_title: "pesan di %{channel_name}"
+      notification_title_channel: "pesan di %{channel_name}"
     personal_chat: "obrolan pribadi"
     onebox:
       inline_to_message: "Pesan #%{message_id} oleh %{username} – #%{chat_channel}"
@@ -168,8 +162,6 @@ id:
         other: "%{count} anggota"
       and_x_others:
         other: "dan %{count} lainnya"
-    summaries:
-      no_targets: "Tidak ada pesan selama periode yang dipilih."
     transcript:
       default_thread_title: "Utas"
       split_thread_range: "pesan %{start} hingga %{end} dari %{total}"
@@ -183,6 +175,9 @@ id:
         other_type: "%{username} menyebut %{identifier} di obrolan pribadi"
       new_chat_message: '%{username} mengirim pesan di "%{channel}"'
       new_direct_chat_message: "%{username} mengirim pesan di obrolan pribadi"
+    actions:
+      chat_reply:
+        title: Balas
   discourse_automation:
     scriptables:
       send_chat_message:
@@ -211,10 +206,8 @@ id:
         other: "Lihat %{count} pesan"
       view_more:
         other: "Lihat %{count} pesan lagi"
-      your_chat_settings: "preferensi frekuensi obrolan email"
   unsubscribe:
     chat_summary:
-      select_title: "Setel frekuensi email ringkasan obrolan ke:"
       never: Tidak pernah
       when_away: Hanya saat pergi
   category:

@@ -3,7 +3,7 @@
 module Chat
   module Admin
     class IncomingWebhooksController < ::Admin::AdminController
-      requires_plugin Chat::PLUGIN_NAME
+      requires_plugin PLUGIN_NAME
 
       def index
         render_serialized(
@@ -14,6 +14,25 @@ module Chat
           Chat::AdminChatIndexSerializer,
           root: false,
         )
+      end
+
+      def edit
+        webhook =
+          Chat::IncomingWebhook.includes(:chat_channel).find(params[:incoming_chat_webhook_id])
+        render_serialized(
+          { chat_channels: Chat::Channel.public_channels, webhook: webhook },
+          Chat::AdminChatWebhookShowSerializer,
+          root: false,
+        )
+      end
+
+      def new
+        serialized_channels =
+          Chat::Channel.public_channels.map do |channel|
+            Chat::ChannelSerializer.new(channel, scope: Guardian.new(current_user))
+          end
+
+        render json: serialized_channels, root: "chat_channels"
       end
 
       def create

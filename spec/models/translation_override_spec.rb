@@ -48,9 +48,7 @@ RSpec.describe TranslationOverride do
           ].each do |i18n_key|
             it "should validate keys for #{i18n_key}" do
               interpolation_key_names =
-                described_class::ALLOWED_CUSTOM_INTERPOLATION_KEYS.find do |keys, _|
-                  keys.include?("user_notifications.user_")
-                end
+                described_class.custom_interpolation_keys("user_notifications.user_")
 
               string_with_interpolation_keys =
                 interpolation_key_names.map { |x| "%{#{x}}" }.join(" ")
@@ -148,6 +146,32 @@ RSpec.describe TranslationOverride do
         end
       end
     end
+
+    describe "MessageFormat translations" do
+      subject(:override) do
+        described_class.new(
+          translation_key: "admin_js.admin.user.delete_all_posts_confirm_MF",
+          locale: "en",
+        )
+      end
+
+      it do
+        is_expected.to allow_value(
+          "This has {COUNT, plural, one{one member} other{# members}}.",
+        ).for(:value).against(:base)
+      end
+      it do
+        is_expected.not_to allow_value(
+          "This has {COUNT, plural, one{one member} many{# members} other{# members}}.",
+        ).for(:value).with_message(/plural case many is not valid/, against: :base)
+      end
+      it do
+        is_expected.not_to allow_value("This has {COUNT, ").for(:value).with_message(
+          /invalid syntax/,
+          against: :base,
+        )
+      end
+    end
   end
 
   it "upserts values" do
@@ -160,28 +184,14 @@ RSpec.describe TranslationOverride do
   end
 
   it "sanitizes values before upsert" do
-    xss = "<a target='blank' href='%{path}'>Click here</a> <script>alert('TEST');</script>"
+    xss = "<a target='_blank' href='%{path}'>Click here</a> <script>alert('TEST');</script>"
 
     TranslationOverride.upsert!("en", "js.themes.error_caused_by", xss)
 
     ovr =
       TranslationOverride.where(locale: "en", translation_key: "js.themes.error_caused_by").first
     expect(ovr).to be_present
-    expect(ovr.value).to eq("<a href=\"%{path}\">Click here</a> alert('TEST');")
-  end
-
-  it "stores js for a message format key" do
-    I18n.backend.store_translations(:en, { some: { key_MF: "initial value" } })
-    TranslationOverride.upsert!(
-      "ru",
-      "some.key_MF",
-      "{NUM_RESULTS, plural, one {1 result} other {many} }",
-    )
-
-    ovr = TranslationOverride.where(locale: "ru", translation_key: "some.key_MF").first
-    expect(ovr).to be_present
-    expect(ovr.compiled_js).to start_with("function")
-    expect(ovr.compiled_js).to_not match(/Invalid Format/i)
+    expect(ovr.value).to eq("<a target=\"_blank\" href=\"%{path}\">Click here</a> alert('TEST');")
   end
 
   describe "site cache" do
@@ -340,7 +350,7 @@ RSpec.describe TranslationOverride do
     end
   end
 
-  describe "invalid_interpolation_keys" do
+  describe "#invalid_interpolation_keys" do
     fab!(:translation) do
       Fabricate(
         :translation_override,
@@ -352,6 +362,93 @@ RSpec.describe TranslationOverride do
       translation.update_attribute("value", "Hello, %{name}! Welcome to %{site_name}. %{foo}")
 
       expect(translation.invalid_interpolation_keys).to contain_exactly("foo")
+    end
+  end
+
+  describe "#refresh_status" do
+    context "when fixing a translation with invalid interpolation keys" do
+      fab!(:translation) do
+        Fabricate(
+          :translation_override,
+          translation_key: "system_messages.welcome_user.subject_template",
+          status: "invalid_interpolation_keys",
+        )
+      end
+
+      before do
+        translation.update_attribute("value", "Hello, %{name}! Welcome to %{site_name}. %{foo}")
+      end
+
+      it "refreshes to status to up to date" do
+        expect {
+          translation.update_attribute("value", "Hello, %{name}! Welcome to %{site_name}.")
+        }.to change { translation.status }.from("invalid_interpolation_keys").to("up_to_date")
+      end
+    end
+
+    context "when updating a translation that has had the original updated" do
+      fab!(:translation) do
+        Fabricate(
+          :translation_override,
+          translation_key: "title",
+          original_translation: "outdated",
+          status: "outdated",
+        )
+      end
+
+      it "refreshes to status to up to date" do
+        expect { translation.update_attribute("value", "Discourse") }.to change {
+          translation.status
+        }.from("outdated").to("up_to_date")
+      end
+    end
+  end
+
+  describe "#message_format?" do
+    subject(:override) { described_class.new(translation_key: key) }
+
+    context "when override is for a MessageFormat translation" do
+      let(:key) { "admin_js.admin.user.delete_all_posts_confirm_MF" }
+
+      it { is_expected.to be_a_message_format }
+    end
+
+    context "when override is not for a MessageFormat translation" do
+      let(:key) { "admin_js.type_to_filter" }
+
+      it { is_expected.not_to be_a_message_format }
+    end
+  end
+
+  describe "#make_up_to_date!" do
+    fab!(:override) { Fabricate(:translation_override, translation_key: "js.posts_likes_MF") }
+
+    context "when override is not outdated" do
+      it "does nothing" do
+        expect { override.make_up_to_date! }.not_to change { override.reload.attributes }
+      end
+
+      it "returns a falsy value" do
+        expect(override.make_up_to_date!).to be_falsy
+      end
+    end
+
+    context "when override is outdated" do
+      before { override.update_columns(status: :outdated, value: "{ Invalid MF syntax") }
+
+      it "updates its original translation to match the current default" do
+        expect { override.make_up_to_date! }.to change { override.reload.original_translation }.to(
+          I18n.overrides_disabled { I18n.t("js.posts_likes_MF") },
+        )
+      end
+
+      it "sets its status to 'up_to_date'" do
+        expect { override.make_up_to_date! }.to change { override.reload.up_to_date? }.to(true)
+      end
+
+      it "returns a truthy value" do
+        expect(override.make_up_to_date!).to be_truthy
+      end
     end
   end
 end

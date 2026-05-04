@@ -144,16 +144,24 @@ class SearchIndexer
         search_data.values.select { |d| d.length > 0 }.join(" ")
       end
 
+    handler = DiscoursePluginRegistry.search_handlers.find { |h| h[:table_name] == table }
+    index_version = handler ? handler[:index_version] : const_get("#{table.upcase}_INDEX_VERSION")
+
     params = {
       "raw_data" => indexed_data,
       "#{foreign_key}" => id,
       "locale" => SiteSetting.default_locale,
-      "version" => const_get("#{table.upcase}_INDEX_VERSION"),
+      "version" => index_version,
       "search_data" => tsvector,
     }
 
     yield params if block_given?
-    table_name.camelize.constantize.upsert(params)
+
+    if handler
+      handler[:search_data_class].upsert(params)
+    else
+      table_name.camelize.constantize.upsert(params)
+    end
   rescue => e
     if Rails.env.test?
       raise
@@ -261,6 +269,16 @@ class SearchIndexer
   def self.index(obj, force: false)
     return if @disabled
 
+    # Check registered search handlers for this object type
+    handler = DiscoursePluginRegistry.search_handlers.find { |h| obj.is_a?(h[:model_class]) }
+
+    if handler
+      indexer_helper = IndexerHelper.new
+      search_weights = handler[:search_data].call(obj, indexer_helper)
+      update_index(table: handler[:table_name], id: obj.id, **search_weights)
+      return
+    end
+
     category_name = nil
     tag_names = nil
     topic = nil
@@ -365,7 +383,7 @@ class SearchIndexer
       return +"" if html.blank?
 
       begin
-        document = Nokogiri.HTML5("<div>#{html}</div>", nil, Encoding::UTF_8.to_s)
+        document = Nokogiri.HTML5("<div>#{html}</div>", encoding: Encoding::UTF_8)
       rescue ArgumentError
         return +""
       end
@@ -401,12 +419,12 @@ class SearchIndexer
         end
 
       html_scrubber = new
-      Nokogiri::HTML::SAX::Parser.new(html_scrubber).parse(document.to_html)
+      Nokogiri::HTML4::SAX::Parser.new(html_scrubber, Encoding::UTF_8).parse(document.to_html)
       html_scrubber.scrubbed.squish
     end
 
-    MENTION_CLASSES ||= %w[mention mention-group]
-    ATTRIBUTES ||= %w[alt title href data-video-title]
+    MENTION_CLASSES = %w[mention mention-group]
+    ATTRIBUTES = %w[alt title href data-video-title]
 
     def start_element(_name, attributes = [])
       attributes = Hash[*attributes.flatten]
@@ -421,6 +439,12 @@ class SearchIndexer
 
     def characters(str)
       scrubbed << " #{str} "
+    end
+  end
+
+  class IndexerHelper
+    def scrub_html(html)
+      HtmlScrubber.scrub(html)
     end
   end
 end

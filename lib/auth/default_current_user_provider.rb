@@ -23,28 +23,28 @@ require_relative "../route_matcher"
 # We'll drop support for v0 after Discourse 2.9 is released.
 
 class Auth::DefaultCurrentUserProvider
-  CURRENT_USER_KEY ||= "_DISCOURSE_CURRENT_USER"
-  USER_TOKEN_KEY ||= "_DISCOURSE_USER_TOKEN"
-  API_KEY ||= "api_key"
-  API_USERNAME ||= "api_username"
-  HEADER_API_KEY ||= "HTTP_API_KEY"
-  HEADER_API_USERNAME ||= "HTTP_API_USERNAME"
-  HEADER_API_USER_EXTERNAL_ID ||= "HTTP_API_USER_EXTERNAL_ID"
-  HEADER_API_USER_ID ||= "HTTP_API_USER_ID"
-  PARAMETER_USER_API_KEY ||= "user_api_key"
-  USER_API_KEY ||= "HTTP_USER_API_KEY"
-  USER_API_CLIENT_ID ||= "HTTP_USER_API_CLIENT_ID"
-  API_KEY_ENV ||= "_DISCOURSE_API"
-  USER_API_KEY_ENV ||= "_DISCOURSE_USER_API"
-  TOKEN_COOKIE ||= ENV["DISCOURSE_TOKEN_COOKIE"] || "_t"
-  PATH_INFO ||= "PATH_INFO"
-  COOKIE_ATTEMPTS_PER_MIN ||= 10
-  BAD_TOKEN ||= "_DISCOURSE_BAD_TOKEN"
+  CURRENT_USER_KEY = "_DISCOURSE_CURRENT_USER"
+  USER_TOKEN_KEY = "_DISCOURSE_USER_TOKEN"
+  API_KEY = "api_key"
+  API_USERNAME = "api_username"
+  HEADER_API_KEY = "HTTP_API_KEY"
+  HEADER_API_USERNAME = "HTTP_API_USERNAME"
+  HEADER_API_USER_EXTERNAL_ID = "HTTP_API_USER_EXTERNAL_ID"
+  HEADER_API_USER_ID = "HTTP_API_USER_ID"
+  PARAMETER_USER_API_KEY = "user_api_key"
+  USER_API_KEY = "HTTP_USER_API_KEY"
+  USER_API_CLIENT_ID = "HTTP_USER_API_CLIENT_ID"
+  API_KEY_ENV = "_DISCOURSE_API"
+  USER_API_KEY_ENV = "_DISCOURSE_USER_API"
+  TOKEN_COOKIE = ENV["DISCOURSE_TOKEN_COOKIE"] || "_t"
+  PATH_INFO = "PATH_INFO"
+  COOKIE_ATTEMPTS_PER_MIN = 10
+  BAD_TOKEN = "_DISCOURSE_BAD_TOKEN"
   DECRYPTED_AUTH_COOKIE = "_DISCOURSE_DECRYPTED_AUTH_COOKIE"
 
   TOKEN_SIZE = 32
 
-  PARAMETER_API_PATTERNS ||= [
+  PARAMETER_API_PATTERNS = [
     RouteMatcher.new(
       methods: :get,
       actions: [
@@ -113,17 +113,17 @@ class Auth::DefaultCurrentUserProvider
     user_api_key = @env[USER_API_KEY]
     api_key = @env[HEADER_API_KEY]
 
-    if !@env.blank? && request[PARAMETER_USER_API_KEY] && api_parameter_allowed?
+    if @env.present? && request[PARAMETER_USER_API_KEY] && api_parameter_allowed?
       user_api_key ||= request[PARAMETER_USER_API_KEY]
     end
 
-    api_key ||= request[API_KEY] if !@env.blank? && request[API_KEY] && api_parameter_allowed?
+    api_key ||= request[API_KEY] if @env.present? && request[API_KEY] && api_parameter_allowed?
 
     auth_token = find_auth_token
     current_user = nil
 
     if auth_token
-      limiter = RateLimiter.new(nil, "cookie_auth_#{request.ip}", COOKIE_ATTEMPTS_PER_MIN, 60)
+      limiter = RateLimiter.new(nil, "cookie_auth_#{request.ip}", COOKIE_ATTEMPTS_PER_MIN, 1.minute)
 
       if limiter.can_perform?
         @env[USER_TOKEN_KEY] = @user_token =
@@ -140,6 +140,7 @@ class Auth::DefaultCurrentUserProvider
           end
 
         current_user = @user_token.try(:user)
+        current_user.authenticated_with_oauth = @user_token.authenticated_with_oauth if current_user
       end
 
       if !current_user
@@ -186,7 +187,7 @@ class Auth::DefaultCurrentUserProvider
           .active
           .joins(:user)
           .where(key_hash: @hashed_user_api_key)
-          .includes(:user, :scopes)
+          .includes(:user, :scopes, :client)
           .first
 
       raise Discourse::InvalidAccess unless user_api_key_obj
@@ -208,7 +209,7 @@ class Auth::DefaultCurrentUserProvider
     # under no conditions to suspended or inactive accounts get current_user
     current_user = nil if current_user && (current_user.suspended? || !current_user.active)
 
-    if current_user && should_update_last_seen?
+    if current_user && !current_user.is_impersonating && should_update_last_seen?
       ip = request.ip
       user_id = current_user.id
       old_ip = current_user.ip_address
@@ -267,16 +268,36 @@ class Auth::DefaultCurrentUserProvider
         client_ip: @request.ip,
         staff: user.staff?,
         impersonate: opts[:impersonate],
+        authenticated_with_oauth: opts[:authenticated_with_oauth],
       )
 
     set_auth_cookie!(@user_token.unhashed_auth_token, user, cookie_jar)
     user.unstage!
+
     make_developer_admin(user)
-    enable_bootstrap_mode(user)
 
     UserAuthToken.enforce_session_count_limit!(user.id)
 
     @env[CURRENT_USER_KEY] = user
+  end
+
+  def start_impersonating_user(user)
+    @user_token.update!(
+      impersonated_user_id: user.id,
+      impersonation_expires_at:
+        SiteSetting.experimental_impersonation_time_limit_minutes.minutes.from_now,
+    )
+  end
+
+  def stop_impersonating_user
+    @user_token.update!(impersonated_user_id: nil, impersonation_expires_at: nil)
+    # Clear memoization of `current_user` so we can get the acting user back in
+    # the context of the same request.
+    @env.delete(CURRENT_USER_KEY)
+  end
+
+  def impersonation_acting_user
+    @user_token.acting_user
   end
 
   def set_auth_cookie!(unhashed_auth_token, user, cookie_jar)
@@ -314,15 +335,7 @@ class Auth::DefaultCurrentUserProvider
     end
   end
 
-  def enable_bootstrap_mode(user)
-    return if SiteSetting.bootstrap_mode_enabled
-
-    if user.admin && user.last_seen_at.nil? && user.is_singular_admin?
-      Jobs.enqueue(:enable_bootstrap_mode, user_id: user.id)
-    end
-  end
-
-  def log_off_user(session, cookie_jar)
+  def log_off_user(session, cookie_jar, push_subscription: nil)
     user = current_user
 
     if SiteSetting.log_out_strict && user
@@ -333,9 +346,12 @@ class Auth::DefaultCurrentUserProvider
         cookie_jar.delete("__profilin")
       end
 
+      PushNotificationPusher.clear_subscriptions(user)
       user.logged_out
     elsif user && @user_token
       @user_token.destroy
+      PushNotificationPusher.unsubscribe(user, push_subscription) if push_subscription
+      DiscourseEvent.trigger(:user_logged_out, user)
     end
 
     cookie_jar.delete("authentication_data")
@@ -432,7 +448,7 @@ class Auth::DefaultCurrentUserProvider
       limit = [GlobalSetting.max_admin_api_reqs_per_key_per_minute.to_i, limit].max
     end
     @admin_api_key_limiter =
-      RateLimiter.new(nil, "admin_api_min", limit, 60, error_code: "admin_api_key_rate_limit")
+      RateLimiter.new(nil, "admin_api_min", limit, 1.minute, error_code: "admin_api_key_rate_limit")
   end
 
   def user_api_key_limiter_60_secs
@@ -441,7 +457,7 @@ class Auth::DefaultCurrentUserProvider
         nil,
         "user_api_min_#{@hashed_user_api_key}",
         GlobalSetting.max_user_api_reqs_per_minute,
-        60,
+        1.minute,
         error_code: "user_api_key_limiter_60_secs",
       )
   end
@@ -452,7 +468,7 @@ class Auth::DefaultCurrentUserProvider
         nil,
         "user_api_day_#{@hashed_user_api_key}",
         GlobalSetting.max_user_api_reqs_per_day,
-        86_400,
+        1.day,
         error_code: "user_api_key_limiter_1_day",
       )
   end

@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
-RSpec.describe "Chat message - channel", type: :system do
-  fab!(:current_user) { Fabricate(:user) }
-  fab!(:channel_1) { Fabricate(:chat_channel) }
+RSpec.describe "Chat message - channel" do
+  fab!(:current_user, :user)
+  fab!(:channel_1, :chat_channel)
   fab!(:message_1) { Fabricate(:chat_message, chat_channel: channel_1, use_service: true) }
 
   let(:cdp) { PageObjects::CDP.new }
@@ -25,6 +25,30 @@ RSpec.describe "Chat message - channel", type: :system do
         ".chat-channel[data-id='#{channel_1.id}'] .chat-message-container[data-id='#{message_1.id}'].-active",
       )
     end
+
+    it "shows the message actions container with buttons" do
+      chat_page.visit_channel(channel_1)
+
+      channel_page.hover_message(message_1)
+
+      expect(channel_page.messages).to have_actions_container(message_1)
+      expect(channel_page.messages).to have_reply_btn(message_1)
+      expect(channel_page.messages).to have_reaction_buttons(message_1)
+    end
+
+    context "when not following the channel" do
+      before { channel_1.membership_for(current_user).update!(following: false) }
+
+      it "does not show the reply or reaction buttons" do
+        chat_page.visit_channel(channel_1)
+
+        channel_page.hover_message(message_1)
+
+        expect(channel_page.messages).to have_actions_container(message_1)
+        expect(channel_page.messages).to have_no_reply_btn(message_1)
+        expect(channel_page.messages).to have_no_reaction_buttons(message_1)
+      end
+    end
   end
 
   context "when copying text of a message" do
@@ -35,7 +59,7 @@ RSpec.describe "Chat message - channel", type: :system do
 
       channel_page.messages.copy_text(message_1)
 
-      expect(cdp.read_clipboard.chomp).to eq(message_1.message)
+      cdp.clipboard_has_text?(message_1.message, chomp: true)
       expect(PageObjects::Components::Toasts.new).to have_success(I18n.t("js.chat.text_copied"))
     end
   end
@@ -48,7 +72,7 @@ RSpec.describe "Chat message - channel", type: :system do
 
       channel_page.messages.copy_link(message_1)
 
-      expect(cdp.read_clipboard).to include("/chat/c/-/#{channel_1.id}/#{message_1.id}")
+      cdp.clipboard_has_text?("/chat/c/-/#{channel_1.id}/#{message_1.id}", strict: false)
       expect(PageObjects::Components::Toasts.new).to have_success(I18n.t("js.chat.link_copied"))
     end
 
@@ -57,7 +81,7 @@ RSpec.describe "Chat message - channel", type: :system do
 
       channel_page.messages.copy_link(message_1)
 
-      expect(cdp.read_clipboard).to include("/chat/c/-/#{channel_1.id}/#{message_1.id}")
+      cdp.clipboard_has_text?("/chat/c/-/#{channel_1.id}/#{message_1.id}", strict: false)
       expect(PageObjects::Components::Toasts.new).to have_success(I18n.t("js.chat.link_copied"))
     end
 
@@ -77,19 +101,21 @@ RSpec.describe "Chat message - channel", type: :system do
 
         channel_page.messages.copy_link(thread_1.original_message)
 
-        expect(cdp.read_clipboard).to include(
+        cdp.clipboard_has_text?(
           "/chat/c/-/#{channel_1.id}/#{thread_1.original_message.id}",
+          strict: false,
         )
         expect(PageObjects::Components::Toasts.new).to have_success(I18n.t("js.chat.link_copied"))
       end
 
-      xit "[mobile] copies the link to the message", mobile: true do
+      it "[mobile] copies the link to the message", mobile: true do
         chat_page.visit_channel(channel_1)
 
         channel_page.messages.copy_link(thread_1.original_message)
 
-        expect(cdp.read_clipboard).to include(
+        cdp.clipboard_has_text?(
           "/chat/c/-/#{channel_1.id}/#{thread_1.original_message.id}",
+          strict: false,
         )
         expect(PageObjects::Components::Toasts.new).to have_success(I18n.t("js.chat.link_copied"))
       end

@@ -6,43 +6,18 @@ RSpec.describe ExcerptParser do
   it "handles nested <details> blocks" do
     html = <<~HTML.strip
       <details>
-      <summary>
-      FOO</summary>
-      <details>
-      <summary>
-      BAR</summary>
-      <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Fusce ultrices, ex bibendum vestibulum vestibulum, mi velit pulvinar risus, sed consequat eros libero in eros. Fusce luctus mattis mauris, vitae semper lorem sodales quis. Donec pellentesque lacus ac ante aliquam, tincidunt iaculis risus interdum. In ullamcorper cursus massa ut lacinia. Donec quis diam finibus, rutrum odio eu, maximus leo. Nulla facilisi. Nullam suscipit quam et bibendum sagittis. Praesent sollicitudin neque at luctus ornare. Maecenas tristique dapibus risus, ac dictum ipsum gravida aliquam. Phasellus vehicula eu arcu sed imperdiet. Vestibulum ornare eros a nisi faucibus vehicula. Quisque congue placerat nulla, nec finibus nulla ultrices vitae. Quisque ac mi sem. Curabitur eu porttitor justo. Etiam dignissim in orci iaculis congue. Donec tempus cursus orci, a placerat elit varius nec.</p>
-      </details>
+        <summary>FOO</summary>
+        <details>
+          <summary>BAR</summary>
+          <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>
+        </details>
       </details>
     HTML
 
-    expect(ExcerptParser.get_excerpt(html, 50, {})).to match_html <<~HTML
-      <details><summary>FOO</summary>BAR
-      Lorem ipsum dolor sit amet, consectetur adi&hellip;</details>
-    HTML
-
-    expect(ExcerptParser.get_excerpt(html, 6, {})).to match_html(
-      "<details><summary>FOO</summary>BAR&hellip;</details>",
-    )
-    expect(ExcerptParser.get_excerpt(html, 3, {})).to match_html(
-      '<details class="disabled"><summary>FOO</summary></details>',
-    )
-  end
-
-  it "respects length parameter for <details> block" do
-    html = "<details><summary>foo</summary><p>bar</p></details>"
-    expect(ExcerptParser.get_excerpt(html, 100, {})).to match_html(
-      "<details><summary>foo</summary>bar</details>",
-    )
-    expect(ExcerptParser.get_excerpt(html, 5, {})).to match_html(
-      "<details><summary>foo</summary>ba&hellip;</details>",
-    )
-    expect(ExcerptParser.get_excerpt(html, 3, {})).to match_html(
-      '<details class="disabled"><summary>foo</summary></details>',
-    )
-    expect(ExcerptParser.get_excerpt(html, 2, {})).to match_html(
-      '<details class="disabled"><summary>fo&hellip;</summary></details>',
-    )
+    expect(ExcerptParser.get_excerpt(html, 50, {})).to match_html "▶ FOO"
+    expect(ExcerptParser.get_excerpt(html, 6, {})).to match_html "▶ FOO"
+    expect(ExcerptParser.get_excerpt(html, 3, {})).to match_html "▶ FOO"
+    expect(ExcerptParser.get_excerpt(html, 2, {})).to match_html "▶ FO&hellip;"
   end
 
   it "allows <svg> with <use> inside for icons when keep_svg is true" do
@@ -175,6 +150,133 @@ RSpec.describe ExcerptParser do
       expect(ExcerptParser.get_excerpt(html, 100, keep_quotes: true)).to eq(
         "This is a quoted text.",
       )
+    end
+  end
+
+  describe "image handling options" do
+    describe "default behavior (no image option specified)" do
+      it "replaces images with alt text in brackets" do
+        html = '<p>Check out <img src="/uploads/image.jpg" alt="sunset"></p>'
+        expect(ExcerptParser.get_excerpt(html, 100)).to eq("Check out [sunset]")
+      end
+
+      it "uses title text when alt is not present" do
+        html = '<p><img src="/uploads/image.jpg" title="My Image"></p>'
+        expect(ExcerptParser.get_excerpt(html, 100)).to eq("[My Image]")
+      end
+
+      it "uses default image text when neither alt nor title is present" do
+        html = '<p><img src="/uploads/image.jpg"></p>'
+        expect(ExcerptParser.get_excerpt(html, 100)).to eq("[image]")
+      end
+
+      it "handles multiple images" do
+        html =
+          '<p><img src="/uploads/1.jpg" alt="first"> and <img src="/uploads/2.jpg" alt="second"></p>'
+        expect(ExcerptParser.get_excerpt(html, 100)).to eq("[first] and [second]")
+      end
+
+      it "does not include the URL" do
+        html = '<p><img src="/uploads/image.jpg" alt="photo"></p>'
+        result = ExcerptParser.get_excerpt(html, 100)
+        expect(result).to eq("[photo]")
+        expect(result).not_to include("/uploads/image.jpg")
+      end
+    end
+
+    describe "strip_images option" do
+      it "completely removes images with no replacement text" do
+        html = '<p>Check out this photo: <img src="/uploads/image.jpg" alt="sunset"></p>'
+        expect(ExcerptParser.get_excerpt(html, 100, strip_images: true)).to eq(
+          "Check out this photo:",
+        )
+      end
+
+      it "removes images regardless of alt or title attributes" do
+        html = '<p><img src="/uploads/image.jpg" title="My Image"></p>'
+        expect(ExcerptParser.get_excerpt(html, 100, strip_images: true)).to eq("")
+      end
+
+      it "removes images with no attributes" do
+        html = '<p><img src="/uploads/image.jpg"></p>'
+        expect(ExcerptParser.get_excerpt(html, 100, strip_images: true)).to eq("")
+      end
+
+      it "removes multiple images leaving only text" do
+        html =
+          '<p><img src="/uploads/1.jpg" alt="first"> and <img src="/uploads/2.jpg" alt="second"></p>'
+        expect(ExcerptParser.get_excerpt(html, 100, strip_images: true)).to eq("and")
+      end
+
+      it "still handles emoji images with keep_emoji_images" do
+        html =
+          '<p>Hello <img src="/images/emoji/emoji_one/smile.png" class="emoji" alt=":smile:"></p>'
+        expect(
+          ExcerptParser.get_excerpt(html, 100, strip_images: true, keep_emoji_images: true),
+        ).to match(/<img.*class="emoji"/)
+      end
+    end
+
+    describe "markdown_images option" do
+      it "converts images to markdown format with alt text" do
+        html = '<p>Check out <img src="/uploads/image.jpg" alt="sunset"></p>'
+        expect(ExcerptParser.get_excerpt(html, 100, markdown_images: true)).to eq(
+          "Check out ![sunset](/uploads/image.jpg)",
+        )
+      end
+
+      it "uses title text when alt is not present" do
+        html = '<p><img src="/uploads/image.jpg" title="My Image"></p>'
+        expect(ExcerptParser.get_excerpt(html, 100, markdown_images: true)).to eq(
+          "![My Image](/uploads/image.jpg)",
+        )
+      end
+
+      it "uses default image text when neither alt nor title is present" do
+        html = '<p><img src="/uploads/image.jpg"></p>'
+        expect(ExcerptParser.get_excerpt(html, 100, markdown_images: true)).to eq(
+          "![image](/uploads/image.jpg)",
+        )
+      end
+
+      it "handles multiple images" do
+        html =
+          '<p><img src="/uploads/1.jpg" alt="first"> and <img src="/uploads/2.jpg" alt="second"></p>'
+        expect(ExcerptParser.get_excerpt(html, 100, markdown_images: true)).to eq(
+          "![first](/uploads/1.jpg) and ![second](/uploads/2.jpg)",
+        )
+      end
+
+      it "handles images with complex URLs" do
+        html = '<p><img src="https://example.com/path/to/image.jpg?size=large" alt="external"></p>'
+        expect(ExcerptParser.get_excerpt(html, 100, markdown_images: true)).to eq(
+          "![external](https://example.com/path/to/image.jpg?size=large)",
+        )
+      end
+    end
+
+    describe "keep_images option" do
+      it "preserves the full img tag" do
+        html = '<p>Check out <img src="/uploads/image.jpg" alt="sunset" class="photo"></p>'
+        expect(ExcerptParser.get_excerpt(html, 100, keep_images: true)).to eq(
+          'Check out <img src="/uploads/image.jpg" alt="sunset" class="photo">',
+        )
+      end
+
+      it "preserves multiple attributes" do
+        html =
+          '<p><img src="/uploads/image.jpg" alt="sunset" title="Beautiful" width="100" height="100"></p>'
+        expect(ExcerptParser.get_excerpt(html, 100, keep_images: true)).to eq(
+          '<img src="/uploads/image.jpg" alt="sunset" title="Beautiful" width="100" height="100">',
+        )
+      end
+
+      it "preserves multiple images" do
+        html = '<p><img src="/1.jpg" alt="a"> <img src="/2.jpg" alt="b"></p>'
+        result = ExcerptParser.get_excerpt(html, 100, keep_images: true)
+        expect(result).to include('<img src="/1.jpg" alt="a">')
+        expect(result).to include('<img src="/2.jpg" alt="b">')
+      end
     end
   end
 end

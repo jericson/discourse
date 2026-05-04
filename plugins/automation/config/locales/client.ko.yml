@@ -7,8 +7,15 @@
 ko:
   js:
     discourse_automation:
-      create: 글
-      update: 업데이트
+      back: 뒤로
+      edit: 편집
+      select_script: 스크립트 선택
+      select_trigger: 트리거 선택
+      edit_automation:
+        fields_section:
+          title: 스크립트 옵션
+      destroy_automation:
+        confirm: "정말 `%{name}`을(를) 삭제하시겠습니까?"
       fields:
         user:
           label: 사용자
@@ -16,7 +23,7 @@ ko:
           title:
             label: 제목
           raw:
-            label: 바디
+            label: 본문
         pms:
           title:
             label: 제목
@@ -27,6 +34,12 @@ ko:
         text:
           label: 텍스트
       triggerables:
+        post_flag_created:
+          fields:
+            categories:
+              label: 카테고리
+            tags:
+              label: 태그
         user_badge_granted:
           fields:
             badge:
@@ -38,7 +51,10 @@ ko:
             P6M: "6개월"
             P1Y: "1년"
         recurring:
+          every: 매
           frequencies:
+            minute: 정말 `%{name}`을(를) 삭제하시겠습니까?
+            hour: 시간
             day: 일
             week: 주
             month: 월
@@ -58,11 +74,15 @@ ko:
               label: 토픽 ID
         post_created_edited:
           fields:
-            restricted_category:
+            restricted_tags:
+              label: 태그
+            restricted_categories:
               label: 카테고리
-            restricted_group:
-              label: 그룹
           created: 생성됨
+          with_images: 이미지
+          with_links: 링크
+          with_code: 코드
+          with_uploads: 업로드된 파일
         category_created_edited:
           fields:
             restricted_category:
@@ -126,6 +146,8 @@ ko:
               label: 토픽 ID
             user:
               label: 사용자
+        set_topic_timer:
+          title: 글 타이머 설정
       models:
         trigger:
           name:
@@ -137,7 +159,7 @@ ko:
             label: Trigger
           version:
             label: 버전
-          enabled:
-            label: 활성화
+          status:
+            label: 상태
           disabled:
             label: 비활성

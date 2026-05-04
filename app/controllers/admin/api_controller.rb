@@ -14,6 +14,7 @@ class Admin::ApiController < Admin::AdminController
       ApiKey
         .where(hidden: false)
         .includes(:user)
+        .includes(:created_by)
         .order("revoked_at DESC NULLS FIRST, created_at DESC")
         .offset(offset)
         .limit(limit)
@@ -26,7 +27,7 @@ class Admin::ApiController < Admin::AdminController
   end
 
   def show
-    api_key = ApiKey.includes(:api_key_scopes).find_by!(id: params[:id])
+    api_key = ApiKey.includes(:api_key_scopes).find(params[:id])
     render_serialized(api_key, ApiKeySerializer, root: "key")
   end
 
@@ -34,6 +35,7 @@ class Admin::ApiController < Admin::AdminController
     scopes =
       ApiKeyScope
         .scope_mappings
+        .sort_by { |resource, _| resource.to_s }
         .reduce({}) do |memo, (resource, actions)|
           memo.tap do |m|
             m[resource] = actions.map do |k, v|
@@ -52,7 +54,7 @@ class Admin::ApiController < Admin::AdminController
   end
 
   def update
-    api_key = ApiKey.find_by!(id: params[:id])
+    api_key = ApiKey.find(params[:id])
     ApiKey.transaction do
       api_key.update!(update_params)
       log_api_key(api_key, UserHistory.actions[:api_key_update], changes: api_key.saved_changes)
@@ -61,7 +63,7 @@ class Admin::ApiController < Admin::AdminController
   end
 
   def destroy
-    api_key = ApiKey.find_by!(id: params[:id])
+    api_key = ApiKey.find(params[:id])
     ApiKey.transaction do
       api_key.destroy
       log_api_key(api_key, UserHistory.actions[:api_key_destroy])
@@ -74,6 +76,7 @@ class Admin::ApiController < Admin::AdminController
     ApiKey.transaction do
       api_key.created_by = current_user
       api_key.api_key_scopes = build_scopes
+      api_key.scope_mode = params.dig(:key, :scope_mode)
       if username = params.require(:key).permit(:username)[:username].presence
         api_key.user = User.find_by_username(username)
         raise Discourse::NotFound unless api_key.user

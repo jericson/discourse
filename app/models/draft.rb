@@ -1,15 +1,15 @@
 # frozen_string_literal: true
 
 class Draft < ActiveRecord::Base
-  NEW_TOPIC ||= "new_topic"
-  NEW_PRIVATE_MESSAGE ||= "new_private_message"
-  EXISTING_TOPIC ||= "topic_"
+  NEW_TOPIC = "new_topic"
+  NEW_PRIVATE_MESSAGE = "new_private_message"
+  EXISTING_TOPIC = "topic_"
 
   belongs_to :user
 
   has_many :upload_references, as: :target, dependent: :delete_all
 
-  validates :draft_key, length: { maximum: 25 }
+  validates :draft_key, length: { maximum: 40 }
 
   after_commit :update_draft_count, on: %i[create destroy]
 
@@ -131,12 +131,6 @@ class Draft < ActiveRecord::Base
     data if current_sequence == draft_sequence
   end
 
-  def self.has_topic_draft(user)
-    return if !user || !user.id || !User.human_user_id?(user.id)
-
-    Draft.where(user_id: user.id, draft_key: NEW_TOPIC).present?
-  end
-
   def self.clear(user, key, sequence)
     if !user || !user.id || !User.human_user_id?(user.id)
       raise StandardError.new("user not present")
@@ -228,7 +222,20 @@ class Draft < ActiveRecord::Base
     offset = (opts[:offset] || 0).to_i
     limit = (opts[:limit] || 30).to_i
 
-    stream = Draft.where(user_id: user_id).order(updated_at: :desc).offset(offset).limit(limit)
+    stream =
+      Draft
+        .where(user_id: user_id)
+        .where(<<~SQL)
+          sequence >= COALESCE(
+            (SELECT sequence FROM draft_sequences
+             WHERE draft_sequences.user_id = drafts.user_id
+             AND draft_sequences.draft_key = drafts.draft_key),
+            0
+          )
+        SQL
+        .order(updated_at: :desc, id: :desc)
+        .offset(offset)
+        .limit(limit)
 
     # Preload posts and topics to avoid N+1 queries
     Draft.preload_data(stream, opts[:user])

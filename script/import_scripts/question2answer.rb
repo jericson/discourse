@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require "mysql2"
-require File.expand_path(File.dirname(__FILE__) + "/base.rb")
+require_relative "base"
 require "htmlentities"
 require "php_serialize" # https://github.com/jqr/php-serialize
 
@@ -10,12 +10,12 @@ class ImportScripts::Question2Answer < ImportScripts::Base
 
   # CHANGE THESE BEFORE RUNNING THE IMPORTER
 
-  DB_HOST ||= ENV["DB_HOST"] || "localhost"
-  DB_NAME ||= ENV["DB_NAME"] || "qa_db"
-  DB_PW ||= ENV["DB_PW"] || ""
-  DB_USER ||= ENV["DB_USER"] || "root"
-  TIMEZONE ||= ENV["TIMEZONE"] || "America/Los_Angeles"
-  TABLE_PREFIX ||= ENV["TABLE_PREFIX"] || "qa_"
+  DB_HOST = ENV["DB_HOST"] || "localhost"
+  DB_NAME = ENV["DB_NAME"] || "qa_db"
+  DB_PW = ENV["DB_PW"] || ""
+  DB_USER = ENV["DB_USER"] || "root"
+  TIMEZONE = ENV["TIMEZONE"] || "America/Los_Angeles"
+  TABLE_PREFIX = ENV["TABLE_PREFIX"] || "qa_"
 
   def initialize
     super

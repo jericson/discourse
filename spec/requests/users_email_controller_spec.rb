@@ -125,6 +125,15 @@ RSpec.describe UsersEmailController do
   end
 
   describe "#create" do
+    it "requires you to be logged in" do
+      post "/u/#{user.username}/preferences/email.json",
+           params: {
+             email: "bubblegum@adventuretime.ooo",
+           }
+      expect(response.status).to eq(403)
+      expect(response.parsed_body["errors"]).to include(I18n.t("not_logged_in"))
+    end
+
     it "has an email token" do
       sign_in(user)
 
@@ -175,7 +184,7 @@ RSpec.describe UsersEmailController do
       end
 
       context "when the new email address is taken" do
-        fab!(:other_user) { Fabricate(:coding_horror) }
+        fab!(:other_user, :coding_horror)
 
         context "when hide_email_address_taken is disabled" do
           before { SiteSetting.hide_email_address_taken = false }
@@ -207,12 +216,28 @@ RSpec.describe UsersEmailController do
       context "when new email is different case of existing email" do
         fab!(:other_user) { Fabricate(:user, email: "case.insensitive@gmail.com") }
 
-        it "raises an error" do
-          put "/u/#{user.username}/preferences/email.json",
-              params: {
-                email: other_user.email.upcase,
-              }
-          expect(response).to_not be_successful
+        context "when hiding taken e-mails" do
+          before { SiteSetting.hide_email_address_taken = true }
+
+          it "raises an error" do
+            put "/u/#{user.username}/preferences/email.json",
+                params: {
+                  email: other_user.email.upcase,
+                }
+            expect(response).to be_successful
+          end
+        end
+
+        context "when revealing taken e-mails" do
+          before { SiteSetting.hide_email_address_taken = false }
+
+          it "raises an error" do
+            put "/u/#{user.username}/preferences/email.json",
+                params: {
+                  email: other_user.email.upcase,
+                }
+            expect(response).to_not be_successful
+          end
         end
       end
 

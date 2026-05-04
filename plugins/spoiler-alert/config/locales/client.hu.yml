@@ -5,3 +5,15 @@
 # https://translate.discourse.org/
 
 hu:
+  admin_js:
+    admin:
+      site_settings:
+        categories:
+          spoiler_alert: "Discourse Spoiler Figyelmeztető"
+  js:
+    spoiler:
+      title: Spoiler elhomályosítása
+      label:
+        show: "Rejtett tartalom megjelenítése"
+    composer:
+      spoiler_text: "Ez a szöveg elmosódott lesz"

@@ -3,12 +3,11 @@
 RSpec.describe Admin::FormTemplatesController do
   fab!(:admin)
   fab!(:user)
+  fab!(:form_template)
 
-  before { SiteSetting.experimental_form_templates = true }
+  before { SiteSetting.enable_form_templates = true }
 
   describe "#index" do
-    fab!(:form_template)
-
     context "when logged in as an admin" do
       before { sign_in(admin) }
 
@@ -34,7 +33,7 @@ RSpec.describe Admin::FormTemplatesController do
     context "when experimental form templates is disabled" do
       before do
         sign_in(admin)
-        SiteSetting.experimental_form_templates = false
+        SiteSetting.enable_form_templates = false
       end
 
       it "should not work if you are an admin" do
@@ -46,8 +45,6 @@ RSpec.describe Admin::FormTemplatesController do
   end
 
   describe "#show" do
-    fab!(:form_template)
-
     context "when logged in as an admin" do
       before { sign_in(admin) }
 
@@ -102,8 +99,6 @@ RSpec.describe Admin::FormTemplatesController do
   end
 
   describe "#update" do
-    fab!(:form_template)
-
     context "when logged in as an admin" do
       before { sign_in(admin) }
 
@@ -111,13 +106,13 @@ RSpec.describe Admin::FormTemplatesController do
         put "/admin/customize/form-templates/#{form_template.id}.json",
             params: {
               id: form_template.id,
-              name: "Updated Template",
+              name: "Bugs",
               template: "- type: checkbox\n  id: checkbox",
             }
 
         expect(response.status).to eq(200)
         form_template.reload
-        expect(form_template.name).to eq("Updated Template")
+        expect(form_template.name).to eq("Bugs")
         expect(form_template.template).to eq("- type: checkbox\n  id: checkbox")
       end
     end
@@ -145,8 +140,6 @@ RSpec.describe Admin::FormTemplatesController do
   end
 
   describe "#destroy" do
-    fab!(:form_template)
-
     context "when logged in as an admin" do
       before { sign_in(admin) }
 
@@ -167,6 +160,65 @@ RSpec.describe Admin::FormTemplatesController do
 
         expect(response.status).to eq(404)
         expect(response.parsed_body["errors"]).to include(I18n.t("not_found"))
+      end
+    end
+  end
+
+  describe "#preview" do
+    fab!(:tag1, :tag)
+    fab!(:tag2, :tag)
+    fab!(:tag3, :tag)
+    fab!(:tag_group) { Fabricate(:tag_group, tags: [tag1, tag2, tag3]) }
+    let!(:form_template_valid) { <<~YAML }
+        - type: tag-chooser
+          id: tag-chooser
+          tag_group: "#{tag_group.name}"
+          attributes:
+            none_label: "Select an item"
+            label: "Enter label here"
+            multiple: true
+      YAML
+    let!(:form_template_invalid) { <<~YAML }
+        - type: input
+          id: dumplicated
+          attributes:
+            label: "label"
+            placeholder: "placeholder"
+        - type: input
+          id: dumplicated
+          attributes:
+            label: "label"
+            placeholder: "placeholder"
+      YAML
+
+    context "when logged in as an admin" do
+      before { sign_in(admin) }
+
+      it "processes a valid template" do
+        get "/admin/customize/form-templates/preview.json",
+            params: {
+              name: "test",
+              template: form_template_valid,
+            }
+
+        expect(response.status).to eq(200)
+        processed_tag_group =
+          YAML.safe_load(response.parsed_body["form_template"]["template"]).first
+        expect(processed_tag_group["choices"]).to contain_exactly(
+          { "id" => tag1.id, "name" => tag1.name },
+          { "id" => tag2.id, "name" => tag2.name },
+          { "id" => tag3.id, "name" => tag3.name },
+        )
+      end
+
+      it "rejects invalid templates" do
+        get "/admin/customize/form-templates/preview.json",
+            params: {
+              name: "test",
+              template: form_template_invalid,
+            }
+
+        expect(response.status).to eq(422)
       end
     end
   end

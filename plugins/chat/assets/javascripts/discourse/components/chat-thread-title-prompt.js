@@ -2,7 +2,7 @@ import Component from "@glimmer/component";
 import { action } from "@ember/object";
 import { next } from "@ember/runloop";
 import { service } from "@ember/service";
-import I18n from "I18n";
+import { i18n } from "discourse-i18n";
 import ThreadSettingsModal from "discourse/plugins/chat/discourse/components/chat/modal/thread-settings";
 import { THREAD_TITLE_PROMPT_THRESHOLD } from "discourse/plugins/chat/discourse/lib/chat-constants";
 import UserChatThreadMembership from "discourse/plugins/chat/discourse/models/user-chat-thread-membership";
@@ -15,10 +15,10 @@ export default class ChatThreadTitlePrompt extends Component {
   @service site;
 
   toastText = {
-    title: I18n.t("chat.thread_title_toast.title"),
-    message: I18n.t("chat.thread_title_toast.message"),
-    dismissLabel: I18n.t("chat.thread_title_toast.dismiss_action"),
-    primaryLabel: I18n.t("chat.thread_title_toast.primary_action"),
+    title: i18n("chat.thread_title_toast.title"),
+    message: i18n("chat.thread_title_toast.message"),
+    dismissLabel: i18n("chat.thread_title_toast.dismiss_action"),
+    primaryLabel: i18n("chat.thread_title_toast.primary_action"),
   };
 
   constructor() {
@@ -81,7 +81,7 @@ export default class ChatThreadTitlePrompt extends Component {
 
   show() {
     this.toasts.default({
-      duration: 5000,
+      duration: "long",
       showProgressBar: true,
       class: "thread-toast",
       data: {

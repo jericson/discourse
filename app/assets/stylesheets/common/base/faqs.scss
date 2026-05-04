@@ -1,28 +1,39 @@
 .body-page {
   /* covers /about, /faq, /guidelines, /tos, /privacy, and login-required */
-  width: 100%;
   max-width: 700px;
   background: var(--d-content-background);
+
   .about-page & {
     max-width: unset;
-    section:not(.admins):not(.moderators):not(.category-moderators) {
-      max-width: 700px;
-    }
+
     .about.category-moderators {
       .badge-category__wrapper .badge-category {
         color: var(--primary);
       }
     }
   }
+
+  .static-faq & {
+    img {
+      max-width: 100%;
+      height: auto;
+    }
+  }
+
   .mobile-view & {
     font-size: var(--font-0);
   }
+
   li {
     margin-bottom: 8px;
   }
+
   .nav-pills {
     margin: 0 0 2em;
+    gap: 0;
+    overflow: auto;
   }
+
   ul:not(.nav-pills),
   ol:not(.nav-pills) {
     margin-left: 40px;
@@ -31,7 +42,12 @@
 
 .body-page-button-container {
   display: flex;
+
   button {
-    margin-right: 0.75em;
+    margin-right: 1rem;
+
+    &:last-child {
+      margin-right: 0;
+    }
   }
 }

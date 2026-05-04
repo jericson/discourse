@@ -48,14 +48,14 @@ RSpec.describe Discourse do
     context "with a non standard port specified" do
       before { SiteSetting.port = 3000 }
 
-      it "returns the non standart port in the base url" do
+      it "returns the non standard port in the base url" do
         expect(Discourse.base_url).to eq("http://foo.com:3000")
       end
     end
   end
 
   describe "asset_filter_options" do
-    it "obmits path if request is missing" do
+    it "omits path if request is missing" do
       opts = Discourse.asset_filter_options(:js, nil)
       expect(opts[:path]).to be_blank
     end
@@ -64,6 +64,64 @@ RSpec.describe Discourse do
       req = stub(fullpath: "/hello", headers: {})
       opts = Discourse.asset_filter_options(:js, req)
       expect(opts[:path]).to eq("/hello")
+    end
+  end
+
+  describe ".apply_worker_db_variables_overrides" do
+    around do |example|
+      original_env = ENV.to_hash
+      original_config = ActiveRecord::Base.configurations
+      original_show_statement_timeout =
+        ActiveRecord::Base.connection.execute("SHOW statement_timeout").first["statement_timeout"]
+
+      begin
+        example.run
+      ensure
+        ENV.replace(original_env)
+        ActiveRecord::Base.configurations = original_config
+        ActiveRecord::Base.connection_handler.clear_all_connections!(:all)
+        ActiveRecord::Base.establish_connection
+        GlobalSetting.configure!
+        GlobalSetting.load_defaults
+
+        expect(
+          ActiveRecord::Base.connection.execute("SHOW statement_timeout").first[
+            "statement_timeout"
+          ],
+        ).to eq(original_show_statement_timeout)
+      end
+    end
+
+    it "applies worker-specific database variable overrides in a production environment" do
+      test_database_config = Rails.application.config.database_configuration["test"]
+
+      temp_discourse_conf = Tempfile.new("discourse.conf")
+      temp_discourse_conf.write <<~TEXT
+      db_name = #{test_database_config["database"]}
+      db_username = ""
+      db_variables_statement_timeout = 10s
+      unicorn_worker_db_variables_statement_timeout = 100s
+      TEXT
+      temp_discourse_conf.rewind
+
+      Rails.stubs(:env).returns(ActiveSupport::StringInquirer.new("production"))
+      GlobalSetting.configure!(path: temp_discourse_conf.path, use_blank_provider: false)
+      GlobalSetting.load_defaults
+
+      Discourse.apply_worker_db_variables_overrides
+
+      expect(
+        ActiveRecord::Base.connection.execute("SHOW statement_timeout").first["statement_timeout"],
+      ).to eq("100s")
+    ensure
+      %i[
+        db_variables_statement_timeout
+        unicorn_worker_db_variables_statement_timeout
+      ].each { |method| GlobalSetting.singleton_class.remove_method(method) }
+
+      allow(Rails).to receive(:env).and_call_original
+      temp_discourse_conf&.close
+      temp_discourse_conf&.unlink
     end
   end
 
@@ -105,12 +163,14 @@ RSpec.describe Discourse do
       plugin_class.new.tap do |p|
         p.enabled = true
         p.path = "my-plugin-1"
+        p.metadata = Plugin::Metadata.parse("# name: plugin1")
       end
     end
     let(:plugin2) do
       plugin_class.new.tap do |p|
         p.enabled = false
-        p.path = "my-plugin-1"
+        p.path = "my-plugin-2"
+        p.metadata = Plugin::Metadata.parse("# name: plugin2")
       end
     end
 
@@ -137,14 +197,12 @@ RSpec.describe Discourse do
       expect(Discourse.find_plugins(include_disabled: true)).to include(plugin1, plugin2)
     end
 
-    it "can find plugin assets" do
+    it "can find plugin css assets" do
       plugin2.enabled = true
 
       expect(Discourse.find_plugin_css_assets({}).length).to eq(2)
-      expect(Discourse.find_plugin_js_assets({}).length).to eq(2)
       plugin1.register_asset_filter { |type, request, opts| false }
       expect(Discourse.find_plugin_css_assets({}).length).to eq(1)
-      expect(Discourse.find_plugin_js_assets({}).length).to eq(1)
     end
   end
 
@@ -194,9 +252,17 @@ RSpec.describe Discourse do
     end
   end
 
+  describe "#user_agent" do
+    it "returns a user agent string" do
+      expect(Discourse.user_agent).to eq(
+        "Discourse/#{Discourse::VERSION::STRING}-#{Discourse.git_version}; +https://www.discourse.org/",
+      )
+    end
+  end
+
   describe "#site_contact_user" do
     fab!(:admin)
-    fab!(:another_admin) { Fabricate(:admin) }
+    fab!(:another_admin, :admin)
 
     it "returns the user specified by the site setting site_contact_username" do
       SiteSetting.site_contact_username = another_admin.username
@@ -204,7 +270,7 @@ RSpec.describe Discourse do
     end
 
     it "returns the system user otherwise" do
-      SiteSetting.site_contact_username = nil
+      SiteSetting.site_contact_username = ""
       expect(Discourse.site_contact_user.username).to eq("system")
     end
   end
@@ -253,6 +319,16 @@ RSpec.describe Discourse do
     end
 
     describe ".enable_readonly_mode" do
+      it "doesn't expire when expires is false" do
+        Discourse.enable_readonly_mode(user_readonly_mode_key, expires: false)
+        expect(Discourse.redis.ttl(user_readonly_mode_key)).to eq(-1)
+      end
+
+      it "expires when expires is true" do
+        Discourse.enable_readonly_mode(user_readonly_mode_key, expires: true)
+        expect(Discourse.redis.ttl(user_readonly_mode_key)).not_to eq(-1)
+      end
+
       it "adds a key in redis and publish a message through the message bus" do
         expect(Discourse.redis.get(readonly_mode_key)).to eq(nil)
       end
@@ -344,7 +420,7 @@ RSpec.describe Discourse do
     class TempSidekiqLogger
       attr_accessor :exception, :context
 
-      def call(ex, ctx)
+      def call(ex, ctx, _config)
         self.exception = ex
         self.context = ctx
       end
@@ -352,9 +428,9 @@ RSpec.describe Discourse do
 
     let!(:logger) { TempSidekiqLogger.new }
 
-    before { Sidekiq.error_handlers << logger }
+    before { Sidekiq.default_configuration.error_handlers << logger }
 
-    after { Sidekiq.error_handlers.delete(logger) }
+    after { Sidekiq.default_configuration.error_handlers.delete(logger) }
 
     describe "#job_exception_stats" do
       class FakeTestError < StandardError
@@ -436,12 +512,11 @@ RSpec.describe Discourse do
       old_method(m)
     end
 
-    before do
-      @orig_logger = Rails.logger
-      Rails.logger = @fake_logger = FakeLogger.new
-    end
+    let(:fake_logger) { FakeLogger.new }
 
-    after { Rails.logger = @orig_logger }
+    before { Rails.logger.broadcast_to(fake_logger) }
+
+    after { Rails.logger.stop_broadcasting_to(fake_logger) }
 
     it "can deprecate usage" do
       k = SecureRandom.hex
@@ -449,19 +524,19 @@ RSpec.describe Discourse do
       expect(old_method_caller(k)).to include("discourse_spec")
       expect(old_method_caller(k)).to include(k)
 
-      expect(@fake_logger.warnings).to eq([old_method_caller(k)])
+      expect(fake_logger.warnings).to eq([old_method_caller(k)])
     end
 
     it "can report the deprecated version" do
       Discourse.deprecate(SecureRandom.hex, since: "2.1.0.beta1")
 
-      expect(@fake_logger.warnings[0]).to include("(deprecated since Discourse 2.1.0.beta1)")
+      expect(fake_logger.warnings[0]).to include("(deprecated since Discourse 2.1.0.beta1)")
     end
 
     it "can report the drop version" do
       Discourse.deprecate(SecureRandom.hex, drop_from: "2.3.0")
 
-      expect(@fake_logger.warnings[0]).to include("(removal in Discourse 2.3.0)")
+      expect(fake_logger.warnings[0]).to include("(removal in Discourse 2.3.0)")
     end
 
     it "can raise deprecation error" do
@@ -541,6 +616,12 @@ RSpec.describe Discourse do
         "a b c",
       )
     end
+
+    it "includes the command in the error message" do
+      expect do
+        Discourse::Utils.execute_command("false", "'foo'", failure_message: "oops")
+      end.to raise_error(RuntimeError, "false 'foo'\noops")
+    end
   end
 
   describe ".clear_all_theme_cache!" do
@@ -571,8 +652,8 @@ RSpec.describe Discourse do
         target_id: Theme.targets[:common],
         name: "head_tag",
         value: <<~HTML,
-          <script type="text/discourse-plugin" version="0.1">
-            console.log(settings.uploads.imajee);
+          <script>
+            console.log("hello world");
           </script>
         HTML
       )
@@ -607,23 +688,18 @@ RSpec.describe Discourse do
 
       old_upload_url = Discourse.store.cdn_url(upload.url)
 
-      head_tag_script =
-        Nokogiri::HTML5
-          .fragment(Theme.lookup_field(theme.id, :desktop, "head_tag"))
-          .css("script")
-          .first
-      head_tag_js = JavascriptCache.find_by(digest: head_tag_script[:src][/\h{40}/]).content
-      expect(head_tag_js).to include(old_upload_url)
-
       js_file_script =
-        Nokogiri::HTML5.fragment(Theme.lookup_field(theme.id, :extra_js, nil)).css("script").first
-      file_js = JavascriptCache.find_by(digest: js_file_script[:src][/\h{40}/]).content
+        Nokogiri::HTML5
+          .fragment(Theme.lookup_field(theme.id, :extra_js, nil))
+          .css("link[rel=modulepreload]")
+          .first
+      file_js = JavascriptCache.find_by(digest: js_file_script[:href][/\h{40}/]).content
       expect(file_js).to include(old_upload_url)
 
       css_link_tag =
         Nokogiri::HTML5
           .fragment(
-            Stylesheet::Manager.new(theme_id: theme.id).stylesheet_link_tag(:desktop_theme, "all"),
+            Stylesheet::Manager.new(theme_id: theme.id).stylesheet_link_tag(:common_theme, "all"),
           )
           .css("link")
           .first
@@ -633,23 +709,18 @@ RSpec.describe Discourse do
       SiteSetting.s3_cdn_url = "https://new.s3.cdn.com/gg"
       new_upload_url = Discourse.store.cdn_url(upload.url)
 
-      head_tag_script =
-        Nokogiri::HTML5
-          .fragment(Theme.lookup_field(theme.id, :desktop, "head_tag"))
-          .css("script")
-          .first
-      head_tag_js = JavascriptCache.find_by(digest: head_tag_script[:src][/\h{40}/]).content
-      expect(head_tag_js).to include(old_upload_url)
-
       js_file_script =
-        Nokogiri::HTML5.fragment(Theme.lookup_field(theme.id, :extra_js, nil)).css("script").first
-      file_js = JavascriptCache.find_by(digest: js_file_script[:src][/\h{40}/]).content
+        Nokogiri::HTML5
+          .fragment(Theme.lookup_field(theme.id, :extra_js, nil))
+          .css("link[rel=modulepreload]")
+          .first
+      file_js = JavascriptCache.find_by(digest: js_file_script[:href][/\h{40}/]).content
       expect(file_js).to include(old_upload_url)
 
       css_link_tag =
         Nokogiri::HTML5
           .fragment(
-            Stylesheet::Manager.new(theme_id: theme.id).stylesheet_link_tag(:desktop_theme, "all"),
+            Stylesheet::Manager.new(theme_id: theme.id).stylesheet_link_tag(:common_theme, "all"),
           )
           .css("link")
           .first
@@ -658,23 +729,18 @@ RSpec.describe Discourse do
 
       Discourse.clear_all_theme_cache!
 
-      head_tag_script =
-        Nokogiri::HTML5
-          .fragment(Theme.lookup_field(theme.id, :desktop, "head_tag"))
-          .css("script")
-          .first
-      head_tag_js = JavascriptCache.find_by(digest: head_tag_script[:src][/\h{40}/]).content
-      expect(head_tag_js).to include(new_upload_url)
-
       js_file_script =
-        Nokogiri::HTML5.fragment(Theme.lookup_field(theme.id, :extra_js, nil)).css("script").first
-      file_js = JavascriptCache.find_by(digest: js_file_script[:src][/\h{40}/]).content
+        Nokogiri::HTML5
+          .fragment(Theme.lookup_field(theme.id, :extra_js, nil))
+          .css("link[rel=modulepreload]")
+          .first
+      file_js = JavascriptCache.find_by(digest: js_file_script[:href][/\h{40}/]).content
       expect(file_js).to include(new_upload_url)
 
       css_link_tag =
         Nokogiri::HTML5
           .fragment(
-            Stylesheet::Manager.new(theme_id: theme.id).stylesheet_link_tag(:desktop_theme, "all"),
+            Stylesheet::Manager.new(theme_id: theme.id).stylesheet_link_tag(:common_theme, "all"),
           )
           .css("link")
           .first

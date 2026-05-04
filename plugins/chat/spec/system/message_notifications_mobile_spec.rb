@@ -1,19 +1,19 @@
 # frozen_string_literal: true
 
-RSpec.describe "Message notifications - mobile", type: :system, mobile: true do
-  fab!(:current_user) { Fabricate(:user) }
+RSpec.describe "Message notifications - mobile", mobile: true do
+  fab!(:current_user, :user)
 
   let!(:chat_page) { PageObjects::Pages::Chat.new }
   let!(:chat_channel_page) { PageObjects::Pages::ChatChannel.new }
-  let!(:channel_index_page) { PageObjects::Components::Chat::ChannelIndex.new }
+  let!(:channels_index_page) { PageObjects::Components::Chat::ChannelsIndex.new }
 
   before do
     SiteSetting.navigation_menu = "sidebar"
     chat_system_bootstrap
   end
 
-  def create_message(channel, text: "this is fine", user: Fabricate(:user))
-    Fabricate(:chat_message_with_service, chat_channel: channel, message: text, user: user)
+  def create_message(chat_channel, message: nil, user: Fabricate(:user))
+    Fabricate(:chat_message_with_service, chat_channel:, message:, user:)
   end
 
   context "as a user" do
@@ -21,9 +21,9 @@ RSpec.describe "Message notifications - mobile", type: :system, mobile: true do
 
     context "when on homepage" do
       context "with public channel" do
-        fab!(:channel_1) { Fabricate(:category_channel) }
-        fab!(:channel_2) { Fabricate(:category_channel) }
-        fab!(:user_1) { Fabricate(:user) }
+        fab!(:channel_1, :category_channel)
+        fab!(:channel_2, :category_channel)
+        fab!(:user_1, :user)
 
         before { channel_1.add(user_1) }
 
@@ -35,7 +35,7 @@ RSpec.describe "Message notifications - mobile", type: :system, mobile: true do
               create_message(channel_1, user: user_1)
 
               expect(page).to have_no_css(".chat-header-icon .chat-channel-unread-indicator")
-              expect(page).to have_no_css(channel_index_page.channel_row_selector(channel_1))
+              expect(page).to have_no_css(channels_index_page.channel_row_selector(channel_1))
             end
           end
         end
@@ -73,7 +73,7 @@ RSpec.describe "Message notifications - mobile", type: :system, mobile: true do
                 create_message(channel_1, user: user_1)
 
                 expect(page).to have_no_css(".chat-header-icon .chat-channel-unread-indicator")
-                expect(channel_index_page).to have_no_unread_channel(channel_1)
+                expect(channels_index_page).to have_no_unread_channel(channel_1)
               end
             end
           end
@@ -84,8 +84,8 @@ RSpec.describe "Message notifications - mobile", type: :system, mobile: true do
 
               create_message(channel_1, user: user_1)
 
-              expect(page).to have_css(".chat-header-icon .chat-channel-unread-indicator", text: "")
-              expect(channel_index_page).to have_unread_channel(channel_1)
+              expect(channels_index_page).to have_unread_channel(channel_1)
+              expect(chat_page.footer).to have_unread_channels
             end
           end
 
@@ -98,11 +98,11 @@ RSpec.describe "Message notifications - mobile", type: :system, mobile: true do
               create_message(
                 channel_1,
                 user: user_1,
-                text: "hello @#{current_user.username} what's up?",
+                message: "hello @#{current_user.username} what's up?",
               )
 
-              expect(page).to have_css(".chat-header-icon .chat-channel-unread-indicator")
-              expect(channel_index_page).to have_unread_channel(channel_1, count: 1)
+              expect(channels_index_page).to have_unread_channel(channel_1, count: 1)
+              expect(chat_page.footer).to have_unread_channels
             end
 
             it "shows correct count when there are multiple messages but only 1 is urgent" do
@@ -113,25 +113,22 @@ RSpec.describe "Message notifications - mobile", type: :system, mobile: true do
               create_message(
                 channel_1,
                 user: user_1,
-                text: "Are you busy @#{current_user.username}?",
+                message: "Are you busy @#{current_user.username}?",
               )
 
               3.times { create_message(channel_1, user: user_1) }
 
-              expect(page).to have_css(
-                ".chat-header-icon .chat-channel-unread-indicator",
-                text: "1",
-              )
-              expect(channel_index_page).to have_unread_channel(channel_1, count: 1)
+              expect(channels_index_page).to have_unread_channel(channel_1, count: 1)
+              expect(chat_page.footer).to have_unread_channels
             end
           end
         end
       end
 
       context "with dm channel" do
-        fab!(:current_user) { Fabricate(:admin) }
-        fab!(:user_1) { Fabricate(:user) }
-        fab!(:user_2) { Fabricate(:user) }
+        fab!(:current_user, :admin)
+        fab!(:user_1, :user)
+        fab!(:user_2, :user)
 
         fab!(:dm_channel_1) { Fabricate(:direct_message_channel, users: [current_user, user_1]) }
         fab!(:dm_channel_2) { Fabricate(:direct_message_channel, users: [current_user, user_2]) }
@@ -141,21 +138,12 @@ RSpec.describe "Message notifications - mobile", type: :system, mobile: true do
             visit("/chat/direct-messages")
 
             create_message(dm_channel_1, user: user_1)
-
-            expect(page).to have_css(
-              ".chat-header-icon .chat-channel-unread-indicator",
-              text: "1",
-              wait: 25,
-            )
-            expect(channel_index_page).to have_unread_channel(dm_channel_1, wait: 25)
+            expect(channels_index_page).to have_unread_channel(dm_channel_1, count: 1, wait: 25)
+            expect(chat_page.footer).to have_unread_dms("1")
 
             create_message(dm_channel_1, user: user_1)
-
-            expect(page).to have_css(
-              ".chat-header-icon .chat-channel-unread-indicator",
-              text: "2",
-              wait: 25,
-            )
+            expect(channels_index_page).to have_unread_channel(dm_channel_1, count: 2, wait: 25)
+            expect(chat_page.footer).to have_unread_dms("2")
           end
 
           it "reorders channels" do
@@ -177,13 +165,42 @@ RSpec.describe "Message notifications - mobile", type: :system, mobile: true do
               ".chat-channel-row:nth-child(2)[data-chat-channel-id=\"#{dm_channel_1.id}\"]",
             )
           end
+
+          context "with threads" do
+            fab!(:message) do
+              Fabricate(:chat_message, chat_channel: dm_channel_1, user: current_user)
+            end
+            fab!(:thread) do
+              Fabricate(:chat_thread, channel: dm_channel_1, original_message: message)
+            end
+
+            before { dm_channel_1.membership_for(current_user).mark_read!(message.id) }
+
+            it "shows urgent badge for mentions" do
+              Jobs.run_immediately!
+
+              visit("/chat/direct-messages")
+
+              expect(channels_index_page).to have_no_unread_channel(dm_channel_1)
+
+              Fabricate(
+                :chat_message_with_service,
+                chat_channel: dm_channel_1,
+                thread: thread,
+                message: "hello @#{current_user.username}",
+                user: user_1,
+              )
+
+              expect(channels_index_page).to have_unread_channel(dm_channel_1, urgent: true)
+            end
+          end
         end
       end
 
       context "with dm and public channel" do
-        fab!(:current_user) { Fabricate(:admin) }
-        fab!(:user_1) { Fabricate(:user) }
-        fab!(:channel_1) { Fabricate(:category_channel) }
+        fab!(:current_user, :admin)
+        fab!(:user_1, :user)
+        fab!(:channel_1, :category_channel)
         fab!(:dm_channel_1) { Fabricate(:direct_message_channel, users: [current_user, user_1]) }
 
         before do
@@ -194,20 +211,55 @@ RSpec.describe "Message notifications - mobile", type: :system, mobile: true do
         context "when messages are created" do
           it "correctly renders notifications" do
             visit("/chat/channels")
-
             create_message(channel_1, user: user_1)
-
-            expect(page).to have_css(".chat-header-icon .chat-channel-unread-indicator", text: "")
-            expect(channel_index_page).to have_unread_channel(channel_1)
+            expect(channels_index_page).to have_unread_channel(channel_1)
 
             visit("/chat/direct-messages")
-
             create_message(dm_channel_1, user: user_1)
-
-            expect(channel_index_page).to have_unread_channel(dm_channel_1)
-            expect(page).to have_css(".chat-header-icon .chat-channel-unread-indicator", text: "1")
+            expect(channels_index_page).to have_unread_channel(dm_channel_1)
           end
         end
+      end
+    end
+
+    context "when viewing a channel" do
+      fab!(:channel_1, :category_channel)
+      fab!(:channel_2, :category_channel)
+      fab!(:user_1, :user)
+
+      before do
+        channel_1.add(current_user)
+        channel_1.add(user_1)
+        channel_2.add(current_user)
+        channel_2.add(user_1)
+
+        Jobs.run_immediately!
+      end
+
+      it "shows back button urgent indicator for mentions in other channels" do
+        chat_page.visit_channel(channel_1)
+
+        create_message(channel_2, user: user_1, message: "hey @#{current_user.username}")
+
+        expect(page).to have_css(".c-navbar__back-button .chat-channel-unread-indicator.-urgent")
+      end
+
+      it "shows back button unread indicator for messages in other channels" do
+        chat_page.visit_channel(channel_1)
+
+        create_message(channel_2, user: user_1)
+
+        expect(page).to have_css(
+          ".c-navbar__back-button .chat-channel-unread-indicator:not(.-urgent)",
+        )
+      end
+
+      it "does not show back button indicator for current channel unreads" do
+        create_message(channel_1, user: user_1, message: "hey @#{current_user.username}")
+
+        chat_page.visit_channel(channel_1)
+
+        expect(page).to have_no_css(".c-navbar__back-button .chat-channel-unread-indicator")
       end
     end
   end

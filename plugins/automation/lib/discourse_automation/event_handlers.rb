@@ -3,7 +3,8 @@
 module DiscourseAutomation
   module EventHandlers
     def self.handle_post_created_edited(post, action)
-      return if post.post_type != Post.types[:regular] || post.user_id < 0
+      return if post.post_type != Post.types[:regular]
+
       topic = post.topic
       return if topic.blank?
 
@@ -12,6 +13,33 @@ module DiscourseAutomation
       DiscourseAutomation::Automation
         .where(trigger: name, enabled: true)
         .find_each do |automation|
+          # allow scripts to opt-in to system posts via allow_system_posts setting
+          next if post.user_id < 0 && !automation.script_field("allow_system_posts")&.dig("value")
+          action_type = automation.trigger_field("action_type")
+          selected_action = action_type["value"]&.to_sym
+
+          if selected_action
+            next if selected_action == :created && action != :create
+            next if selected_action == :edited && action != :edit
+          end
+
+          restricted_archetype = automation.trigger_field("restricted_archetype")["value"]
+          if restricted_archetype.present?
+            if restricted_archetype == "public"
+              next if topic.archetype != Archetype.default
+              next if !topic.category
+              next if topic.category.read_restricted?
+            else
+              topic_archetype = topic.archetype
+              next if restricted_archetype != topic_archetype
+            end
+          end
+
+          original_post_only = automation.trigger_field("original_post_only")
+          if original_post_only["value"]
+            next if post.post_number != 1
+          end
+
           first_post_only = automation.trigger_field("first_post_only")
           if first_post_only["value"]
             next if post.user.user_stat.post_count != 1
@@ -23,45 +51,81 @@ module DiscourseAutomation
             next if post.user.user_stat.topic_count != 1
           end
 
+          skip_via_email = automation.trigger_field("skip_via_email")
+          if skip_via_email["value"]
+            next if post.via_email?
+          end
+
           valid_trust_levels = automation.trigger_field("valid_trust_levels")
           if valid_trust_levels["value"]
             next if valid_trust_levels["value"].exclude?(post.user.trust_level)
           end
 
-          restricted_category = automation.trigger_field("restricted_category")
-          if restricted_category["value"]
-            category_ids =
-              if topic.category_id.blank?
-                []
-              else
-                [topic.category_id, topic.category.parent_category_id]
-              end
-            next if !category_ids.include?(restricted_category["value"])
+          restricted_categories = automation.trigger_field("restricted_categories").dup
+          if restricted_category_ids = restricted_categories["value"]
+            exclude_subcategories = automation.trigger_field("exclude_subcategories")["value"]
+
+            if !exclude_subcategories
+              # core api is odd, we only support nesting of 3 anyway, this is efficient
+              restricted_category_ids = restricted_category_ids.to_set
+              # for nesting of 3
+              restricted_category_ids +=
+                Category.where(parent_category_id: restricted_category_ids).pluck(:id)
+              restricted_category_ids +=
+                Category.where(parent_category_id: restricted_category_ids).pluck(:id)
+            end
+
+            next if !restricted_category_ids.include?(topic.category_id)
           end
 
-          restricted_group_id = automation.trigger_field("restricted_group")["value"]
-          if restricted_group_id.present?
+          restricted_tags = automation.trigger_field("restricted_tags")
+          if restricted_tags["value"]
+            next if (restricted_tags["value"] & topic.tags.map(&:name)).empty?
+          end
+
+          restricted_inbox_group_ids = automation.trigger_field("restricted_inbox_groups")["value"]
+          if restricted_inbox_group_ids.present?
             next if !topic.private_message?
 
             target_group_ids = topic.allowed_groups.pluck(:id)
-            next if restricted_group_id != target_group_ids.first
-
-            ignore_group_members = automation.trigger_field("ignore_group_members")
-            next if ignore_group_members["value"] && post.user.in_any_groups?([restricted_group_id])
+            next if (restricted_inbox_group_ids & target_group_ids).empty?
           end
+
+          user_group_ids = automation.trigger_field("restricted_groups")["value"]
+          next if user_group_ids.present? && !post.user.in_any_groups?(user_group_ids)
+
+          excluded_group_ids = automation.trigger_field("excluded_groups")["value"]
+          next if excluded_group_ids.present? && post.user.in_any_groups?(excluded_group_ids)
 
           ignore_automated = automation.trigger_field("ignore_automated")
           next if ignore_automated["value"] && post.incoming_email&.is_auto_generated?
 
-          action_type = automation.trigger_field("action_type")
-          selected_action = action_type["value"]&.to_sym
-
-          if selected_action
-            next if selected_action == :created && action != :create
-            next if selected_action == :edited && action != :edit
+          post_features = automation.trigger_field("post_features")["value"]
+          if post_features.present?
+            cooked = post.cooked
+            # note the only 100% correct way is to lean on an actual HTML parser
+            # however triggers may pop up during the post creation process, we can not afford a full parse
+            if post_features.include?("with_images") &&
+                 !cooked.match?(/<img(?![^>]*class=["'](emoji|avatar))[^>]*>/i)
+              next
+            end
+            next if post_features.include?("with_links") && !cooked.match?(/<a\s+[^>]*>/i)
+            next if post_features.include?("with_code") && !cooked.match?(/<pre[^>]*>/i)
+            if post_features.include?("with_uploads") &&
+                 !cooked.match?(/<a\s+[^>]*class=["']attachment[^>]*>/i)
+              next
+            end
           end
 
-          automation.trigger!("kind" => name, "action" => action, "post" => post)
+          automation.trigger!(
+            "kind" => name,
+            "action" => action,
+            "post" => post,
+            "placeholders" => {
+              "topic_url" => topic.relative_url,
+              "topic_title" => topic.title,
+            },
+          )
         end
     end
 
@@ -195,6 +259,74 @@ module DiscourseAutomation
         end
     end
 
+    def self.handle_topic_tags_changed(topic, old_tag_names, new_tag_names, user)
+      name = DiscourseAutomation::Triggers::TOPIC_TAGS_CHANGED
+
+      DiscourseAutomation::Automation
+        .where(trigger: name, enabled: true)
+        .find_each do |automation|
+          if topic.private_message?
+            next if !automation.trigger_field("trigger_with_pms")["value"]
+          end
+
+          watching_categories = automation.trigger_field("watching_categories")
+          if watching_categories["value"]
+            next if !watching_categories["value"].include?(topic.category_id)
+          end
+
+          removed_tags = old_tag_names - new_tag_names
+          added_tags = new_tag_names - old_tag_names
+
+          watching_tags = automation.trigger_field("watching_tags")
+
+          if watching_tags["value"]
+            changed_tags = (removed_tags | added_tags)
+            next if (changed_tags & watching_tags["value"]).empty?
+          end
+
+          trigger_on = automation.trigger_field("trigger_on")["value"]
+
+          if trigger_on == Triggers::TopicTagsChanged::TriggerOn::TAGS_ADDED && added_tags.empty?
+            next
+          end
+
+          if trigger_on == Triggers::TopicTagsChanged::TriggerOn::TAGS_REMOVED &&
+               removed_tags.empty?
+            next
+          end
+
+          automation.trigger!(
+            "kind" => name,
+            "topic" => topic,
+            "removed_tags" => removed_tags,
+            "added_tags" => added_tags,
+            "user" => user,
+            "placeholders" => {
+              "topic_url" => topic.relative_url,
+              "topic_title" => topic.title,
+            },
+          )
+        end
+    end
+
+    def self.handle_topic_closed(topic, status)
+      name = DiscourseAutomation::Triggers::TOPIC_CLOSED
+
+      DiscourseAutomation::Automation
+        .where(trigger: name, enabled: true)
+        .find_each do |automation|
+          automation.trigger!(
+            "kind" => name,
+            "topic" => topic,
+            "status" => status,
+            "placeholders" => {
+              "topic_url" => topic.relative_url,
+              "topic_title" => topic.title,
+            },
+          )
+        end
+    end
+
     def self.handle_after_post_cook(post, cooked)
       return cooked if post.post_type != Post.types[:regular] || post.post_number > 1
 
@@ -291,12 +423,38 @@ module DiscourseAutomation
           next if categories && !categories.include?(post.topic.category_id)
 
           tags = fields.dig("tags", "value")
-          next if tags && (tags & post.topic.tags.map(&:name)).empty?
+          next if tags&.any? && (tags & post.topic.tags.map(&:name)).empty?
 
           DiscourseAutomation::UserGlobalNotice
             .where(identifier: automation.id)
             .where(user_id: post.user_id)
             .destroy_all
+        end
+    end
+
+    def self.handle_post_flag_created(post_action)
+      name = DiscourseAutomation::Triggers::POST_FLAG_CREATED
+
+      post = post_action.post
+      topic = post.topic
+
+      DiscourseAutomation::Automation
+        .where(trigger: name, enabled: true)
+        .find_each do |automation|
+          flag_type_field = automation.trigger_field("flag_type")
+          flag_type_id = flag_type_field["value"]
+
+          next if flag_type_id.present? && flag_type_id != post_action.post_action_type_id
+
+          categories = automation.trigger_field("categories")["value"]
+          next if categories.present? && !categories.include?(topic.category_id)
+
+          if SiteSetting.tagging_enabled?
+            tags = automation.trigger_field("tags")["value"]
+            next if tags.present? && (topic.tags.map(&:name) & tags).empty?
+          end
+
+          automation.trigger!("kind" => name, "post_action_id" => post_action.id)
         end
     end
   end

@@ -31,7 +31,7 @@ RSpec.describe PrettyText do
       it "correctly extracts usernames from the new quote format" do
         topic = Fabricate(:topic, title: "this is a test topic :slight_smile:")
         expected = <<~HTML
-          <aside class="quote no-group" data-username="codinghorror" data-post="2" data-topic="#{topic.id}">
+          <aside class="quote no-group" data-username="codinghorror" data-display-name="Jeff" data-post="2" data-topic="#{topic.id}">
           <div class="title">
           <div class="quote-controls"></div>
           <a href="http://test.localhost/t/this-is-a-test-topic/#{topic.id}/2">This is a test topic <img width="20" height="20" src="/images/emoji/twitter/slight_smile.png?v=#{Emoji::EMOJI_VERSION}" title="slight_smile" loading="lazy" alt="slight_smile" class="emoji"></a></div>
@@ -105,7 +105,7 @@ RSpec.describe PrettyText do
             <p>This is a quote with an emoji shortcut :)</p>
             </blockquote>
             <blockquote>
-            <p>This is a quote with a Unicode emoji <img src="/images/emoji/twitter/sunglasses.png?v=#{Emoji::EMOJI_VERSION}" title=":sunglasses:" class="emoji" alt=":sunglasses:" loading="lazy" width="20" height="20"></p>
+            <p>This is a quote with a Unicode emoji <img src="/images/emoji/twitter/smiling_face_with_sunglasses.png?v=#{Emoji::EMOJI_VERSION}" title=":smiling_face_with_sunglasses:" class="emoji" alt=":smiling_face_with_sunglasses:" loading="lazy" width="20" height="20"></p>
             </blockquote>
           HTML
 
@@ -121,7 +121,7 @@ RSpec.describe PrettyText do
             <p>This is a quote with an emoji shortcut <img src="/images/emoji/twitter/slight_smile.png?v=#{Emoji::EMOJI_VERSION}" title=":slight_smile:" class="emoji" alt=":slight_smile:" loading="lazy" width="20" height="20"></p>
             </blockquote>
             <blockquote>
-            <p>This is a quote with a Unicode emoji <img src="/images/emoji/twitter/sunglasses.png?v=#{Emoji::EMOJI_VERSION}" title=":sunglasses:" class="emoji" alt=":sunglasses:" loading="lazy" width="20" height="20"></p>
+            <p>This is a quote with a Unicode emoji <img src="/images/emoji/twitter/smiling_face_with_sunglasses.png?v=#{Emoji::EMOJI_VERSION}" title=":smiling_face_with_sunglasses:" class="emoji" alt=":smiling_face_with_sunglasses:" loading="lazy" width="20" height="20"></p>
             </blockquote>
           HTML
 
@@ -151,20 +151,20 @@ RSpec.describe PrettyText do
 
           html = <<~HTML
             <p><img src="/images/emoji/twitter/frowning.png?v=#{Emoji::EMOJI_VERSION}" title=":frowning:" class="emoji only-emoji" alt=":frowning:" loading="lazy" width="20" height="20"><br>
-            foo <img src="/images/emoji/twitter/grinning.png?v=#{Emoji::EMOJI_VERSION}" title=":grinning:" class="emoji" alt=":grinning:" loading="lazy" width="20" height="20"><br>
-            foo <img src="/images/emoji/twitter/grinning.png?v=#{Emoji::EMOJI_VERSION}" title=":grinning:" class="emoji" alt=":grinning:" loading="lazy" width="20" height="20"> bar<br>
+            foo <img src="/images/emoji/twitter/grinning_face.png?v=#{Emoji::EMOJI_VERSION}" title=":grinning_face:" class="emoji" alt=":grinning_face:" loading="lazy" width="20" height="20"><br>
+            foo <img src="/images/emoji/twitter/grinning_face.png?v=#{Emoji::EMOJI_VERSION}" title=":grinning_face:" class="emoji" alt=":grinning_face:" loading="lazy" width="20" height="20"> bar<br>
             <img src="/images/emoji/twitter/smile_cat.png?v=#{Emoji::EMOJI_VERSION}" title=":smile_cat:" class="emoji only-emoji" alt=":smile_cat:" loading="lazy" width="20" height="20"><br>
             <img src="/images/emoji/twitter/smile_cat.png?v=#{Emoji::EMOJI_VERSION}" title=":smile_cat:" class="emoji only-emoji" alt=":smile_cat:" loading="lazy" width="20" height="20"> <img src="/images/emoji/twitter/smile_cat.png?v=#{Emoji::EMOJI_VERSION}" title=":smile_cat:" class="emoji only-emoji" alt=":smile_cat:" loading="lazy" width="20" height="20"><br>
             <img src="/images/emoji/twitter/smile_cat.png?v=#{Emoji::EMOJI_VERSION}" title=":smile_cat:" class="emoji" alt=":smile_cat:" loading="lazy" width="20" height="20"> <img src="/images/emoji/twitter/smile_cat.png?v=#{Emoji::EMOJI_VERSION}" title=":smile_cat:" class="emoji" alt=":smile_cat:" loading="lazy" width="20" height="20"> <img src="/images/emoji/twitter/smile_cat.png?v=#{Emoji::EMOJI_VERSION}" title=":smile_cat:" class="emoji" alt=":smile_cat:" loading="lazy" width="20" height="20"> <img src="/images/emoji/twitter/smile_cat.png?v=#{Emoji::EMOJI_VERSION}" title=":smile_cat:" class="emoji" alt=":smile_cat:" loading="lazy" width="20" height="20"><br>
             baz? <img src="/images/emoji/twitter/smile_cat.png?v=#{Emoji::EMOJI_VERSION}" title=":smile_cat:" class="emoji" alt=":smile_cat:" loading="lazy" width="20" height="20"><br>
-            <img src="/images/emoji/twitter/grinning.png?v=#{Emoji::EMOJI_VERSION}" title=":grinning:" class="emoji only-emoji" alt=":grinning:" loading="lazy" width="20" height="20"><br>
+            <img src="/images/emoji/twitter/grinning_face.png?v=#{Emoji::EMOJI_VERSION}" title=":grinning_face:" class="emoji only-emoji" alt=":grinning_face:" loading="lazy" width="20" height="20"><br>
             <img src="/images/emoji/twitter/wink.png?v=#{Emoji::EMOJI_VERSION}" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20"> foo<br>
             <img src="/images/emoji/twitter/wink.png?v=#{Emoji::EMOJI_VERSION}" title=":wink:" class="emoji only-emoji" alt=":wink:" loading="lazy" width="20" height="20"> <img src="/images/emoji/twitter/wink.png?v=#{Emoji::EMOJI_VERSION}" title=":wink:" class="emoji only-emoji" alt=":wink:" loading="lazy" width="20" height="20"><br>
             <img src="/images/emoji/twitter/wink.png?v=#{Emoji::EMOJI_VERSION}" title=":wink:" class="emoji only-emoji" alt=":wink:" loading="lazy" width="20" height="20"> <img src="/images/emoji/twitter/wink.png?v=#{Emoji::EMOJI_VERSION}" title=":wink:" class="emoji only-emoji" alt=":wink:" loading="lazy" width="20" height="20"><br>
             <img src="/images/emoji/twitter/wink.png?v=#{Emoji::EMOJI_VERSION}" title=":wink:" class="emoji only-emoji" alt=":wink:" loading="lazy" width="20" height="20"> <img src="/images/emoji/twitter/wink.png?v=#{Emoji::EMOJI_VERSION}" title=":wink:" class="emoji only-emoji" alt=":wink:" loading="lazy" width="20" height="20"> <img src="/images/emoji/twitter/wink.png?v=#{Emoji::EMOJI_VERSION}" title=":wink:" class="emoji only-emoji" alt=":wink:" loading="lazy" width="20" height="20"><br>
             <img src="/images/emoji/twitter/wink.png?v=#{Emoji::EMOJI_VERSION}" title=":wink:" class="emoji only-emoji" alt=":wink:" loading="lazy" width="20" height="20"><img src="/images/emoji/twitter/wink.png?v=#{Emoji::EMOJI_VERSION}" title=":wink:" class="emoji only-emoji" alt=":wink:" loading="lazy" width="20" height="20"><img src="/images/emoji/twitter/wink.png?v=#{Emoji::EMOJI_VERSION}" title=":wink:" class="emoji only-emoji" alt=":wink:" loading="lazy" width="20" height="20"><br>
             <img src="/images/emoji/twitter/wink.png?v=#{Emoji::EMOJI_VERSION}" title=":wink:" class="emoji only-emoji" alt=":wink:" loading="lazy" width="20" height="20"> <img src="/images/emoji/twitter/wink.png?v=#{Emoji::EMOJI_VERSION}" title=":wink:" class="emoji only-emoji" alt=":wink:" loading="lazy" width="20" height="20"> <img src="/images/emoji/twitter/wink.png?v=#{Emoji::EMOJI_VERSION}" title=":wink:" class="emoji only-emoji" alt=":wink:" loading="lazy" width="20" height="20"><br>
-            <img src="/images/emoji/twitter/wink.png?v=#{Emoji::EMOJI_VERSION}" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20">d​:wink: <img src="/images/emoji/twitter/wink.png?v=#{Emoji::EMOJI_VERSION}" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20"><br>
+            <img src="/images/emoji/twitter/wink.png?v=#{Emoji::EMOJI_VERSION}" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20">d​<img src="/images/emoji/twitter/wink.png?v=#{Emoji::EMOJI_VERSION}" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20"> <img src="/images/emoji/twitter/wink.png?v=#{Emoji::EMOJI_VERSION}" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20"><br>
             <img src="/images/emoji/twitter/wink.png?v=#{Emoji::EMOJI_VERSION}" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20"> <img src="/images/emoji/twitter/wink.png?v=#{Emoji::EMOJI_VERSION}" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20"> <img src="/images/emoji/twitter/wink.png?v=#{Emoji::EMOJI_VERSION}" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20">d<br>
             <img src="/images/emoji/twitter/wink.png?v=#{Emoji::EMOJI_VERSION}" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20"><img src="/images/emoji/twitter/wink.png?v=#{Emoji::EMOJI_VERSION}" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20"><img src="/images/emoji/twitter/wink.png?v=#{Emoji::EMOJI_VERSION}" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20"><img src="/images/emoji/twitter/wink.png?v=#{Emoji::EMOJI_VERSION}" title=":wink:" class="emoji" alt=":wink:" loading="lazy" width="20" height="20"></p>
           HTML
@@ -183,7 +183,7 @@ RSpec.describe PrettyText do
             <p>This is a quote with an emoji shortcut <img src="https://emoji.cdn.com/twitter/slight_smile.png?v=#{Emoji::EMOJI_VERSION}" title=":slight_smile:" class="emoji" alt=":slight_smile:" loading="lazy" width="20" height="20"></p>
             </blockquote>
             <blockquote>
-            <p>This is a quote with a Unicode emoji <img src="https://emoji.cdn.com/twitter/sunglasses.png?v=#{Emoji::EMOJI_VERSION}" title=":sunglasses:" class="emoji" alt=":sunglasses:" loading="lazy" width="20" height="20"></p>
+            <p>This is a quote with a Unicode emoji <img src="https://emoji.cdn.com/twitter/smiling_face_with_sunglasses.png?v=#{Emoji::EMOJI_VERSION}" title=":smiling_face_with_sunglasses:" class="emoji" alt=":smiling_face_with_sunglasses:" loading="lazy" width="20" height="20"></p>
             </blockquote>
           HTML
 
@@ -204,7 +204,7 @@ RSpec.describe PrettyText do
             <p>This is a quote with an emoji shortcut <img src="https://emoji.cdn.com/twitter/slight_smile.png?v=#{Emoji::EMOJI_VERSION}" title=":slight_smile:" class="emoji" alt=":slight_smile:" loading="lazy" width="20" height="20"></p>
             </blockquote>
             <blockquote>
-            <p>This is a quote with a Unicode emoji <img src="https://emoji.cdn.com/twitter/sunglasses.png?v=#{Emoji::EMOJI_VERSION}" title=":sunglasses:" class="emoji" alt=":sunglasses:" loading="lazy" width="20" height="20"></p>
+            <p>This is a quote with a Unicode emoji <img src="https://emoji.cdn.com/twitter/smiling_face_with_sunglasses.png?v=#{Emoji::EMOJI_VERSION}" title=":smiling_face_with_sunglasses:" class="emoji" alt=":smiling_face_with_sunglasses:" loading="lazy" width="20" height="20"></p>
             </blockquote>
           HTML
 
@@ -269,7 +269,7 @@ RSpec.describe PrettyText do
           <aside class="quote no-group" data-username="#{user.username}" data-post="123" data-topic="456" data-full="true">
           <div class="title">
           <div class="quote-controls"></div>
-          <img loading="lazy" alt="" width="24" height="24" src="//test.localhost/uploads/default/avatars/42d/57c/46ce7ee487/48.png" class="avatar"> #{user.username}:</div>
+          <img alt="" width="24" height="24" src="//test.localhost/uploads/default/avatars/42d/57c/46ce7ee487/48.png" class="avatar"> #{user.username}:</div>
           <blockquote>
           <p>ddd</p>
           </blockquote>
@@ -291,7 +291,7 @@ RSpec.describe PrettyText do
           <aside class="quote no-group" data-username="#{user.username}" data-post="123" data-topic="456" data-full="true">
           <div class="title">
           <div class="quote-controls"></div>
-          <img loading="lazy" alt="" width="24" height="24" src="//test.localhost/uploads/default/avatars/42d/57c/46ce7ee487/48.png" class="avatar"> #{user.username}:</div>
+          <img alt="" width="24" height="24" src="//test.localhost/uploads/default/avatars/42d/57c/46ce7ee487/48.png" class="avatar"> #{user.username}:</div>
           <blockquote>
           <p>ddd</p>
           </blockquote>
@@ -312,7 +312,7 @@ RSpec.describe PrettyText do
           <aside class="quote no-group" data-username="#{user.username}" data-post="555" data-topic="666">
           <div class="title">
           <div class="quote-controls"></div>
-          <img loading="lazy" alt="" width="24" height="24" src="//test.localhost/uploads/default/avatars/42d/57c/46ce7ee487/48.png" class="avatar"> #{user.username}:</div>
+          <img alt="" width="24" height="24" src="//test.localhost/uploads/default/avatars/42d/57c/46ce7ee487/48.png" class="avatar"> #{user.username}:</div>
           <blockquote>
           <p>ddd</p>
           </blockquote>
@@ -338,7 +338,7 @@ RSpec.describe PrettyText do
           <aside class="quote group-#{group.name}" data-username="#{user.username}" data-post="2" data-topic="#{topic.id}">
           <div class="title">
           <div class="quote-controls"></div>
-          <img loading="lazy" alt="" width="24" height="24" src="//test.localhost/uploads/default/avatars/42d/57c/46ce7ee487/48.png" class="avatar"><a href="http://test.localhost/t/this-is-a-test-topic/#{topic.id}/2">This is a test topic</a></div>
+          <img alt="" width="24" height="24" src="//test.localhost/uploads/default/avatars/42d/57c/46ce7ee487/48.png" class="avatar"><a href="http://test.localhost/t/this-is-a-test-topic/#{topic.id}/2">This is a test topic</a></div>
           <blockquote>
           <p>ddd</p>
           </blockquote>
@@ -563,6 +563,23 @@ RSpec.describe PrettyText do
     end
 
     context "with pretty_text_extract_mentions modifier" do
+      let(:modifier_block) do
+        Proc.new do |mentions, cooked_text|
+          custom_mentions =
+            cooked_text
+              .css(".custom-mention")
+              .map do |e|
+                if (name = e.inner_text)
+                  name = name[1..-1]
+                  name = User.normalize_username(name)
+                  name
+                end
+              end
+
+          mentions + custom_mentions
+        end
+      end
+
       it "allows changing the mentions extracted" do
         cooked_html = <<~HTML
         <p>
@@ -577,27 +594,18 @@ RSpec.describe PrettyText do
         extracted_mentions = PrettyText.extract_mentions(Nokogiri::HTML5.fragment(cooked_html))
         expect(extracted_mentions).to contain_exactly("test", "test-group")
 
-        Plugin::Instance
-          .new
-          .register_modifier(:pretty_text_extract_mentions) do |mentions, cooked_text|
-            custom_mentions =
-              cooked_text
-                .css(".custom-mention")
-                .map do |e|
-                  if (name = e.inner_text)
-                    name = name[1..-1]
-                    name = User.normalize_username(name)
-                    name
-                  end
-                end
+        plugin_instance = Plugin::Instance.new
 
-            mentions + custom_mentions
-          end
+        plugin_instance.register_modifier(:pretty_text_extract_mentions, &modifier_block)
 
         extracted_mentions = PrettyText.extract_mentions(Nokogiri::HTML5.fragment(cooked_html))
         expect(extracted_mentions).to include("test", "test-group", "test-custom")
       ensure
-        DiscoursePluginRegistry.clear_modifiers!
+        DiscoursePluginRegistry.unregister_modifier(
+          plugin_instance,
+          :pretty_text_extract_mentions,
+          &modifier_block
+        )
       end
     end
   end
@@ -729,6 +737,26 @@ RSpec.describe PrettyText do
       HTML
 
       expect(cooked).to eq(html.strip)
+    end
+
+    it "strips out unicode bidirectional (bidi) override characters and replaces with a highlighted span" do
+      cooked = <<~HTML
+        <p>X</p>
+        <pre><code class="lang-auto">var isAdmin = false;
+        \u202E
+        </code></pre>
+      HTML
+      cleaned = PrettyText.cleanup(cooked)
+      hidden_bidi_title = I18n.t("post.hidden_bidi_character")
+
+      html = <<~HTML
+        <p>X</p>
+        <pre><code class="lang-auto">var isAdmin = false;
+        <span class="bidi-warning" title="#{hidden_bidi_title}">&lt;U+202E&gt;</span>
+        </code></pre>
+      HTML
+
+      expect(cleaned.strip).to eq(html.strip)
     end
 
     it "fuzzes all possible dangerous unicode bidirectional (bidi) override characters, making sure they are replaced" do
@@ -923,16 +951,10 @@ RSpec.describe PrettyText do
         ).to eq("![car](http://cnn.com/a.gif)")
       end
 
-      it "should keep details if too long" do
+      it "replaces details / summary with the summary" do
         expect(
           PrettyText.excerpt("<details><summary>expand</summary><p>hello</p></details>", 6),
-        ).to match_html "<details class='disabled'><summary>expand</summary></details>"
-      end
-
-      it "doesn't disable details if short enough" do
-        expect(
-          PrettyText.excerpt("<details><summary>expand</summary><p>hello</p></details>", 60),
-        ).to match_html "<details><summary>expand</summary>hello</details>"
+        ).to match_html "▶ expand"
       end
 
       it "should remove meta information" do
@@ -1176,6 +1198,21 @@ RSpec.describe PrettyText do
 
     it "should handle nil" do
       expect(PrettyText.excerpt(nil, 100)).to eq("")
+    end
+
+    it "returns empty string when Nokogiri hits tree depth limits" do
+      html = "<div>" * 10 + "Hello" + "</div>" * 10
+      stub_const(Nokogiri::Gumbo, "DEFAULT_MAX_TREE_DEPTH", 5) do
+        expect(PrettyText.excerpt(html, 100)).to eq("")
+      end
+    end
+
+    it "returns empty string when Nokogiri hits attribute limits" do
+      attrs = (1..10).map { |i| "data-a#{i}=\"v\"" }.join(" ")
+      html = "<div #{attrs}>Hello</div>"
+      stub_const(Nokogiri::Gumbo, "DEFAULT_MAX_ATTRIBUTES", 5) do
+        expect(PrettyText.excerpt(html, 100)).to eq("")
+      end
     end
 
     it "handles custom bbcode excerpt" do
@@ -1655,18 +1692,51 @@ RSpec.describe PrettyText do
       expect(PrettyText.cook("❤️💣")).to match(/<img src[^>]+bomb[^>]+>/)
     end
 
-    it "replaces Emoji from Unicode 14.0" do
-      expect(PrettyText.cook("🫣")).to match(/\:face_with_peeking_eye\:/)
+    it "correctly cooks skin tone and gendered ZWJ sequences" do
+      # 1. Standard RGI Input (Man Bouncing Ball: Light Skin Tone)
+      # Structure: ⛹ (26f9) + 🏻 (1f3fb) + ZWJ (200d) + ♂ (2642) + VS16 (fe0f)
+      standard_input = [0x26f9, 0x1f3fb, 0x200d, 0x2642, 0xfe0f].pack("U*")
+      expect(PrettyText.cook(standard_input)).to eq(
+        "<p><img src=\"/images/emoji/twitter/man_bouncing_ball/2.png?v=#{Emoji::EMOJI_VERSION}\" title=\":man_bouncing_ball:t2:\" class=\"emoji only-emoji\" alt=\":man_bouncing_ball:t2:\" loading=\"lazy\" width=\"20\" height=\"20\"></p>",
+      )
+
+      # 2. Regression: Ordinary Skin Tone (Thumbs Up: Light Skin Tone)
+      # Structure: 👍 (1f44d) + 🏻 (1f3fb)
+      thumbs_up = [0x1f44d, 0x1f3fb].pack("U*")
+      expect(PrettyText.cook(thumbs_up)).to eq(
+        "<p><img src=\"/images/emoji/twitter/+1/2.png?v=#{Emoji::EMOJI_VERSION}\" title=\":+1:t2:\" class=\"emoji only-emoji\" alt=\":+1:t2:\" loading=\"lazy\" width=\"20\" height=\"20\"></p>",
+      )
+
+      # 3. Regression: Ordinary ZWJ Sequence (Family: Man, Woman, Girl)
+      # Structure: 👨 (1f468) + ZWJ (200d) + 👩 (1f469) + ZWJ (200d) + 👧 (1f467)
+      family = [0x1f468, 0x200d, 0x1f469, 0x200d, 0x1f467].pack("U*")
+      expect(PrettyText.cook(family)).to eq(
+        "<p><img src=\"/images/emoji/twitter/family_man_woman_girl.png?v=#{Emoji::EMOJI_VERSION}\" title=\":family_man_woman_girl:\" class=\"emoji only-emoji\" alt=\":family_man_woman_girl:\" loading=\"lazy\" width=\"20\" height=\"20\"></p>",
+      )
+    end
+
+    it "replaces Unicode emoji from all supported Emoji versions" do
+      expect(PrettyText.cook("😀")).to match(/\:grinning_face\:/) # Emoji 1.0
+      expect(PrettyText.cook("🤳")).to match(/\:selfie\:/) # Emoji 3.0
+      expect(PrettyText.cook("🦷")).to match(/\:tooth\:/) # Emoji 11.0
+      expect(PrettyText.cook("🧅")).to match(/\:onion\:/) # Emoji 12.0
+      expect(PrettyText.cook("🥷")).to match(/\:ninja\:/) # Emoji 13.0
+      expect(PrettyText.cook("❤️‍🔥")).to match(/\:heart_on_fire\:/) # Emoji 13.1
+      expect(PrettyText.cook("🫠")).to match(/\:melting_face\:/) # Emoji 14.0
+      expect(PrettyText.cook("🫨")).to match(/\:shaking_face\:/) # Emoji 15.0
+      expect(PrettyText.cook("🐦‍🔥")).to match(/\:phoenix\:/) # Emoji 15.1
+      expect(PrettyText.cook("🫩")).to match(/\:face_with_bags_under_eyes\:/) # Emoji 16.0
+      expect(PrettyText.cook("🫪")).to match(/\:distorted_face\:/) # Emoji 17.0
     end
 
     context "with subfolder" do
       it "prepends the subfolder path to the emoji url" do
         set_subfolder "/forum"
 
-        expected = "src=\"/forum/images/emoji/twitter/grinning.png?v=#{Emoji::EMOJI_VERSION}\""
+        expected = "src=\"/forum/images/emoji/twitter/grinning_face.png?v=#{Emoji::EMOJI_VERSION}\""
 
         expect(PrettyText.cook("😀")).to include(expected)
-        expect(PrettyText.cook(":grinning:")).to include(expected)
+        expect(PrettyText.cook(":grinning_face:")).to include(expected)
       end
 
       it "prepends the subfolder path even if it is part of the emoji url" do
@@ -1792,7 +1862,7 @@ RSpec.describe PrettyText do
   it "produces hashtag links" do
     user = Fabricate(:user)
     category = Fabricate(:category, name: "testing", slug: "testing")
-    category2 = Fabricate(:category, name: "known", slug: "known")
+    category2 = Fabricate(:category, name: "known", slug: "known", style_type: "icon", icon: "book")
     group = Fabricate(:group)
     private_category = Fabricate(:private_category, name: "secret", group: group, slug: "secret")
     tag = Fabricate(:tag, name: "known")
@@ -1809,6 +1879,8 @@ RSpec.describe PrettyText do
         "data-type": "category",
         "data-slug": category2.slug,
         "data-id": category2.id,
+        "data-style-type": category2.style_type,
+        "data-icon": category2.icon,
       },
     ) do
       with_tag("span", with: { class: "hashtag-icon-placeholder" })
@@ -1881,11 +1953,17 @@ RSpec.describe PrettyText do
     ) do
       with_tag("span", with: { class: "hashtag-icon-placeholder" })
     end
+  end
 
-    # ensure it does not fight with the autolinker
+  it "does not fight with the autolinker" do
     expect(PrettyText.cook(" http://somewhere.com/#known")).not_to include("hashtag")
     expect(PrettyText.cook(" http://somewhere.com/?#known")).not_to include("hashtag")
     expect(PrettyText.cook(" http://somewhere.com/?abc#known")).not_to include("hashtag")
+  end
+
+  it "does not trigger when preceded with a slash" do
+    expect(PrettyText.cook("/#known")).not_to include("hashtag")
+    expect(PrettyText.cook("test/#known")).not_to include("hashtag")
   end
 
   it "can handle mixed lists" do
@@ -2395,6 +2473,9 @@ HTML
   it "should strip SCRIPT" do
     expect(PrettyText.cook("<script>alert(42)</script>")).to eq ""
     expect(PrettyText.cook("<div><script>alert(42)</script></div>")).to eq "<div></div>"
+
+    expect(PrettyText.cleanup("<script>alert(42)</script>")).to eq ""
+    expect(PrettyText.cleanup("<div><script>alert(42)</script></div>")).to eq "<div></div>"
   end
 
   it "strips script regardless of sanitize" do
@@ -2512,6 +2593,27 @@ HTML
       expect(PrettyText.cook(raw)).to eq(cooked.strip)
     end
 
+    it "handles attachment filenames with markdown characters" do
+      SiteSetting.authorized_extensions = "txt"
+
+      {
+        "_test_file_.txt" => "<em>",
+        "*test*.txt" => "<em>",
+        "**bold**.txt" => "<strong>",
+        "~~strike~~.txt" => "<s>",
+        "`code`.txt" => "<code>",
+      }.each do |filename, bad_tag|
+        upload = Fabricate(:upload, original_filename: filename, extension: "txt")
+        markdown = UploadMarkdown.new(upload).to_markdown
+        cooked = PrettyText.cook(markdown)
+
+        expect(cooked).to include('class="attachment"'),
+        "expected attachment class for filename: #{filename}\nmarkdown: #{markdown}\ncooked: #{cooked}"
+        expect(cooked).not_to include(bad_tag),
+        "unexpected #{bad_tag} for filename: #{filename}\nmarkdown: #{markdown}\ncooked: #{cooked}"
+      end
+    end
+
     it "can place a blank image if we can not find the upload" do
       raw = <<~MD
       ![upload](upload://abcABC.png)
@@ -2529,17 +2631,17 @@ HTML
   end
 
   it "can properly allowlist iframes" do
-    SiteSetting.allowed_iframes = "https://bob.com/a|http://silly.com?EMBED="
+    SiteSetting.allowed_iframes = "https://bob.com/a|http://silly.com/?EMBED="
     raw = <<~HTML
       <iframe src='https://www.google.com/maps/Embed?testing'></iframe>
       <iframe src='https://bob.com/a?testing'></iframe>
-      <iframe src='HTTP://SILLY.COM?EMBED=111'></iframe>
+      <iframe src='HTTP://SILLY.COM/?EMBED=111'></iframe>
     HTML
 
     # we require explicit HTTPS here
     html = <<~HTML
       <iframe src="https://bob.com/a?testing"></iframe>
-      <iframe src="HTTP://SILLY.COM?EMBED=111"></iframe>
+      <iframe src="HTTP://SILLY.COM/?EMBED=111"></iframe>
     HTML
 
     cooked = PrettyText.cook(raw).strip
@@ -2553,6 +2655,21 @@ HTML
       <iframe src='https://bob.com/abc/def'></iframe>
       <iframe src='https://bob.com/abc/def/../ghi'></iframe>
       <iframe src='https://bob.com/abc/def/ghi/../../jkl'></iframe>
+    HTML
+
+    html = <<~HTML
+      <iframe src="https://bob.com/abc/def"></iframe>
+    HTML
+
+    expect(PrettyText.cook(raw).strip).to eq(html.strip)
+  end
+
+  it "can skip URL-encoded relative paths in allowlist iframes" do
+    SiteSetting.allowed_iframes = "https://bob.com/abc/def"
+    raw = <<~HTML
+      <iframe src='https://bob.com/abc/def'></iframe>
+      <iframe src='https://bob.com/abc/def/%2e%2e/ghi'></iframe>
+      <iframe src='https://bob.com/abc/def/%2E%2E/ghi'></iframe>
     HTML
 
     html = <<~HTML
@@ -2731,7 +2848,7 @@ HTML
 
     html = <<~HTML
       <h1>
-      <a name="hello-world-1" class="anchor" href="#hello-world-1"></a>
+      <a name="hello-world-1" class="anchor" href="#hello-world-1" aria-label="Heading link"></a>
       Hello world
       </h1>
     HTML
@@ -2788,10 +2905,50 @@ HTML
       .logger
       .expects(:warn)
       .once
-      .with("[PrettyText] Deprecation notice: Some deprecation message")
+      .with("[PrettyText] DEPRECATION NOTICE: Some deprecation message")
 
     PrettyText.v8.eval <<~JS
-      require("discourse-common/lib/deprecated").default("Some deprecation message");
+      require("discourse/lib/deprecated").default("Some deprecation message");
     JS
+  end
+
+  describe "video thumbnails" do
+    before do
+      SiteSetting.authorized_extensions = "mp4|png"
+      @video_upload = Fabricate(:upload, original_filename: "video.mp4", extension: "mp4")
+    end
+
+    after { Upload.where(original_filename: ["404.png", "#{@video_upload.sha1}.png"]).destroy_all }
+
+    it "does not link to a thumbnail image if the video source is missing" do
+      Fabricate(:upload, original_filename: "404.png", extension: "png")
+
+      html = <<~HTML
+          <p></p><div class="video-placeholder-container" data-video-src="/404"></div><p></p>
+        HTML
+      doc = Nokogiri::HTML5.fragment(html)
+      described_class.add_video_placeholder_image(doc)
+
+      expect(doc.to_html).to eq(html)
+    end
+
+    it "links to a thumbnail image if the video source is valid" do
+      thumbnail =
+        Fabricate(:upload, original_filename: "#{@video_upload.sha1}.png", extension: "png")
+
+      html = <<~HTML
+        <p></p><div class="video-placeholder-container" data-video-src="#{@video_upload.url}"></div><p></p>
+      HTML
+      doc = Nokogiri::HTML5.fragment(html)
+      described_class.add_video_placeholder_image(doc)
+
+      video_base62_sha1 = "#{Upload.base62_sha1(@video_upload.sha1)}.#{@video_upload.extension}"
+
+      html_with_thumbnail = <<~HTML
+        <p></p><div class="video-placeholder-container" data-video-src="#{@video_upload.url}" data-thumbnail-src="http://test.localhost#{thumbnail.url}" data-video-base62-sha1="#{video_base62_sha1}"></div><p></p>
+      HTML
+
+      expect(doc.to_html).to eq(html_with_thumbnail)
+    end
   end
 end

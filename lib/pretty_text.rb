@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require "mini_racer"
 require "nokogiri"
 require "erb"
 
@@ -30,8 +29,8 @@ module PrettyText
 
   def self.apply_es6_file(ctx:, path:, module_name:)
     source = File.read(path)
-    transpiler = DiscourseJsProcessor::Transpiler.new
-    transpiled = transpiler.perform(source, nil, module_name)
+    processor = AssetProcessor.new
+    transpiled = processor.perform(source, nil, module_name)
     ctx.eval(transpiled, filename: module_name)
   end
 
@@ -47,9 +46,27 @@ module PrettyText
 
     ctx.eval("window = globalThis; window.devicePixelRatio = 2;") # hack to make code think stuff is retina
 
-    ctx.attach("rails.logger.info", proc { |err| Rails.logger.info(err.to_s) })
-    ctx.attach("rails.logger.warn", proc { |err| Rails.logger.warn(err.to_s) })
-    ctx.attach("rails.logger.error", proc { |err| Rails.logger.error(err.to_s) })
+    ctx.attach(
+      "rails.logger.info",
+      proc do |err|
+        Rails.logger.info(err.to_s)
+        nil
+      end,
+    )
+    ctx.attach(
+      "rails.logger.warn",
+      proc do |err|
+        Rails.logger.warn(err.to_s)
+        nil
+      end,
+    )
+    ctx.attach(
+      "rails.logger.error",
+      proc do |err|
+        Rails.logger.error(err.to_s)
+        nil
+      end,
+    )
     ctx.eval <<~JS
       console = {
         prefix: "[PrettyText] ",
@@ -65,13 +82,12 @@ module PrettyText
       ctx.attach("__helpers.#{method}", PrettyText::Helpers.method(method))
     end
 
-    root_path = "#{Rails.root}/app/assets/javascripts"
-    node_modules = "#{Rails.root}/node_modules"
-    md_node_modules = "#{Rails.root}/app/assets/javascripts/discourse-markdown-it/node_modules"
-    ctx.load("#{node_modules}/loader.js/dist/loader/loader.js")
+    root_path = "#{Rails.root}/frontend"
+    d_node_modules = "#{Rails.root}/frontend/discourse/node_modules"
+    md_node_modules = "#{Rails.root}/frontend/discourse-markdown-it/node_modules"
+    ctx.load("#{d_node_modules}/loader.js/dist/loader/loader.js")
     ctx.load("#{md_node_modules}/markdown-it/dist/markdown-it.js")
-    ctx.load("#{root_path}/handlebars-shim.js")
-    ctx.load("#{node_modules}/xss/dist/xss.js")
+    ctx.load("#{md_node_modules}/xss/dist/xss.js")
     ctx.load("#{Rails.root}/lib/pretty_text/vendor-shims.js")
 
     ctx_load_directory(
@@ -86,11 +102,13 @@ module PrettyText
     )
 
     %w[
-      discourse-common/addon/lib/get-url
-      discourse-common/addon/lib/object
-      discourse-common/addon/lib/deprecated
-      discourse-common/addon/lib/escape
-      discourse-common/addon/lib/avatar-utils
+      discourse/app/deprecation-workflow
+      discourse/app/lib/get-url
+      discourse/app/lib/object
+      discourse/app/lib/deprecated
+      discourse/app/lib/escape
+      discourse/app/lib/avatar-utils
+      discourse/app/lib/case-converter
       discourse/app/lib/to-markdown
       discourse/app/static/markdown-it/features
     ].each do |f|
@@ -122,6 +140,8 @@ module PrettyText
 
     DiscoursePluginRegistry.vendored_pretty_text.each { |vpt| ctx.eval(File.read(vpt)) }
 
+    ctx.low_memory_notification # GC to free up memory used during init
+
     ctx
   end
 
@@ -138,7 +158,10 @@ module PrettyText
   end
 
   def self.reset_translations
-    v8.eval("__resetTranslationTree()")
+    @mutex.synchronize do
+      v8.eval("__resetTranslationTree()")
+      v8.low_memory_notification if GlobalSetting.mini_racer_single_threaded
+    end
   end
 
   def self.reset_context
@@ -158,6 +181,7 @@ module PrettyText
   #  markdown_it_rules - An array of markdown rule names which will be applied to the markdown-it engine. Currently used by plugins to customize what markdown-it rules should be
   #                      enabled when rendering markdown.
   #  topic_id          - Topic id for the post being cooked.
+  #  post_id           - Post id for the post being cooked.
   #  user_id           - User id for the post being cooked.
   #  force_quote_link  - Always create the link to the quoted topic for [quote] bbcode. Normally this only happens
   #                      if the topic_id provided is different from the [quote topic:X].
@@ -199,14 +223,15 @@ module PrettyText
         __optInput.emojiUnicodeReplacer = __emojiUnicodeReplacer;
         __optInput.emojiDenyList = #{Emoji.denied.to_json};
         __optInput.lookupUploadUrls = __lookupUploadUrls;
-        __optInput.censoredRegexp = #{WordWatcher.serialized_regexps_for_action(:censor, engine: :js).to_json};
-        __optInput.watchedWordsReplace = #{WordWatcher.regexps_for_action(:replace, engine: :js).to_json};
-        __optInput.watchedWordsLink = #{WordWatcher.regexps_for_action(:link, engine: :js).to_json};
+        __optInput.censoredRegexp = #{WordWatcher.serialized_regexps_for_action(:censor).to_json};
+        __optInput.watchedWordsReplace = #{WordWatcher.regexps_for_action(:replace).to_json};
+        __optInput.watchedWordsLink = #{WordWatcher.regexps_for_action(:link).to_json};
         __optInput.additionalOptions = #{Site.markdown_additional_options.to_json};
         __optInput.avatar_sizes = #{SiteSetting.avatar_sizes.to_json};
       JS
 
       buffer << "__optInput.topicId = #{opts[:topic_id].to_i};\n" if opts[:topic_id]
+      buffer << "__optInput.postId = #{opts[:post_id].to_i};\n" if opts[:post_id]
 
       if opts[:force_quote_link]
         buffer << "__optInput.forceQuoteLink = #{opts[:force_quote_link]};\n"
@@ -255,7 +280,7 @@ module PrettyText
         __optInput = {};
         __optInput.avatar_sizes = #{SiteSetting.avatar_sizes.to_json};
         __paths = #{paths_json};
-        require("discourse-common/lib/avatar-utils").avatarImg({size: #{size.inspect}, avatarTemplate: #{avatar_template.inspect}}, __getURL);
+        require("discourse/lib/avatar-utils").avatarImg({size: #{size.inspect}, avatarTemplate: #{avatar_template.inspect}}, __getURL);
       JS
   end
 
@@ -270,7 +295,7 @@ module PrettyText
         __performEmojiUnescape(#{title.inspect}, {
           getURL: __getURL,
           emojiSet: #{set},
-          emojiCDNUrl: "#{SiteSetting.external_emoji_url.blank? ? "" : SiteSetting.external_emoji_url}",
+          emojiCDNUrl: "#{SiteSetting.external_emoji_url.presence || ""}",
           customEmoji: #{custom},
           enableEmojiShortcuts: #{SiteSetting.enable_emoji_shortcuts},
           inlineEmoji: #{SiteSetting.enable_inline_emoji_translation}
@@ -291,25 +316,13 @@ module PrettyText
       JS
   end
 
-  def self.cook(text, opts = {})
+  def self.cook(raw, opts = {})
     options = opts.dup
-    working_text = text.dup
+    working_text = raw.dup
 
-    sanitized = markdown(working_text, options)
+    html = markdown(working_text, options)
 
-    doc = Nokogiri::HTML5.fragment(sanitized)
-
-    add_nofollow = !options[:omit_nofollow] && SiteSetting.add_rel_nofollow_to_user_content
-    add_rel_attributes_to_user_content(doc, add_nofollow)
-    strip_hidden_unicode_bidirectional_characters(doc)
-    sanitize_hotlinked_media(doc)
-    add_video_placeholder_image(doc)
-
-    add_mentions(doc, user_id: opts[:user_id]) if SiteSetting.enable_mentions
-
-    scrubber = Loofah::Scrubber.new { |node| node.remove if node.name == "script" }
-    loofah_fragment = Loofah.html5_fragment(doc.to_html)
-    loofah_fragment.scrub!(scrubber).to_html
+    cleanup(html, opts)
   end
 
   def self.strip_hidden_unicode_bidirectional_characters(doc)
@@ -449,12 +462,16 @@ module PrettyText
       .css(".video-placeholder-container")
       .each do |video|
         video_src = video["data-video-src"]
+        next if video_src == "/404" || video_src.nil?
         video_sha1 = File.basename(video_src, File.extname(video_src))
         thumbnail = Upload.where("original_filename LIKE ?", "#{video_sha1}.%").last
         if thumbnail
           video["data-thumbnail-src"] = UrlHelper.absolute(
             GlobalPath.upload_cdn_path(thumbnail.url),
           )
+          video[
+            "data-video-base62-sha1"
+          ] = "#{Upload.base62_sha1(video_sha1)}#{File.extname(video_src)}"
         end
       end
   end
@@ -478,8 +495,15 @@ module PrettyText
   end
 
   def self.excerpt(html, max_length, options = {})
+    return "" if html.blank?
+
     # TODO: properly fix this HACK in ExcerptParser without introducing XSS
-    doc = Nokogiri::HTML5.fragment(html)
+    doc =
+      begin
+        Nokogiri::HTML5.fragment(html)
+      rescue ArgumentError
+        return ""
+      end
     DiscourseEvent.trigger(:reduce_excerpt, doc, options)
     strip_image_wrapping(doc)
     strip_oneboxed_media(doc)
@@ -678,15 +702,34 @@ module PrettyText
 
   def self.protect
     rval = nil
-    @mutex.synchronize { rval = yield }
+    @mutex.synchronize do
+      rval = yield
+      v8.low_memory_notification if GlobalSetting.mini_racer_single_threaded
+    end
     rval
+  end
+
+  def self.cleanup(html, opts = {})
+    doc = Nokogiri::HTML5.fragment(html)
+
+    add_nofollow = !opts[:omit_nofollow] && SiteSetting.add_rel_nofollow_to_user_content
+    add_rel_attributes_to_user_content(doc, add_nofollow)
+    strip_hidden_unicode_bidirectional_characters(doc)
+    sanitize_hotlinked_media(doc)
+    add_video_placeholder_image(doc)
+
+    add_mentions(doc, user_id: opts[:user_id]) if SiteSetting.enable_mentions
+
+    scrubber = Loofah::Scrubber.new { |node| node.remove if node.name == "script" }
+    loofah_fragment = Loofah.html5_fragment(doc.to_html)
+    loofah_fragment.scrub!(scrubber).to_html
   end
 
   private
 
-  USER_TYPE ||= "user"
-  GROUP_TYPE ||= "group"
-  GROUP_MENTIONABLE_TYPE ||= "group-mentionable"
+  USER_TYPE = "user"
+  GROUP_TYPE = "group"
+  GROUP_MENTIONABLE_TYPE = "group-mentionable"
 
   def self.add_mentions(doc, user_id: nil)
     elements = doc.css("span.mention")

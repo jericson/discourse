@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-RSpec.describe "Move message to channel", type: :system do
+RSpec.describe "Move message to channel" do
   let(:chat_page) { PageObjects::Pages::Chat.new }
   let(:channel_page) { PageObjects::Pages::ChatChannel.new }
   let(:thread_page) { PageObjects::Pages::ChatThread.new }
@@ -8,8 +8,8 @@ RSpec.describe "Move message to channel", type: :system do
   before { chat_system_bootstrap }
 
   context "when user" do
-    fab!(:current_user) { Fabricate(:user) }
-    fab!(:channel_1) { Fabricate(:chat_channel) }
+    fab!(:current_user, :user)
+    fab!(:channel_1, :chat_channel)
     fab!(:message_1) { Fabricate(:chat_message, chat_channel: channel_1, user: current_user) }
 
     before do
@@ -25,15 +25,17 @@ RSpec.describe "Move message to channel", type: :system do
     end
 
     context "when can moderate channel" do
-      fab!(:group_1) { Fabricate(:group) }
+      fab!(:group_1, :group)
       fab!(:channel_1) { Fabricate(:private_category_channel, group: group_1) }
       fab!(:message_1) { Fabricate(:chat_message, chat_channel: channel_1, user: current_user) }
+      fab!(:category_moderation_group) do
+        Fabricate(:category_moderation_group, category: channel_1.category, group: group_1)
+      end
 
       before do
         SiteSetting.enable_category_group_moderation = true
         group_1.add(current_user)
         channel_1.add(current_user)
-        channel_1.chatable.update!(reviewable_by_group_id: group_1.id)
       end
 
       it "is available" do
@@ -46,7 +48,7 @@ RSpec.describe "Move message to channel", type: :system do
   end
 
   context "when admin" do
-    fab!(:current_admin_user) { Fabricate(:admin) }
+    fab!(:current_admin_user, :admin)
 
     before { sign_in(current_admin_user) }
 

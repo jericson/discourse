@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 class Search
-  DIACRITICS ||= /([\u0300-\u036f]|[\u1AB0-\u1AFF]|[\u1DC0-\u1DFF]|[\u20D0-\u20FF])/
+  DIACRITICS = /([\u0300-\u036f]|[\u1AB0-\u1AFF]|[\u1DC0-\u1DFF]|[\u20D0-\u20FF])/
   HIGHLIGHT_CSS_CLASS = "search-highlight"
 
   cattr_accessor :preloaded_topic_custom_fields
@@ -25,6 +25,18 @@ class Search
 
   def self.facets
     %w[topic category user private_messages tags all_topics exclude_topics]
+  end
+
+  # Patterns that bypass minimum search term length because they
+  # produce meaningful results on their own. Note: 't' (in:title) is
+  # intentionally excluded - it modifies where to search but still
+  # requires actual search terms.
+  MIN_LENGTH_BYPASS_PATTERN =
+    /\A[lr]\z|order:|category:|categories:|tags?:|before:|after:|status:|user:|group:|badge:|in:|with:|#|@/i
+
+  def self.min_length_bypass?(term)
+    return false if term.blank?
+    MIN_LENGTH_BYPASS_PATTERN.match?(term)
   end
 
   def self.ts_config(locale = SiteSetting.default_locale)
@@ -71,8 +83,16 @@ class Search
     end
   end
 
-  def self.wrap_unaccent(str)
-    SiteSetting.search_ignore_accents ? "unaccent(#{str})" : str
+  def self.unaccent(str)
+    if SiteSetting.search_ignore_accents
+      DB.query("SELECT unaccent(:str)", str: str)[0].unaccent
+    else
+      str
+    end
+  end
+
+  def self.wrap_unaccent(expr)
+    SiteSetting.search_ignore_accents ? "unaccent(#{expr})" : expr
   end
 
   def self.segment_chinese?
@@ -109,7 +129,7 @@ class Search
     data.force_encoding("UTF-8")
     data = clean_term(data)
 
-    if purpose != :topic
+    if purpose != :topic && need_segmenting?(data)
       if segment_chinese?
         require "cppjieba_rb" unless defined?(CppjiebaRb)
 
@@ -218,6 +238,13 @@ class Search
       end
   end
 
+  def self.need_segmenting?(data)
+    return false if data.match?(/\A\d+\z/)
+    !URI.parse(data).path.to_s.start_with?("/")
+  rescue URI::InvalidURIError
+    true
+  end
+
   attr_accessor :term
   attr_reader :clean_term, :guardian
 
@@ -229,6 +256,7 @@ class Search
     @valid = true
     @page = @opts[:page]
     @search_all_pms = false
+    @matched_advanced_filter_names = []
 
     term = Search.clean_term(term)
 
@@ -306,17 +334,18 @@ class Search
           term: @clean_term,
           search_type: @opts[:search_type],
           ip_address: @opts[:ip_address],
+          user_agent: @opts[:user_agent],
           user_id: @opts[:user_id],
         )
       @results.search_log_id = search_log_id unless status == :error
     end
 
-    unless @filters.present? || @opts[:search_for_id]
-      min_length = min_search_term_length
-      terms = (@term || "").split(/\s(?=(?:[^"]|"[^"]*")*$)/).reject { |t| t.length < min_length }
+    is_topic_search = @search_context.present? && @search_context.is_a?(Topic)
 
-      if terms.blank?
-        @term = ""
+    if !@opts[:search_for_id] && !is_topic_search
+      @term = filter_short_terms(@term)
+
+      if @term.blank? && @filters.blank? && @order.blank?
         @valid = false
         return
       end
@@ -348,24 +377,24 @@ class Search
     @results
   end
 
-  def self.advanced_order(trigger, &block)
-    advanced_orders[trigger] = block
+  def self.advanced_order(trigger, enabled: -> { true }, &block)
+    advanced_orders[trigger] = { block:, enabled: }
   end
 
   def self.advanced_orders
     @advanced_orders ||= {}
   end
 
-  def self.advanced_filter(trigger, &block)
-    advanced_filters[trigger] = block
+  def self.advanced_filter(trigger, name: nil, enabled: -> { true }, &block)
+    advanced_filters[trigger] = { block:, name:, enabled: }
   end
 
   def self.advanced_filters
     @advanced_filters ||= {}
   end
 
-  def self.custom_topic_eager_load(tables = nil, &block)
-    (@custom_topic_eager_loads ||= []) << (tables || block)
+  def self.custom_topic_eager_load(tables = nil, enabled: -> { true }, &block)
+    (@custom_topic_eager_loads ||= []) << { tables:, block:, enabled: }
   end
 
   def self.custom_topic_eager_loads
@@ -398,6 +427,19 @@ class Search
   advanced_filter(/\Ain:tagged\z/i) do |posts|
     posts.where("EXISTS (SELECT 1 FROM topic_tags WHERE topic_tags.topic_id = posts.topic_id)")
   end
+
+  advanced_filter(/\Ain:bots?\z/i) { |posts| posts.where("posts.user_id < 0") }
+  advanced_filter(/\Ain:humans?\z/i) { |posts| posts.where("posts.user_id >= 0") }
+
+  advanced_filter(/\Ain:whispers?\z/i) do |posts|
+    if @guardian.can_see_whispers?
+      posts.where(post_type: Post.types[:whisper])
+    else
+      posts.where("1 = 0")
+    end
+  end
+
+  advanced_filter(/\Ain:regular\z/i) { |posts| posts.where(post_type: Post.types[:regular]) }
 
   advanced_filter(/\Ain:untagged\z/i) do |posts|
     posts.joins(
@@ -442,7 +484,9 @@ class Search
 
   advanced_filter(/\Ain:first|^f\z/i) { |posts| posts.where("posts.post_number = 1") }
 
-  advanced_filter(/\Ain:pinned\z/i) { |posts| posts.where("topics.pinned_at IS NOT NULL") }
+  advanced_filter(/\Ain:replies\z/i) { |posts| posts.where("posts.post_number > 1") }
+
+  advanced_filter(/\Ain:pinned\z/i) { |posts| posts.where.not(topics: { pinned_at: nil }) }
 
   advanced_filter(/\Ain:wiki\z/i) { |posts, match| posts.where(wiki: true) }
 
@@ -540,7 +584,7 @@ class Search
     end
   end
 
-  advanced_filter(/\Awith:images\z/i) { |posts| posts.where("posts.image_upload_id IS NOT NULL") }
+  advanced_filter(/\Awith:images\z/i) { |posts| posts.where.not(posts: { image_upload_id: nil }) }
 
   advanced_filter(/\Acategor(?:y|ies):(.+)\z/i) do |posts, terms|
     category_ids = []
@@ -564,8 +608,8 @@ class Search
           categories c
       JOIN
           unnest(ARRAY[:matches]) AS term ON
-          c.slug ILIKE term OR
-          c.name ILIKE term OR
+          #{Category.normalize_sql("c.slug")} ILIKE #{Category.normalize_sql("term")} OR
+          #{Category.normalize_sql("c.name")} ILIKE #{Category.normalize_sql("term")} OR
           (term ~ '^[0-9]{1,10}$' AND c.id = term::int)
       SQL
 
@@ -601,15 +645,24 @@ class Search
     category_id =
       if subcategory_slug
         Category
-          .where("lower(slug) = ?", subcategory_slug.downcase)
+          .where(
+            "#{Category.normalize_sql("slug")} = #{Category.normalize_sql("?")}",
+            subcategory_slug,
+          )
           .where(
             parent_category_id:
-              Category.where("lower(slug) = ?", category_slug.downcase).select(:id),
+              Category.where(
+                "#{Category.normalize_sql("slug")} = #{Category.normalize_sql("?")}",
+                category_slug,
+              ).select(:id),
           )
           .pick(:id)
       else
         Category
-          .where("lower(slug) = ?", category_slug.downcase)
+          .where(
+            "#{Category.normalize_sql("slug")} = #{Category.normalize_sql("?")}",
+            category_slug,
+          )
           .order("case when parent_category_id is null then 0 else 1 end")
           .pick(:id)
       end
@@ -622,7 +675,8 @@ class Search
       posts.where("topics.category_id IN (?)", category_ids)
     else
       # try a possible tag match
-      tag_id = Tag.where_name(category_slug).pick(:id)
+      tag_id, target_tag_id = Tag.where_name(category_slug).pick(:id, :target_tag_id)
+      tag_id = target_tag_id || tag_id
       if (tag_id)
         posts.where(<<~SQL, tag_id)
           topics.id IN (
@@ -726,7 +780,9 @@ class Search
     end
   end
 
-  advanced_filter(/\Abefore:(.*)\z/i) do |posts, match|
+  BEFORE_ADVANCED_FILTER_NAME = "before"
+
+  advanced_filter(/\Abefore:(.*)\z/i, name: BEFORE_ADVANCED_FILTER_NAME) do |posts, match|
     if date = Search.word_to_date(match)
       posts.where("posts.created_at < ?", date)
     else
@@ -734,7 +790,9 @@ class Search
     end
   end
 
-  advanced_filter(/\Aafter:(.*)\z/i) do |posts, match|
+  AFTER_ADVANCED_FILTER_NAME = "after"
+
+  advanced_filter(/\Aafter:(.*)\z/i, name: AFTER_ADVANCED_FILTER_NAME) do |posts, match|
     if date = Search.word_to_date(match)
       posts.where("posts.created_at > ?", date)
     else
@@ -777,6 +835,19 @@ class Search
     posts.where("topics.views <= ?", match.to_i)
   end
 
+  advanced_filter(/\Alocale:([a-zA-Z0-9_-]+)\z/i) do |posts, match|
+    case match.downcase
+    when "none", "null"
+      posts.where("posts.locale IS NULL")
+    when "any", "present"
+      posts.where("posts.locale IS NOT NULL")
+    else
+      locale = match.downcase.gsub("-", "_")
+      base_locale = locale.split("_").first
+      posts.where("posts.locale LIKE ?", "#{base_locale}%")
+    end
+  end
+
   def apply_filters(posts)
     @filters.each do |block, match|
       if block.arity == 1
@@ -795,13 +866,17 @@ class Search
     type_filter: "all_topics"
   )
     if @order == :latest
-      if aggregate_search
+      if @in_title
+        posts = posts.order("topics.bumped_at DESC")
+      elsif aggregate_search
         posts = posts.order("MAX(posts.created_at) DESC")
       else
         posts = posts.reorder("posts.created_at DESC")
       end
     elsif @order == :oldest
-      if aggregate_search
+      if @in_title
+        posts = posts.order("topics.bumped_at ASC")
+      elsif aggregate_search
         posts = posts.order("MAX(posts.created_at) ASC")
       else
         posts = posts.reorder("posts.created_at ASC")
@@ -830,13 +905,26 @@ class Search
       else
         posts = posts.order("posts.like_count DESC")
       end
+    elsif @order == :read && @guardian.user
+      posts =
+        posts
+          .joins(
+            "JOIN topic_users tu ON tu.topic_id = posts.topic_id AND tu.user_id = #{@guardian.user.id.to_i}",
+          )
+          .where.not(tu: { last_visited_at: nil })
+
+      if aggregate_search
+        posts = posts.order("MAX(tu.last_visited_at) DESC")
+      else
+        posts = posts.reorder("tu.last_visited_at DESC")
+      end
     elsif allow_relevance_search
       posts = sort_by_relevance(posts, type_filter: type_filter, aggregate_search: aggregate_search)
     end
 
     if @order
-      advanced_order = Search.advanced_orders&.fetch(@order, nil)
-      posts = advanced_order.call(posts) if advanced_order
+      advanced_order = Search.advanced_orders[@order]
+      posts = advanced_order[:block].call(posts) if advanced_order.try(:[], :enabled).try(:call)
     end
 
     posts
@@ -850,7 +938,7 @@ class Search
     modifier = positive ? "" : "NOT"
 
     if match.include?("+")
-      tags = match.split("+")
+      tags = resolve_tag_synonyms(match.split("+"))
 
       posts.where(
         "topics.id #{modifier} IN (
@@ -858,22 +946,36 @@ class Search
         FROM topic_tags tt, tags
         WHERE tt.tag_id = tags.id
         GROUP BY tt.topic_id
-        HAVING to_tsvector(#{default_ts_config}, #{Search.wrap_unaccent("array_to_string(array_agg(lower(tags.name)), ' ')")}) @@ to_tsquery(#{default_ts_config}, #{Search.wrap_unaccent("?")})
+        HAVING to_tsvector(#{default_ts_config}, #{Search.wrap_unaccent("array_to_string(array_agg(lower(tags.name)), ' ')")}) @@ to_tsquery(#{default_ts_config}, ?)
       )",
-        tags.join("&"),
+        Search.unaccent(tags.join("&")),
       )
     else
-      tags = match.split(",")
+      tags = resolve_tag_synonyms(match.split(","))
+      tag_ids = Tag.where_name(tags).pluck(:id)
+      return positive ? posts.none : posts if tag_ids.empty?
 
       posts.where(
-        "topics.id #{modifier} IN (
-        SELECT DISTINCT(tt.topic_id)
-        FROM topic_tags tt, tags
-        WHERE tt.tag_id = tags.id AND lower(tags.name) IN (?)
+        "#{modifier} EXISTS (
+        SELECT 1 FROM topic_tags tt
+        WHERE tt.topic_id = topics.id AND tt.tag_id IN (?)
       )",
-        tags,
+        tag_ids,
       )
     end
+  end
+
+  def resolve_tag_synonyms(tag_names)
+    synonym_map =
+      Tag
+        .where_name(tag_names)
+        .where.not(target_tag_id: nil)
+        .includes(:target_tag)
+        .to_h { |synonym| [synonym.name.downcase, synonym.target_tag.name.downcase] }
+
+    return tag_names if synonym_map.empty?
+
+    tag_names.map { |name| synonym_map[name] || name }
   end
 
   def process_advanced_search!(term)
@@ -886,16 +988,27 @@ class Search
 
         found = false
 
-        Search.advanced_filters.each do |matcher, block|
+        Search.advanced_filters.each do |matcher, options|
+          block = options[:block]
+          name = options[:name]
+          next unless options[:enabled].call
+
+          case_insensitive_matcher =
+            Regexp.new(matcher.source, matcher.options | Regexp::IGNORECASE)
+
           cleaned = word.gsub(/["']/, "")
-          if cleaned =~ matcher
+          if cleaned =~ case_insensitive_matcher
             (@filters ||= []) << [block, $1]
+            @matched_advanced_filter_names << name if name
             found = true
           end
         end
 
         if word == "l"
           @order = :latest
+          nil
+        elsif word == "r"
+          @order = :read if @guardian.user
           nil
         elsif word =~ /\Aorder:\w+\z/i
           @order = word.downcase.gsub("order:", "").to_sym
@@ -912,6 +1025,9 @@ class Search
           nil
         elsif word =~ /\Ain:all\z/i
           @search_all_topics = true
+          nil
+        elsif word =~ /\Ain:all-posts\z/i
+          @all_posts = true
           nil
         elsif word =~ /\Ain:personal\z/i
           @search_pms = true
@@ -934,6 +1050,9 @@ class Search
             @search_context = user
           end
 
+          nil
+        elsif word =~ /\Ainclude:(invisible|unlisted)\z/i
+          @include_invisible = true if @guardian.can_see_unlisted_topics?
           nil
         else
           found ? nil : word
@@ -1021,13 +1140,16 @@ class Search
   def user_search
     return if SiteSetting.hide_user_profiles_from_public && !@guardian.user
 
+    # Exclude B weight from search which is the weight `User#name` is indexed with in `SearchIndexer.update_users_index`
+    query = ts_query("simple", weight_filter: SiteSetting.enable_names ? nil : "AC")
+
     users =
       User
         .includes(:user_search_data)
         .references(:user_search_data)
         .where(active: true)
         .where(staged: false)
-        .where("user_search_data.search_data @@ #{ts_query("simple")}")
+        .where("user_search_data.search_data @@ #{query}")
         .order("CASE WHEN username_lower = '#{@original_term.downcase}' THEN 0 ELSE 1 END")
         .order("last_posted_at DESC")
         .limit(limit)
@@ -1112,7 +1234,7 @@ class Search
     end
 
     is_topic_search = @search_context.present? && @search_context.is_a?(Topic)
-    posts = posts.where("topics.visible") unless is_topic_search
+    posts = posts.where("topics.visible") unless is_topic_search || @include_invisible
 
     if type_filter == "private_messages" || (is_topic_search && @search_context.private_message?)
       posts =
@@ -1146,15 +1268,12 @@ class Search
       if is_topic_search
         term_without_quote = @term
         term_without_quote = $1 if @term =~ /"(.+)"/
-
         term_without_quote = $1 if @term =~ /'(.+)'/
 
         posts = posts.joins("JOIN users u ON u.id = posts.user_id")
-        posts =
-          posts.where(
-            "posts.raw  || ' ' || u.username || ' ' || COALESCE(u.name, '') ilike ?",
-            "%#{term_without_quote}%",
-          )
+        user_search_fields = +"posts.raw || ' ' || post_search_data.raw_data || ' ' || u.username"
+        user_search_fields << " || ' ' || COALESCE(u.name, '')" if SiteSetting.enable_names
+        posts = posts.where("#{user_search_fields} ILIKE ?", "%#{term_without_quote}%")
       else
         posts = posts.where(post_number: 1) if @in_title
         posts = posts.where("post_search_data.search_data @@ #{ts_query(weight_filter: weights)}")
@@ -1162,7 +1281,7 @@ class Search
 
         exact_terms.each do |exact|
           posts =
-            posts.where("posts.raw ilike :exact OR topics.title ilike :exact", exact: "%#{exact}%")
+            posts.where("posts.raw ILIKE :exact OR topics.title ILIKE :exact", exact: "%#{exact}%")
         end
       end
     end
@@ -1189,16 +1308,14 @@ class Search
               .pluck(:id)
               .push(@search_context.id)
 
-          posts.where("topics.category_id in (?)", category_ids)
+          posts.where("topics.category_id IN (?)", category_ids)
         elsif is_topic_search
-          posts.where("topics.id = ?", @search_context.id).order(
-            "posts.post_number #{@order == :latest ? "DESC" : ""}",
-          )
+          posts = posts.where("topics.id = ?", @search_context.id)
+          posts = posts.order("posts.post_number ASC") unless @order
+          posts
         elsif @search_context.is_a?(Tag)
-          posts =
-            posts.joins("LEFT JOIN topic_tags ON topic_tags.topic_id = topics.id").joins(
-              "LEFT JOIN tags ON tags.id = topic_tags.tag_id",
-            )
+          posts = posts.joins("LEFT JOIN topic_tags ON topic_tags.topic_id = topics.id")
+          posts = posts.joins("LEFT JOIN tags ON tags.id = topic_tags.tag_id")
           posts.where("tags.id = ?", @search_context.id)
         end
       else
@@ -1220,14 +1337,8 @@ class Search
         end
     end
 
-    posts =
-      apply_order(
-        posts,
-        aggregate_search: aggregate_search,
-        allow_relevance_search: !is_topic_search,
-        type_filter: type_filter,
-      )
-
+    allow_relevance_search = !is_topic_search
+    posts = apply_order(posts, aggregate_search:, allow_relevance_search:, type_filter:)
     posts = posts.offset(offset)
     posts.limit(limit)
   end
@@ -1356,7 +1467,7 @@ class Search
 
   def self.to_tsquery(ts_config: nil, term:, joiner: nil)
     ts_config = ActiveRecord::Base.connection.quote(ts_config) if ts_config
-    escaped_term = wrap_unaccent("'#{escape_string(term)}'")
+    escaped_term = "'#{escape_string(unaccent(term))}'"
     tsquery = "TO_TSQUERY(#{ts_config || default_ts_config}, #{escaped_term})"
     # PG 14 and up default to using the followed by operator
     # this restores the old behavior
@@ -1392,7 +1503,10 @@ class Search
   def aggregate_post_sql(opts)
     min_id =
       if SiteSetting.search_recent_regular_posts_offset_post_id > 0
-        if %w[all_topics private_message].include?(opts[:type_filter])
+        if %w[all_topics private_message].include?(opts[:type_filter]) ||
+             @matched_advanced_filter_names.any? { |name|
+               [BEFORE_ADVANCED_FILTER_NAME, AFTER_ADVANCED_FILTER_NAME].include?(name)
+             }
           0
         else
           SiteSetting.search_recent_regular_posts_offset_post_id
@@ -1437,7 +1551,6 @@ class Search
 
   def aggregate_search(opts = {})
     post_sql = aggregate_post_sql(opts)
-
     added = 0
 
     aggregate_posts(post_sql[:default]).each do |p|
@@ -1467,6 +1580,9 @@ class Search
         )
 
       posts.each { |post| @results.add(post) }
+    elsif @all_posts
+      posts = posts_scope(posts_eager_loads(posts_query(limit)))
+      posts.each { |post| @results.add(post) }
     else
       aggregate_search
     end
@@ -1474,13 +1590,16 @@ class Search
 
   def posts_eager_loads(query)
     query = query.includes(:user, :post_search_data)
+    query = query.includes(:localizations) if SiteSetting.content_localization_enabled
     topic_eager_loads = [{ category: :parent_category }]
 
     topic_eager_loads << :tags if SiteSetting.tagging_enabled
+    topic_eager_loads << :localizations if SiteSetting.content_localization_enabled
 
     Search.custom_topic_eager_loads.each do |custom_loads|
+      next unless custom_loads[:enabled].call
       topic_eager_loads.concat(
-        custom_loads.is_a?(Array) ? custom_loads : custom_loads.call(search_pms: @search_pms).to_a,
+        custom_loads[:tables] || custom_loads[:block].call(search_pms: @search_pms).to_a,
       )
     end
 
@@ -1532,6 +1651,19 @@ class Search
   def log_query?(readonly_mode)
     SiteSetting.log_search_queries? && @opts[:search_type].present? && !readonly_mode &&
       @opts[:type_filter] != "exclude_topics"
+  end
+
+  def filter_short_terms(term_string)
+    return "" if term_string.blank?
+
+    min_length = min_search_term_length
+    # Split on spaces but respect quoted phrases
+    terms = term_string.split(/\s(?=(?:[^"]|"[^"]*")*$)/)
+
+    # Keep quoted phrases regardless of length, filter others by min_length
+    valid_terms = terms.select { |t| t.start_with?('"') || t.length >= min_length }
+
+    valid_terms.join(" ")
   end
 
   def min_search_term_length

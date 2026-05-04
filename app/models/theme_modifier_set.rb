@@ -13,7 +13,7 @@ class ThemeModifierSet < ActiveRecord::Base
 
   def type_validator
     ThemeModifierSet.modifiers.each do |k, config|
-      value = read_attribute(k)
+      value = self[k]
       next if value.nil?
 
       case config[:type]
@@ -29,6 +29,10 @@ class ThemeModifierSet < ActiveRecord::Base
   after_save do
     SvgSprite.expire_cache if saved_change_to_svg_icons?
     CSP::Extension.clear_theme_extensions_cache! if saved_change_to_csp_extensions?
+    if saved_change_to_only_theme_color_schemes?
+      ApplicationSerializer.expire_cache_fragment!("user_color_schemes")
+      ApplicationSerializer.expire_cache_fragment!("user_themes")
+    end
   end
 
   # Given the ids of multiple active themes / theme components, this function
@@ -47,7 +51,7 @@ class ThemeModifierSet < ActiveRecord::Base
     when :string_array
       all_values.flatten(1)
     else
-      raise ThemeModifierSetError "Invalid theme modifier combine_mode"
+      raise ThemeModifierSetError, "Invalid theme modifier combine_mode"
     end
   end
 
@@ -75,14 +79,49 @@ class ThemeModifierSet < ActiveRecord::Base
     super(val.map { |dim| "#{dim[0]}x#{dim[1]}" })
   end
 
+  def add_theme_setting_modifier(modifier_name, setting_name)
+    self.theme_setting_modifiers ||= {}
+    self.theme_setting_modifiers[modifier_name] = setting_name
+  end
+
+  def refresh_theme_setting_modifiers(target_setting_name: nil, target_setting_value: nil)
+    changed = false
+    if self.theme_setting_modifiers.present?
+      self.theme_setting_modifiers.each do |modifier_name, setting_name|
+        modifier_name = modifier_name.to_sym
+        setting_name = setting_name.to_sym
+
+        next if target_setting_name.present? && target_setting_name.to_sym != setting_name
+
+        value =
+          target_setting_name.present? ? target_setting_value : theme.settings[setting_name]&.value
+        value = coerce_setting_value(modifier_name, value)
+        if self[modifier_name] != value
+          self[modifier_name] = value
+          changed = true
+        end
+      end
+    end
+    changed
+  end
+
   private
+
+  def coerce_setting_value(modifier_name, value)
+    type = ThemeModifierSet.modifiers.dig(modifier_name, :type)
+    if type == :boolean
+      value.to_s != "false"
+    elsif type == :string_array
+      value.is_a?(Array) ? value : value.to_s.split("|")
+    end
+  end
 
   # Build the list of modifiers from the DB schema.
   # This allows plugins to introduce new modifiers by adding columns to the table
   def self.load_modifiers
     hash = {}
     columns_hash.each do |column_name, info|
-      next if %w[id theme_id].include?(column_name)
+      next if %w[id theme_id theme_setting_modifiers].include?(column_name)
 
       type = nil
       if info.type == :string && info.array?
@@ -91,7 +130,7 @@ class ThemeModifierSet < ActiveRecord::Base
         type = :boolean
       else
         if !%i[boolean string].include?(info.type)
-          raise ThemeModifierSetError "Invalid theme modifier column type"
+          raise ThemeModifierSetError, "Invalid theme modifier column type"
         end
       end
 
@@ -105,13 +144,18 @@ end
 #
 # Table name: theme_modifier_sets
 #
-#  id                       :bigint           not null, primary key
-#  theme_id                 :bigint           not null
-#  serialize_topic_excerpts :boolean
-#  csp_extensions           :string           is an Array
-#  svg_icons                :string           is an Array
-#  topic_thumbnail_sizes    :string           is an Array
-#  custom_homepage          :boolean
+#  id                            :bigint           not null, primary key
+#  csp_extensions                :string           is an Array
+#  custom_homepage               :boolean
+#  only_theme_color_schemes      :boolean
+#  serialize_post_user_badges    :string           is an Array
+#  serialize_topic_excerpts      :boolean
+#  serialize_topic_is_hot        :boolean
+#  serialize_topic_op_likes_data :boolean
+#  svg_icons                     :string           is an Array
+#  theme_setting_modifiers       :jsonb
+#  topic_thumbnail_sizes         :string           is an Array
+#  theme_id                      :bigint           not null
 #
 # Indexes
 #

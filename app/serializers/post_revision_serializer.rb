@@ -18,15 +18,18 @@ class PostRevisionSerializer < ApplicationSerializer
              # from the user
              :username,
              :display_username,
+             :acting_user_name,
              :avatar_template,
              # all the changes
              :edit_reason,
              :body_changes,
              :title_changes,
              :user_changes,
+             :reply_to_post_number_changes,
              :tags_changes,
              :category_id_changes,
-             :can_edit
+             :can_edit,
+             :diff_error
 
   # Creates a field called field_name_changes with previous and
   # current members if a field has changed in this revision
@@ -41,6 +44,7 @@ class PostRevisionSerializer < ApplicationSerializer
 
   add_compared_field :wiki
   add_compared_field :post_type
+  add_compared_field :locale
 
   def previous_hidden
     previous["hidden"]
@@ -96,6 +100,10 @@ class PostRevisionSerializer < ApplicationSerializer
     user.username
   end
 
+  def acting_user_name
+    user.name
+  end
+
   def avatar_template
     user.avatar_template
   end
@@ -121,6 +129,9 @@ class PostRevisionSerializer < ApplicationSerializer
       side_by_side: cooked_diff.side_by_side_html,
       side_by_side_markdown: raw_diff.side_by_side_markdown,
     }
+  rescue ONPDiff::DiffLimitExceeded
+    @diff_error = true
+    nil
   end
 
   def title_changes
@@ -133,6 +144,17 @@ class PostRevisionSerializer < ApplicationSerializer
     diff = DiscourseDiff.new(prev, cur)
 
     { inline: diff.inline_html, side_by_side: diff.side_by_side_html }
+  rescue ONPDiff::DiffLimitExceeded
+    @diff_error = true
+    nil
+  end
+
+  def diff_error
+    @diff_error || false
+  end
+
+  def include_diff_error?
+    @diff_error
   end
 
   def include_title_changes?
@@ -165,6 +187,17 @@ class PostRevisionSerializer < ApplicationSerializer
     previous["user_id"] != current["user_id"]
   end
 
+  def reply_to_post_number_changes
+    {
+      previous: reply_to_info(previous["reply_to_post_number"]),
+      current: reply_to_info(current["reply_to_post_number"]),
+    }
+  end
+
+  def include_reply_to_post_number_changes?
+    previous["reply_to_post_number"] != current["reply_to_post_number"]
+  end
+
   def tags_changes
     pre = filter_tags previous["tags"]
     cur = filter_tags current["tags"]
@@ -185,6 +218,12 @@ class PostRevisionSerializer < ApplicationSerializer
 
   def include_category_id_changes?
     previous["category_id"] != current["category_id"]
+  end
+
+  def locale_changes
+    prev = previous["locale"].presence
+    cur = current["locale"].presence
+    { previous: prev, current: cur }
   end
 
   protected
@@ -215,12 +254,19 @@ class PostRevisionSerializer < ApplicationSerializer
       "wiki" => [post.wiki],
       "post_type" => [post.post_type],
       "user_id" => [post.user_id],
+      "locale" => [post.locale],
+      "reply_to_post_number" => [post.reply_to_post_number],
     }
 
     # Retrieve any `tracked_topic_fields`
     PostRevisor.tracked_topic_fields.each_key do |field|
-      next if field == :tags
-      latest_modifications[field.to_s] = [topic.public_send(field)] if topic.respond_to?(field)
+      next unless topic.respond_to?(field)
+      topic
+        .public_send(field)
+        .then do |value|
+          next if value.try(:proxy_association)
+          latest_modifications[field.to_s] = [value]
+        end
     end
 
     latest_modifications["featured_link"] = [
@@ -239,7 +285,7 @@ class PostRevisionSerializer < ApplicationSerializer
 
     # backtrack
     post_revisions.each do |pr|
-      revision = HashWithIndifferentAccess.new
+      revision = ActiveSupport::HashWithIndifferentAccess.new
       revision[:revision] = pr.number
       revision[:hidden] = pr.hidden
 
@@ -285,5 +331,23 @@ class PostRevisionSerializer < ApplicationSerializer
   def filter_category_id(category_id)
     return if category_id.blank?
     Category.secured(scope).find_by(id: category_id)&.id
+  end
+
+  def reply_to_info(post_number)
+    return nil if post_number.blank?
+
+    target = Post.where(topic_id: topic.id, post_number: post_number).first
+    info = { post_number: post_number }
+
+    # Only enrich with the target's author if the current viewer can see
+    # that post. Deleted posts, whispers, and posts in restricted
+    # categories must not leak their author through the revision history.
+    if target && scope.can_see?(target) && target.user
+      info[:username] = target.user.username_lower
+      info[:display_username] = target.user.username
+      info[:avatar_template] = target.user.avatar_template
+    end
+
+    info
   end
 end

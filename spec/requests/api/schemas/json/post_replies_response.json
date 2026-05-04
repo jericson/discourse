@@ -1,6 +1,5 @@
 {
   "type": "array",
-  "minItems": 1,
   "uniqueItems": true,
   "items": {
     "type": "object",
@@ -30,6 +29,9 @@
         "type": "integer"
       },
       "post_type": {
+        "type": "integer"
+      },
+      "posts_count": {
         "type": "integer"
       },
       "updated_at": {
@@ -103,7 +105,7 @@
       },
       "flair_group_id": {
         "type": [
-          "string",
+          "integer",
           "null"
         ]
       },
@@ -135,6 +137,9 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "id": {
+            "type": "integer"
+          },
           "username": {
             "type": "string"
           },
@@ -155,23 +160,22 @@
       },
       "actions_summary": {
         "type": "array",
-        "items": 
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "id": {
-                "type": "integer"
-              },
-              "can_act": {
-                "type": "boolean"
-              }
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "integer"
             },
-            "required": [
-              "id",
-              "can_act"
-            ]
-          }
+            "can_act": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id",
+            "can_act"
+          ]
+        }
       },
       "moderator": {
         "type": "boolean"
@@ -214,7 +218,7 @@
       },
       "reviewable_id": {
         "type": [
-          "string",
+          "integer",
           "null"
         ]
       },
@@ -223,6 +227,9 @@
       },
       "reviewable_score_pending_count": {
         "type": "integer"
+      },
+      "post_url": {
+        "type": "string"
       }
     },
     "required": [
@@ -234,6 +241,7 @@
       "cooked",
       "post_number",
       "post_type",
+      "posts_count",
       "updated_at",
       "reply_count",
       "reply_to_post_number",
@@ -274,7 +282,8 @@
       "wiki",
       "reviewable_id",
       "reviewable_score_count",
-      "reviewable_score_pending_count"
+      "reviewable_score_pending_count",
+      "post_url"
     ]
   }
 }

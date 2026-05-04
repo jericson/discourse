@@ -14,7 +14,7 @@ module JsLocaleHelper
   end
 
   def self.plugin_translations(locale_str)
-    @plugin_translations ||= HashWithIndifferentAccess.new
+    @plugin_translations ||= ActiveSupport::HashWithIndifferentAccess.new
 
     @plugin_translations[locale_str] ||= begin
       translations = {}
@@ -30,7 +30,7 @@ module JsLocaleHelper
   end
 
   def self.load_translations(locale)
-    @loaded_translations ||= HashWithIndifferentAccess.new
+    @loaded_translations ||= ActiveSupport::HashWithIndifferentAccess.new
     @loaded_translations[locale] ||= begin
       locale_str = locale.to_s
 
@@ -117,14 +117,21 @@ module JsLocaleHelper
     @loaded_merges = nil
   end
 
-  def self.translations_for(locale_str)
+  if Rails.env.test?
+    def self.set_translations(locale, translations)
+      @loaded_translations ||= ActiveSupport::HashWithIndifferentAccess.new
+      @loaded_translations[locale] = translations
+    end
+  end
+
+  def self.translations_for(locale_str, no_fallback: false)
     clear_cache! if Rails.env.development?
 
     locale_sym = locale_str.to_sym
 
     translations =
       I18n.with_locale(locale_sym) do
-        if locale_sym == :en
+        if locale_sym == :en || no_fallback
           load_translations(locale_sym)
         else
           load_translations_merged(*I18n.fallbacks[locale_sym])
@@ -134,78 +141,116 @@ module JsLocaleHelper
     Marshal.load(Marshal.dump(translations))
   end
 
+  def self.output_MF(locale)
+    require "messageformat"
+
+    message_formats =
+      I18n.fallbacks[locale]
+        .each_with_object(ActiveSupport::HashWithIndifferentAccess.new) do |l, hash|
+          translations = translations_for(l, no_fallback: true)
+          hash[l] = remove_message_formats!(translations, l).merge(
+            TranslationOverride
+              .mf_locales(l)
+              .pluck(:translation_key, :value)
+              .to_h
+              .transform_keys { it.sub(/^[a-z_]*js\./, "") },
+          )
+        end
+        .compact_blank
+    js_message_formats = message_formats.transform_keys(&:dasherize)
+    compiled = MessageFormat.compile(js_message_formats.keys, js_message_formats, strict: false)
+
+    # convert to exported function instead of module
+    result =
+      compiled.gsub(/import ({.*}) from (.*);\n/, "const \\1 = messageFormatModules[\\2];\n").sub(
+        "export default",
+        "return",
+      )
+
+    <<~JS
+      const localeData = window._discourse_locale_data ??= {};
+      localeData.messageFormatData = function (messageFormatModules) {
+      #{result.indent(2)}
+      }
+    JS
+  rescue => e
+    js_locale = locale.to_s.dasherize
+    message_formats[locale]
+      .filter_map do |key, value|
+        next if MessageFormat.compile(js_locale, value, strict: false)
+      rescue StandardError
+        key
+      end
+      .then do |strings|
+        Rails.logger.error(
+          "Failed to compile message formats for #{locale}.\n\nBroken strings are: #{strings.join(", ")}\n\nError: #{e}",
+        )
+      end
+    <<~JS
+      const localeData = window._discourse_locale_data ??= {};
+      localeData.messageFormatData = function () {
+        console.error("Failed to compile message formats for #{locale}. Some translation strings will be missing.");
+        return {};
+      }
+    JS
+  end
+
   def self.output_locale(locale)
     locale_str = locale.to_s
     fallback_locale_str = LocaleSiteSetting.fallback_locale(locale_str)&.to_s
     translations = translations_for(locale_str)
 
-    message_formats = remove_message_formats!(translations, locale)
-    mf_locale, mf_filename = find_message_format_locale([locale_str], fallback_to_english: true)
-    result = generate_message_format(message_formats, mf_locale, mf_filename)
+    remove_message_formats!(translations, locale)
+    result = +<<~JS
+      const localeData = window._discourse_locale_data ??= {};
+    JS
 
     translations.keys.each do |l|
       translations[l].keys.each { |k| translations[l].delete(k) unless k == "js" }
     end
 
-    # I18n
-    result << "I18n.translations = #{translations.to_json};\n"
-    result << "I18n.locale = '#{locale_str}';\n"
+    result << "localeData.translations = #{translations.to_json};\n"
+    result << "localeData.locale = '#{locale_str}';\n"
     if fallback_locale_str && fallback_locale_str != "en"
-      result << "I18n.fallbackLocale = '#{fallback_locale_str}';\n"
-    end
-    if mf_locale != "en"
-      result << "I18n.pluralizationRules.#{locale_str} = MessageFormat.locale.#{mf_locale};\n"
+      result << "localeData.fallbackLocale = '#{fallback_locale_str}';\n"
     end
 
-    # moment
-    result << File.read("#{Rails.root}/vendor/assets/javascripts/moment.js")
-    result << File.read("#{Rails.root}/vendor/assets/javascripts/moment-timezone-with-data.js")
-    result << moment_locale(locale_str)
-    result << moment_locale(locale_str, timezone_names: true)
-    result << moment_formats
+    result << <<~JS
+      localeData.configureMoment = function () {
+        if (!globalThis.moment) {
+          throw new Error("globalThis.moment not defined. Failed to initialize locales.")
+        }
+        #{moment_locale(locale_str)}
+        #{moment_locale(locale_str, timezone_names: true)}
+        #{moment_formats}
+      }
+    JS
 
     result
   end
 
   def self.output_client_overrides(main_locale)
-    all_overrides = {}
-    has_overrides = false
-
-    I18n.fallbacks[main_locale].each do |locale|
-      overrides =
-        all_overrides[locale] = TranslationOverride
-          .where(locale: locale)
-          .where("translation_key LIKE 'js.%' OR translation_key LIKE 'admin_js.%'")
-          .pluck(:translation_key, :value, :compiled_js)
-
-      has_overrides ||= overrides.present?
-    end
-
-    return "" if !has_overrides
-
-    result = +"I18n._overrides = {};"
-    existing_keys = Set.new
-    message_formats = []
-
-    all_overrides.each do |locale, overrides|
-      translations = {}
-
-      overrides.each do |key, value, compiled_js|
-        next if existing_keys.include?(key)
-        existing_keys << key
-
-        if key.end_with?("_MF")
-          message_formats << "#{key.inspect}: #{compiled_js}"
-        else
-          translations[key] = value
+    locales = I18n.fallbacks[main_locale]
+    all_overrides =
+      locales
+        .each_with_object({}) do |locale, overrides|
+          overrides[locale] = TranslationOverride
+            .client_locales(locale)
+            .pluck(:translation_key, :value)
+            .to_h
         end
-      end
+        .compact_blank
 
-      result << "I18n._overrides['#{locale}'] = #{translations.to_json};" if translations.present?
+    return "" if all_overrides.blank?
+
+    all_overrides.reduce do |(_, main_overrides), (_, fallback_overrides)|
+      fallback_overrides.slice!(*fallback_overrides.keys - main_overrides.keys)
     end
 
-    result << "I18n._mfOverrides = {#{message_formats.join(", ")}};"
-    result
+    <<~JS
+      const localeData = window._discourse_locale_data ??= {};
+      localeData.overrides = #{all_overrides.compact_blank.to_json};
+    JS
   end
 
   def self.output_extra_locales(bundle, locale)
@@ -219,28 +264,21 @@ module JsLocaleHelper
       end
     end
 
-    return "" if translations.blank?
-
-    output = +"if (!I18n.extras) { I18n.extras = {}; }"
-    locales.each do |l|
-      translations_json = translations[l].to_json
-      output << <<~JS
-        if (!I18n.extras["#{l}"]) { I18n.extras["#{l}"] = {}; }
-        Object.assign(I18n.extras["#{l}"], #{translations_json});
-      JS
-    end
-
-    output
+    <<~JS
+      const localeData = window._discourse_locale_data ??= {};
+      localeData.extra ??= {};
+      localeData.extra[#{bundle.to_json}] = #{translations.to_json};
+    JS
   end
 
-  MOMENT_LOCALE_MAPPING ||= { "hy" => "hy-am", "ug" => "ug-cn" }
+  MOMENT_LOCALE_MAPPING = { "hy" => "hy-am", "ug" => "ug-cn" }
 
   def self.find_moment_locale(locale_chain, timezone_names: false)
     if timezone_names
-      path = "#{Rails.root}/vendor/assets/javascripts/moment-timezone-names-locale"
+      path = "#{Rails.root}/node_modules/@discourse/moment-timezone-names-translations/locales"
       type = :moment_js_timezones
     else
-      path = "#{Rails.root}/vendor/assets/javascripts/moment-locale"
+      path = "#{Rails.root}/frontend/discourse/node_modules/moment/locale"
       type = :moment_js
     end
 
@@ -249,11 +287,6 @@ module JsLocaleHelper
       # moment.js uses a different naming scheme for locale files
       locale.tr("_", "-").downcase
     end
-  end
-
-  def self.find_message_format_locale(locale_chain, fallback_to_english:)
-    path = "#{Rails.root}/lib/javascripts/locale"
-    find_locale(locale_chain, path, :message_format, fallback_to_english: fallback_to_english)
   end
 
   def self.find_locale(locale_chain, path, type, fallback_to_english:)
@@ -298,56 +331,15 @@ module JsLocaleHelper
 
   def self.moment_locale(locale, timezone_names: false)
     _, filename = find_moment_locale([locale], timezone_names: timezone_names)
-    filename && File.exist?(filename) ? File.read(filename) << "\n" : ""
-  end
-
-  def self.generate_message_format(message_formats, locale, filename)
-    formats =
-      message_formats
-        .map { |k, v| k.inspect << " : " << compile_message_format(filename, locale, v) }
-        .join(", ")
-
-    result = +"MessageFormat = {locale: {}};\n"
-    result << "I18n._compiledMFs = {#{formats}};\n"
-    result << File.read(filename) << "\n"
-
-    if locale != "en"
-      # Include "en" pluralization rules for use in fallbacks
-      _, en_filename = find_message_format_locale(["en"], fallback_to_english: false)
-      result << File.read(en_filename) << "\n"
+    if filename && File.exist?(filename)
+      <<~JS
+        (function(){
+        #{File.read(filename)}
+        }).apply(globalThis);
+      JS
+    else
+      ""
     end
-
-    result << File.read("#{Rails.root}/lib/javascripts/messageformat-lookup.js") << "\n"
-  end
-
-  def self.reset_context
-    @ctx&.dispose
-    @ctx = nil
-  end
-
-  @mutex = Mutex.new
-  def self.with_context
-    @mutex.synchronize do
-      yield(
-        @ctx ||=
-          begin
-            ctx = MiniRacer::Context.new(timeout: 15_000, ensure_gc_after_idle: 2000)
-            ctx.load("#{Rails.root}/node_modules/messageformat/messageformat.js")
-            ctx
-          end
-      )
-    end
-  end
-
-  def self.compile_message_format(path, locale, format)
-    with_context do |ctx|
-      ctx.load(path) if File.exist?(path)
-      ctx.eval("mf = new MessageFormat('#{locale}');")
-      ctx.eval("mf.precompile(mf.parse(#{format.inspect}))")
-    end
-  rescue MiniRacer::EvalError => e
-    message = +"Invalid Format: " << e.message
-    "function(){ return #{message.inspect};}"
   end
 
   def self.remove_message_formats!(translations, locale)

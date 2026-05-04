@@ -8,6 +8,7 @@ module Jobs
     sidekiq_options queue: "low"
 
     sidekiq_retry_in do |count, exception|
+      next if exception.wrapped.nil?
       # retry in an hour when SMTP server is busy
       # or use default sidekiq retry formula. returning
       # nil/0 will trigger the default sidekiq
@@ -16,7 +17,7 @@ module Jobs
       # See https://github.com/mperham/sidekiq/blob/3330df0ee37cfd3e0cd3ef01e3e66b584b99d488/lib/sidekiq/job_retry.rb#L216-L234
       case exception.wrapped
       when Net::SMTPServerBusy
-        return 1.hour + (rand(30) * (count + 1))
+        next 1.hour + (rand(30) * (count + 1))
       end
     end
 
@@ -93,8 +94,7 @@ module Jobs
       @skip_context = { type: type, user_id: user_id, to_address: to_address, post_id: post_id }
     end
 
-    NOTIFICATIONS_SENT_BY_MAILING_LIST ||=
-      Set.new %w[posted replied mentioned group_mentioned quoted]
+    NOTIFICATIONS_SENT_BY_MAILING_LIST = Set.new %w[posted replied mentioned group_mentioned quoted]
 
     def message_for_email(user, post, type, notification, args = nil)
       args ||= {}

@@ -3,7 +3,9 @@
 RSpec.describe SvgSprite do
   fab!(:theme)
 
-  before do
+  before { allow(Rails.env).to receive(:test?).and_return(false) }
+
+  after do
     SvgSprite.clear_plugin_svg_sprite_cache!
     SvgSprite.expire_cache
   end
@@ -11,11 +13,13 @@ RSpec.describe SvgSprite do
   it "can generate a bundle" do
     bundle = SvgSprite.bundle
     expect(bundle).to match(/heart/)
-    expect(bundle).to match(/angle-double-down/)
+    expect(bundle).to match(/angles-down/)
   end
 
   it "can generate paths" do
     version = SvgSprite.version # Icons won't change for this test
+
+    expect(SvgSprite.bundle).to eq(SvgSprite.bundle(1)) # This test flakes from time to time, adding this assertion to help us debug the issue.
     expect(SvgSprite.path).to eq("/svg-sprite/#{Discourse.current_hostname}/svg--#{version}.js")
     expect(SvgSprite.path(1)).to eq("/svg-sprite/#{Discourse.current_hostname}/svg-1-#{version}.js")
 
@@ -26,13 +30,12 @@ RSpec.describe SvgSprite do
   end
 
   it "can search for a specific FA icon" do
-    expect(SvgSprite.search("fa-heart")).to match(/heart/)
     expect(SvgSprite.search("poo-storm")).to match(/poo-storm/)
     expect(SvgSprite.search("this-is-not-an-icon")).to eq(false)
   end
 
   it "can get a raw SVG for an icon" do
-    expect(SvgSprite.raw_svg("fa-heart")).to match(/svg.*svg/) # SVG inside SVG
+    expect(SvgSprite.raw_svg("heart")).to match(/svg.*svg/) # SVG inside SVG
     expect(SvgSprite.raw_svg("this-is-not-an-icon")).to eq("")
   end
 
@@ -45,7 +48,7 @@ RSpec.describe SvgSprite do
 
   it "version string changes" do
     version1 = SvgSprite.version
-    Fabricate(:badge, name: "Custom Icon Badge", icon: "fa-gamepad")
+    Fabricate(:badge, name: "Custom Icon Badge", icon: "gamepad")
     version2 = SvgSprite.version
 
     expect(version1).not_to eq(version2)
@@ -88,13 +91,13 @@ RSpec.describe SvgSprite do
 
   it "strips whitespace when processing icons" do
     Fabricate(:badge, name: "Custom Icon Badge", icon: "  fab fa-facebook-messenger  ")
-    expect(SvgSprite.all_icons).to include("fab-facebook-messenger")
-    expect(SvgSprite.all_icons).not_to include("  fab-facebook-messenger  ")
+    expect(SvgSprite.all_icons).to include("fab fa-facebook-messenger")
+    expect(SvgSprite.all_icons).not_to include("  fab fa-facebook-messenger  ")
   end
 
-  it "includes Font Awesome 5 icons from badges" do
+  it "includes icons from badges" do
     Fabricate(:badge, name: "Custom Icon Badge", icon: "far fa-building")
-    expect(SvgSprite.all_icons).to include("far-building")
+    expect(SvgSprite.all_icons).to include("far fa-building")
   end
 
   it "includes icons defined in theme settings" do
@@ -122,7 +125,7 @@ RSpec.describe SvgSprite do
     # FA5 syntax
     theme.update_setting(:custom_icon, "fab fa-bandcamp")
     theme.save!
-    expect(SvgSprite.all_icons(theme.id)).to include("fab-bandcamp")
+    expect(SvgSprite.all_icons(theme.id)).to include("fab fa-bandcamp")
 
     # Internal Discourse syntax + multiple icons
     theme.update_setting(:custom_icon, "fab-android|dragon")
@@ -190,8 +193,7 @@ RSpec.describe SvgSprite do
       SvgSprite.bundle(theme.id)
       expect(SvgSprite.cache.hash.keys).to include("theme_svg_sprites_#{theme.id}")
 
-      external_copy = Discourse.store.download(upload_s3)
-      File.delete external_copy.try(:path)
+      File.delete(Discourse.store.download(upload_s3))
 
       SvgSprite.bundle(theme.id)
       # after a temp file is missing, bundling still works
@@ -200,16 +202,16 @@ RSpec.describe SvgSprite do
   end
 
   it "includes icons from SiteSettings" do
-    SiteSetting.svg_icon_subset = "blender|drafting-compass|fab-bandcamp"
+    SiteSetting.svg_icon_subset = "blender|compass-drafting|fab-bandcamp"
 
     all_icons = SvgSprite.all_icons
     expect(all_icons).to include("blender")
-    expect(all_icons).to include("drafting-compass")
+    expect(all_icons).to include("compass-drafting")
     expect(all_icons).to include("fab-bandcamp")
 
-    SiteSetting.svg_icon_subset = nil
+    SiteSetting.svg_icon_subset = ""
     SvgSprite.expire_cache
-    expect(SvgSprite.all_icons).not_to include("drafting-compass")
+    expect(SvgSprite.all_icons).not_to include("compass-drafting")
 
     # does not fail on non-string setting
     SiteSetting.svg_icon_subset = false
@@ -222,7 +224,7 @@ RSpec.describe SvgSprite do
     DiscoursePluginRegistry.register_svg_icon "fab fa-bandcamp"
 
     expect(SvgSprite.all_icons).to include("blender")
-    expect(SvgSprite.all_icons).to include("fab-bandcamp")
+    expect(SvgSprite.all_icons).to include("fab fa-bandcamp")
   end
 
   it "includes Font Awesome icon from groups" do

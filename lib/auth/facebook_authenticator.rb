@@ -1,10 +1,18 @@
 # frozen_string_literal: true
 
 class Auth::FacebookAuthenticator < Auth::ManagedAuthenticator
-  AVATAR_SIZE ||= 480
+  AVATAR_SIZE = 480
 
   def name
     "facebook"
+  end
+
+  def display_name
+    "Facebook"
+  end
+
+  def provider_url
+    "https://www.facebook.com"
   end
 
   def enabled?

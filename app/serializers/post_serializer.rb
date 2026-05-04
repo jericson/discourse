@@ -2,7 +2,7 @@
 
 class PostSerializer < BasicPostSerializer
   # To pass in additional information we might need
-  INSTANCE_VARS ||= %i[
+  INSTANCE_VARS = %i[
     parent_post
     add_raw
     add_title
@@ -11,12 +11,14 @@ class PostSerializer < BasicPostSerializer
     post_actions
     all_post_actions
     add_excerpt
+    notice_created_by_users
   ]
 
   INSTANCE_VARS.each { |v| self.public_send(:attr_accessor, v) }
 
   attributes :post_number,
              :post_type,
+             :posts_count,
              :updated_at,
              :reply_count,
              :reply_to_post_number,
@@ -38,6 +40,7 @@ class PostSerializer < BasicPostSerializer
              :flair_bg_color,
              :flair_color,
              :flair_group_id,
+             :badges_granted,
              :version,
              :can_edit,
              :can_delete,
@@ -80,15 +83,24 @@ class PostSerializer < BasicPostSerializer
              :action_code_who,
              :action_code_path,
              :notice,
+             :notice_created_by_user,
              :last_wiki_edit,
              :locked,
              :excerpt,
+             :truncated,
              :reviewable_id,
              :reviewable_score_count,
              :reviewable_score_pending_count,
              :user_suspended,
              :user_status,
-             :mentioned_users
+             :mentioned_users,
+             :post_url,
+             :post_localizations_count,
+             :can_localize_post,
+             :locale,
+             :is_localized,
+             :language,
+             :localization_outdated
 
   def initialize(object, opts)
     super(object, opts)
@@ -96,6 +108,10 @@ class PostSerializer < BasicPostSerializer
     PostSerializer::INSTANCE_VARS.each do |name|
       self.public_send("#{name}=", opts[name]) if opts.include? name
     end
+  end
+
+  def post_url
+    object&.url
   end
 
   def topic_slug
@@ -118,12 +134,24 @@ class PostSerializer < BasicPostSerializer
     @add_excerpt
   end
 
+  def include_truncated?
+    @add_excerpt
+  end
+
+  def truncated
+    true
+  end
+
   def topic_title
     topic&.title
   end
 
   def topic_html_title
     topic&.fancy_title
+  end
+
+  def posts_count
+    topic&.posts_count
   end
 
   def category_id
@@ -223,6 +251,18 @@ class PostSerializer < BasicPostSerializer
     object.user&.flair_group_id
   end
 
+  def badges_granted
+    return [] unless SiteSetting.enable_badges && SiteSetting.show_badges_in_post_header
+
+    if @topic_view
+      user_badges = @topic_view.post_user_badges[object.id] || []
+    else
+      user_badges = UserBadge.for_post_header_badges([object])
+    end
+
+    user_badges.map { |user_badge| BasicUserBadgeSerializer.new(user_badge, scope: scope).as_json }
+  end
+
   def link_counts
     return @single_post_link_counts if @single_post_link_counts.present?
 
@@ -264,6 +304,7 @@ class PostSerializer < BasicPostSerializer
 
   def reply_to_user
     {
+      id: object.reply_to_user.id,
       username: object.reply_to_user.username,
       name: object.reply_to_user.name,
       avatar_template: object.reply_to_user.avatar_template,
@@ -290,7 +331,12 @@ class PostSerializer < BasicPostSerializer
     result = []
     can_see_post = scope.can_see_post?(object)
 
-    PostActionType.types.each do |sym, id|
+    @post_action_type_view =
+      @topic_view ? @topic_view.post_action_type_view : PostActionTypeView.new
+
+    public_flag_types = @post_action_type_view.public_types
+
+    @post_action_type_view.types.each do |sym, id|
       count_col = "#{sym}_count".to_sym
 
       count = object.public_send(count_col) if object.respond_to?(count_col)
@@ -301,6 +347,9 @@ class PostSerializer < BasicPostSerializer
            sym,
            opts: {
              taken_actions: actions,
+             notify_flag_types: @post_action_type_view.notify_flag_types,
+             additional_message_types: @post_action_type_view.additional_message_types,
+             post_action_type_view: @post_action_type_view,
            },
            can_see_post: can_see_post,
          )
@@ -315,7 +364,7 @@ class PostSerializer < BasicPostSerializer
         summary.delete(:can_act)
       end
 
-      if actions.present? && SiteSetting.allow_anonymous_likes && sym == :like &&
+      if actions.present? && SiteSetting.allow_likes_in_anonymous_mode && sym == :like &&
            !scope.can_delete_post_action?(actions[id])
         summary.delete(:can_act)
       end
@@ -327,14 +376,14 @@ class PostSerializer < BasicPostSerializer
       end
 
       # only show public data
-      unless scope.is_staff? || PostActionType.public_types.values.include?(id)
+      unless scope.is_staff? || public_flag_types.values.include?(id)
         summary[:count] = summary[:acted] ? 1 : 0
       end
 
       summary.delete(:count) if summary[:count].to_i.zero?
 
-      # Only include it if the user can do it or it has a count
-      result << summary if summary[:can_act] || summary[:count]
+      # Only include it if the user can do it, it has a count, or the user has acted
+      result << summary if summary[:can_act] || summary[:count] || summary[:acted]
     end
 
     result
@@ -478,6 +527,19 @@ class PostSerializer < BasicPostSerializer
     include_action_code? && action_code_path.present?
   end
 
+  def include_notice_created_by_user?
+    scope.is_staff? && notice.present? && notice_created_by_users.present?
+  end
+
+  def notice_created_by_user
+    return if notice.blank?
+    return if notice["type"] != Post.notices[:custom]
+    return if notice["created_by_user_id"].blank?
+    found_user = notice_created_by_users&.find { |user| user.id == notice["created_by_user_id"] }
+    return if !found_user
+    BasicUserSerializer.new(found_user, root: false).as_json
+  end
+
   def notice
     post_custom_fields[Post::NOTICE]
   end
@@ -569,7 +631,8 @@ class PostSerializer < BasicPostSerializer
   end
 
   def include_user_status?
-    SiteSetting.enable_user_status && object.user&.has_status?
+    SiteSetting.enable_user_status && object.user&.has_status? &&
+      scope&.can_see_user_status?(object.user)
   end
 
   def user_status
@@ -583,7 +646,7 @@ class PostSerializer < BasicPostSerializer
       else
         query = User.includes(:user_option)
         query = query.includes(:user_status) if SiteSetting.enable_user_status
-        query = query.where(username: object.mentions)
+        query = query.where(username_lower: object.mentions)
       end
 
     users.map { |user| BasicUserSerializer.new(user, root: false, include_status: true).as_json }
@@ -591,6 +654,54 @@ class PostSerializer < BasicPostSerializer
 
   def include_mentioned_users?
     SiteSetting.enable_user_status
+  end
+
+  def post_localizations_count
+    object.localizations.size
+  end
+
+  def include_post_localizations_count?
+    SiteSetting.content_localization_enabled && scope.can_localize_post?(object)
+  end
+
+  def can_localize_post
+    true
+  end
+
+  def include_can_localize_post?
+    SiteSetting.content_localization_enabled && scope.can_localize_post?(object)
+  end
+
+  def raw
+    object.raw
+  end
+
+  def include_locale?
+    SiteSetting.content_localization_enabled
+  end
+
+  def is_localized
+    ContentLocalization.show_translated_post?(object, scope) && object.has_localization?
+  end
+
+  def include_is_localized?
+    SiteSetting.content_localization_enabled
+  end
+
+  def language
+    locale
+  end
+
+  def include_language?
+    SiteSetting.content_localization_enabled && object.locale.present?
+  end
+
+  def localization_outdated
+    object.has_localization? && object.get_localization.post_version != object.version
+  end
+
+  def include_localization_outdated?
+    include_is_localized? && is_localized
   end
 
   private

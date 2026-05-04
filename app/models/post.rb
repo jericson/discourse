@@ -9,11 +9,9 @@ class Post < ActiveRecord::Base
   include Searchable
   include HasCustomFields
   include LimitedEdit
-
-  self.ignored_columns = [
-    "avg_time", # TODO: Remove when 20240212034010_drop_deprecated_columns has been promoted to pre-deploy
-    "image_url", # TODO: Remove when 20240212034010_drop_deprecated_columns has been promoted to pre-deploy
-  ]
+  include Localizable
+  include HasPostUploadReferences
+  include HasNestedReplyStats
 
   cattr_accessor :plugin_permitted_create_params, :plugin_permitted_update_params
   self.plugin_permitted_create_params = {}
@@ -56,6 +54,15 @@ class Post < ActiveRecord::Base
   has_many :post_revisions
   has_many :revisions, -> { order(:number) }, foreign_key: :post_id, class_name: "PostRevision"
 
+  has_many :moved_posts_as_old_post,
+           class_name: "MovedPost",
+           foreign_key: :old_post_id,
+           dependent: :destroy
+  has_many :moved_posts_as_new_post,
+           class_name: "MovedPost",
+           foreign_key: :new_post_id,
+           dependent: :destroy
+
   has_many :user_actions, foreign_key: :target_post_id
 
   belongs_to :image_upload, class_name: "Upload"
@@ -77,11 +84,11 @@ class Post < ActiveRecord::Base
                 :skip_unique_check,
                 :skip_validation
 
-  MISSING_UPLOADS ||= "missing uploads"
-  MISSING_UPLOADS_IGNORED ||= "missing uploads ignored"
-  NOTICE ||= "notice"
+  MISSING_UPLOADS = "missing uploads"
+  MISSING_UPLOADS_IGNORED = "missing uploads ignored"
+  NOTICE = "notice"
 
-  SHORT_POST_CHARS ||= 1200
+  SHORT_POST_CHARS = 1200
 
   register_custom_field_type(MISSING_UPLOADS, :json)
   register_custom_field_type(MISSING_UPLOADS_IGNORED, :boolean)
@@ -102,7 +109,7 @@ class Post < ActiveRecord::Base
   scope :with_user, -> { includes(:user) }
   scope :created_since, ->(time_ago) { where("posts.created_at > ?", time_ago) }
   scope :public_posts,
-        -> { joins(:topic).where("topics.archetype <> ?", Archetype.private_message) }
+        -> { joins(:topic).where.not(topics: { archetype: Archetype.private_message }) }
   scope :private_posts,
         -> { joins(:topic).where("topics.archetype = ?", Archetype.private_message) }
   scope :with_topic_subtype, ->(subtype) { joins(:topic).where("topics.subtype = ?", subtype) }
@@ -257,6 +264,8 @@ class Post < ActiveRecord::Base
     recover_public_post_actions
     TopicLink.extract_from(self)
     QuotedPost.extract_from(self)
+    extract_quoted_post_numbers
+    save_reply_relationships
     topic.category.update_latest if topic && topic.category_id && topic.category
   end
 
@@ -325,6 +334,7 @@ class Post < ActiveRecord::Base
     # is referencing.
     options[:user_id] = self.last_editor_id
     options[:omit_nofollow] = true if omit_nofollow?
+    options[:post_id] = self.id
 
     if self.should_secure_uploads?
       each_upload_url do |url|
@@ -390,7 +400,7 @@ class Post < ActiveRecord::Base
     hosts = linked_hosts.clone
     allowlisted = allowed_spam_hosts
 
-    hosts.reject! { |h| allowlisted.any? { |w| h.end_with?(w) } }
+    hosts.reject! { |h| allowlisted.any? { |w| h == w || h.end_with?(".#{w}") } }
 
     return hosts if hosts.length == 0
 
@@ -542,6 +552,10 @@ class Post < ActiveRecord::Base
     post_number.blank? ? topic.try(:highest_post_number) == 0 : post_number == 1
   end
 
+  def is_last_reply?
+    topic.try(:highest_post_number) == post_number && post_number != 1
+  end
+
   def is_category_description?
     topic.present? && topic.is_category_topic? && is_first_post?
   end
@@ -554,9 +568,13 @@ class Post < ActiveRecord::Base
     flags.count != 0
   end
 
+  def post_action_type_view
+    @post_action_type_view ||= PostActionTypeView.new
+  end
+
   def flags
     post_actions.where(
-      post_action_type_id: PostActionType.flag_types_without_custom.values,
+      post_action_type_id: post_action_type_view.flag_types_without_additional_message.values,
       deleted_at: nil,
     )
   end
@@ -609,6 +627,7 @@ class Post < ActiveRecord::Base
       )
 
     hiding_again = hidden_at.present?
+    should_reset_bumped_at = is_last_reply? && !whisper?
 
     Post.transaction do
       self.skip_validation = true
@@ -619,7 +638,7 @@ class Post < ActiveRecord::Base
       any_visible_posts_in_topic =
         Post.exists?(topic_id: topic_id, hidden: false, post_type: Post.types[:regular])
 
-      if !any_visible_posts_in_topic
+      if is_first_post? || !any_visible_posts_in_topic
         self.topic.update_status(
           "visible",
           false,
@@ -641,9 +660,10 @@ class Post < ActiveRecord::Base
         edit_delay: SiteSetting.cooldown_minutes_after_hiding_posts,
         flag_reason:
           I18n.t(
-            "flag_reasons.#{PostActionType.types[post_action_type_id]}",
+            "flag_reasons.#{post_action_type_view.types[post_action_type_id]}",
             locale: SiteSetting.default_locale,
             base_path: Discourse.base_path,
+            default: PostActionType.names[post_action_type_id],
           ),
       }
 
@@ -658,6 +678,8 @@ class Post < ActiveRecord::Base
         message_options: options,
       )
     end
+
+    topic.reset_bumped_at if should_reset_bumped_at
   end
 
   def unhide!
@@ -681,6 +703,8 @@ class Post < ActiveRecord::Base
         )
         should_update_user_stat = false
       end
+
+      self.topic.reset_bumped_at(self) if is_last_reply? && !whisper?
 
       # We need to do this because TopicStatusUpdater also does the increment
       # and we don't want to double count for the OP.
@@ -806,8 +830,13 @@ class Post < ActiveRecord::Base
     problems
   end
 
-  def rebake!(invalidate_broken_images: false, invalidate_oneboxes: false, priority: nil)
-    new_cooked = cook(raw, topic_id: topic_id, invalidate_oneboxes: invalidate_oneboxes)
+  def rebake!(
+    invalidate_broken_images: false,
+    invalidate_oneboxes: false,
+    priority: nil,
+    skip_publish_rebaked_changes: false
+  )
+    new_cooked = cook(raw, topic_id:, invalidate_oneboxes:)
     old_cooked = cooked
 
     update_columns(cooked: new_cooked, baked_at: Time.zone.now, baked_version: BAKED_VERSION)
@@ -819,14 +848,16 @@ class Post < ActiveRecord::Base
       post_hotlinked_media.upload_create_failed.destroy_all
     end
 
-    # Extracts urls from the body
     TopicLink.extract_from(self)
     QuotedPost.extract_from(self)
 
-    # make sure we trigger the post process
-    trigger_post_process(bypass_bump: true, priority: priority)
+    trigger_post_process(bypass_bump: true, priority:)
 
-    publish_change_to_clients!(:rebaked)
+    # Skip publishing if invalidating oneboxes - the ProcessPost job will
+    # publish :revised after fetching fresh oneboxes, avoiding an intermediate
+    # state where raw links are shown before oneboxes are loaded.
+    should_publish = !skip_publish_rebaked_changes && !invalidate_oneboxes
+    publish_change_to_clients!(:rebaked) if should_publish
 
     new_cooked != old_cooked
   end
@@ -836,6 +867,7 @@ class Post < ActiveRecord::Base
 
     edit_reason = I18n.t("change_owner.post_revision_text", locale: SiteSetting.default_locale)
 
+    old_user = user
     revise(
       actor,
       { raw: self.raw, user_id: new_user.id, edit_reason: edit_reason },
@@ -844,7 +876,10 @@ class Post < ActiveRecord::Base
       skip_validations: true,
     )
 
-    topic.update_columns(last_post_user_id: new_user.id) if post_number == topic.highest_post_number
+    result = topic.update_columns(last_post_user_id: new_user.id) if post_number ==
+      topic.highest_post_number
+    DiscourseEvent.trigger(:post_owner_changed, self, old_user, new_user)
+    result
   end
 
   before_create { PostCreator.before_create_tasks(self) }
@@ -867,6 +902,8 @@ class Post < ActiveRecord::Base
       self.baked_at = Time.zone.now
       self.baked_version = BAKED_VERSION
     end
+
+    self.locale = nil if locale.blank?
   end
 
   def advance_draft_sequence
@@ -970,28 +1007,7 @@ class Post < ActiveRecord::Base
       .count
   end
 
-  def reply_history(max_replies = 100, guardian = nil)
-    post_ids = DB.query_single(<<~SQL, post_id: id, topic_id: topic_id)
-    WITH RECURSIVE breadcrumb(id, reply_to_post_number) AS (
-          SELECT p.id, p.reply_to_post_number FROM posts AS p
-            WHERE p.id = :post_id
-          UNION
-             SELECT p.id, p.reply_to_post_number FROM posts AS p, breadcrumb
-               WHERE breadcrumb.reply_to_post_number = p.post_number
-                 AND p.topic_id = :topic_id
-        )
-    SELECT id from breadcrumb
-    WHERE id <> :post_id
-    ORDER by id
-    SQL
-
-    # [1,2,3][-10,-1] => nil
-    post_ids = (post_ids[(0 - max_replies)..-1] || post_ids)
-
-    Post.secured(guardian).where(id: post_ids).includes(:user, :topic).order(:id).to_a
-  end
-
-  MAX_REPLY_LEVEL ||= 1000
+  MAX_REPLY_LEVEL = 1000
 
   def reply_ids(guardian = nil, only_replies_to_single_post: true)
     builder = DB.build(<<~SQL)
@@ -1041,7 +1057,7 @@ class Post < ActiveRecord::Base
     post_revision = PostRevision.find_by(post_id: id, number: (number + 1))
     post_revision.modifications.each do |attribute, change|
       attribute = "version" if attribute == "cached_version"
-      write_attribute(attribute, change[0])
+      self[attribute] = change[0]
     end
   end
 
@@ -1075,160 +1091,9 @@ class Post < ActiveRecord::Base
     locked_by_id.present?
   end
 
-  def link_post_uploads(fragments: nil)
-    upload_ids = []
-
-    each_upload_url(fragments: fragments) do |src, _, sha1|
-      upload = nil
-      upload = Upload.find_by(sha1: sha1) if sha1.present?
-      upload ||= Upload.get_from_url(src)
-
-      # Link any video thumbnails
-      if SiteSetting.video_thumbnails_enabled && upload.present? &&
-           FileHelper.supported_video.include?(upload.extension&.downcase)
-        # Video thumbnails have the filename of the video file sha1 with a .png or .jpg extension.
-        # This is because at time of upload in the composer we don't know the topic/post id yet
-        # and there is no thumbnail info added to the markdown to tie the thumbnail to the topic/post after
-        # creation.
-        thumbnail =
-          Upload
-            .where("original_filename like ?", "#{upload.sha1}.%")
-            .order(id: :desc)
-            .first if upload.sha1.present?
-        if thumbnail.present?
-          upload_ids << thumbnail.id
-          if self.is_first_post? && !self.topic.image_upload_id
-            self.topic.update_column(:image_upload_id, thumbnail.id)
-            extra_sizes =
-              ThemeModifierHelper.new(
-                theme_ids: Theme.user_selectable.pluck(:id),
-              ).topic_thumbnail_sizes
-            self.topic.generate_thumbnails!(extra_sizes: extra_sizes)
-          end
-        end
-      end
-      upload_ids << upload.id if upload.present?
-    end
-
-    upload_references =
-      upload_ids.map do |upload_id|
-        {
-          target_id: self.id,
-          target_type: self.class.name,
-          upload_id: upload_id,
-          created_at: Time.zone.now,
-          updated_at: Time.zone.now,
-        }
-      end
-
-    UploadReference.transaction do
-      UploadReference.where(target: self).delete_all
-      UploadReference.insert_all(upload_references) if upload_references.size > 0
-
-      if SiteSetting.secure_uploads?
-        Upload
-          .where(id: upload_ids, access_control_post_id: nil)
-          .where("id NOT IN (SELECT upload_id FROM custom_emojis)")
-          .update_all(access_control_post_id: self.id)
-      end
-    end
-  end
-
   def update_uploads_secure_status(source:)
     if Discourse.store.external?
       self.uploads.each { |upload| upload.update_secure_status(source: source) }
-    end
-  end
-
-  def each_upload_url(fragments: nil, include_local_upload: true)
-    current_db = RailsMultisite::ConnectionManagement.current_db
-
-    upload_patterns = [
-      %r{/uploads/#{current_db}/},
-      %r{/original/},
-      %r{/optimized/},
-      %r{/uploads/short-url/[a-zA-Z0-9]+(\.[a-z0-9]+)?},
-    ]
-
-    fragments ||= Nokogiri::HTML5.fragment(self.cooked)
-
-    selectors =
-      fragments.css(
-        "a/@href",
-        "img/@src",
-        "source/@src",
-        "track/@src",
-        "video/@poster",
-        "div/@data-video-src",
-      )
-
-    links =
-      selectors
-        .map do |media|
-          src = media.value
-          next if src.blank?
-
-          if src.end_with?("/images/transparent.png") &&
-               (parent = media.parent)["data-orig-src"].present?
-            parent["data-orig-src"]
-          else
-            src
-          end
-        end
-        .compact
-        .uniq
-
-    links.each do |src|
-      src = src.split("?")[0]
-
-      if src.start_with?("upload://")
-        sha1 = Upload.sha1_from_short_url(src)
-        yield(src, nil, sha1)
-        next
-      end
-
-      if src.include?("/uploads/short-url/")
-        host =
-          begin
-            URI(src).host
-          rescue URI::Error
-          end
-
-        next if host.present? && host != Discourse.current_hostname
-
-        sha1 = Upload.sha1_from_short_path(src)
-        yield(src, nil, sha1)
-        next
-      end
-
-      next if upload_patterns.none? { |pattern| src =~ pattern }
-      next if Rails.configuration.multisite && src.exclude?(current_db)
-
-      src = "#{SiteSetting.force_https ? "https" : "http"}:#{src}" if src.start_with?("//")
-
-      if !Discourse.store.has_been_uploaded?(src) && !Upload.secure_uploads_url?(src) &&
-           !(include_local_upload && src =~ %r{\A/[^/]}i)
-        next
-      end
-
-      path =
-        begin
-          URI(
-            UrlHelper.unencode(GlobalSetting.cdn_url ? src.sub(GlobalSetting.cdn_url, "") : src),
-          )&.path
-        rescue URI::Error
-        end
-
-      next if path.blank?
-
-      sha1 =
-        if path.include? "optimized"
-          OptimizedImage.extract_sha1(path)
-        else
-          Upload.extract_sha1(path) || Upload.sha1_from_short_path(path)
-        end
-
-      yield(src, path, sha1)
     end
   end
 
@@ -1325,9 +1190,22 @@ class Post < ActiveRecord::Base
 
   private
 
+  def access_control_post_id_for_upload
+    self.id
+  end
+
+  def handle_video_thumbnail(thumbnail)
+    if self.is_first_post? && !self.topic.image_upload_id
+      self.topic.update_column(:image_upload_id, thumbnail.id)
+      extra_sizes =
+        ThemeModifierHelper.new(theme_ids: Theme.user_selectable.pluck(:id)).topic_thumbnail_sizes
+      self.topic.generate_thumbnails!(extra_sizes: extra_sizes)
+    end
+  end
+
   def parse_quote_into_arguments(quote)
     return {} if quote.blank?
-    args = HashWithIndifferentAccess.new
+    args = ActiveSupport::HashWithIndifferentAccess.new
     quote.first.scan(/([a-z]+)\:(\d+)/).each { |arg| args[arg[0]] = arg[1].to_i }
     args
   end
@@ -1404,6 +1282,7 @@ end
 #  locked_by_id            :integer
 #  image_upload_id         :bigint
 #  outbound_message_id     :string
+#  locale                  :string(20)
 #
 # Indexes
 #
@@ -1411,9 +1290,14 @@ end
 #  idx_posts_deleted_posts                                (topic_id,post_number) WHERE (deleted_at IS NOT NULL)
 #  idx_posts_user_id_deleted_at                           (user_id) WHERE (deleted_at IS NULL)
 #  index_for_rebake_old                                   (id) WHERE (((baked_version IS NULL) OR (baked_version < 2)) AND (deleted_at IS NULL))
+#  index_posts_on_deleted_by_id                           (deleted_by_id) WHERE (deleted_by_id IS NOT NULL)
 #  index_posts_on_id_and_baked_version                    (id DESC,baked_version) WHERE (deleted_at IS NULL)
 #  index_posts_on_id_topic_id_where_not_deleted_or_empty  (id,topic_id) WHERE ((deleted_at IS NULL) AND (raw <> ''::text))
 #  index_posts_on_image_upload_id                         (image_upload_id)
+#  index_posts_on_last_editor_id                          (last_editor_id) WHERE (last_editor_id IS NOT NULL)
+#  index_posts_on_locale                                  (locale)
+#  index_posts_on_locked_by_id                            (locked_by_id) WHERE (locked_by_id IS NOT NULL)
+#  index_posts_on_reply_to_user_id                        (reply_to_user_id) WHERE (reply_to_user_id IS NOT NULL)
 #  index_posts_on_topic_id_and_created_at                 (topic_id,created_at)
 #  index_posts_on_topic_id_and_percent_rank               (topic_id,percent_rank)
 #  index_posts_on_topic_id_and_post_number                (topic_id,post_number) UNIQUE

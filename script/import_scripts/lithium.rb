@@ -15,7 +15,7 @@
 require "mysql2"
 require "csv"
 require "reverse_markdown"
-require File.expand_path(File.dirname(__FILE__) + "/base.rb")
+require_relative "base"
 require "htmlentities"
 
 # remove table conversion
@@ -1090,7 +1090,7 @@ SQL
     files.each do |file|
       upload, filename = find_upload(user_id, file["attachment_id"], file["file_name"])
       if upload.present?
-        html << "\n" if html.present?
+        html.presence&.<<("\n")
         html << html_for_upload(upload, filename)
       end
     end

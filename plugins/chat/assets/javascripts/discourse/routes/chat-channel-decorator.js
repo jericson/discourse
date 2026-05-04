@@ -7,6 +7,7 @@ export default function withChatChannel(extendedClass) {
     @service router;
 
     async model(params) {
+      await this.chat.loadChannels();
       return this.chatChannelsManager.find(params.channelId);
     }
 
@@ -15,10 +16,12 @@ export default function withChatChannel(extendedClass) {
         return;
       }
 
+      const title = this.currentModel.displayTitle;
+
       if (this.currentModel.isDirectMessageChannel) {
-        return `${this.currentModel.title}`;
+        return `${title}`;
       } else {
-        return `#${this.currentModel.title}`;
+        return `#${title}`;
       }
     }
 
@@ -73,7 +76,7 @@ export default function withChatChannel(extendedClass) {
           this.router.replaceWith("chat.channel", ...model.routeModels);
         }
       } else {
-        this.controllerFor("chat-channel").set("targetMessageId", null);
+        this.controllerFor("chat.channel").set("targetMessageId", null);
       }
     }
   };

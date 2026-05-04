@@ -10,7 +10,7 @@ class SidebarSectionsController < ApplicationController
         .strict_loading
         .includes(:sidebar_urls)
         .where("public OR user_id = ?", current_user.id)
-        .order("(public IS TRUE) DESC, title ASC")
+        .order("section_type IS NOT NULL DESC, public DESC, title ASC")
 
     sections =
       ActiveModel::ArraySerializer.new(
@@ -41,7 +41,7 @@ class SidebarSectionsController < ApplicationController
   end
 
   def update
-    sidebar_section = SidebarSection.find_by(id: section_params["id"])
+    sidebar_section = SidebarSection.find(section_params["id"])
     @guardian.ensure_can_edit!(sidebar_section)
 
     ActiveRecord::Base.transaction do
@@ -74,7 +74,7 @@ class SidebarSectionsController < ApplicationController
   rescue ActiveRecord::NestedAttributes::TooManyRecords => e
     render_json_error(e.message)
   rescue Discourse::InvalidAccess
-    render json: failed_json, status: 403
+    render json: failed_json, status: :forbidden
   end
 
   def reset
@@ -91,7 +91,7 @@ class SidebarSectionsController < ApplicationController
   end
 
   def destroy
-    sidebar_section = SidebarSection.find_by(id: section_params["id"])
+    sidebar_section = SidebarSection.find(section_params["id"])
     @guardian.ensure_can_delete!(sidebar_section)
     sidebar_section.destroy!
 
@@ -102,7 +102,7 @@ class SidebarSectionsController < ApplicationController
 
     render json: success_json
   rescue Discourse::InvalidAccess
-    render json: failed_json, status: 403
+    render json: failed_json, status: :forbidden
   end
 
   def section_params

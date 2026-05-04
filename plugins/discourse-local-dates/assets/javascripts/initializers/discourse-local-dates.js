@@ -1,25 +1,31 @@
+import { setOwner } from "@ember/owner";
 import { service } from "@ember/service";
-import { htmlSafe } from "@ember/template";
+import { dasherize } from "@ember/string";
+import { trustHTML } from "@ember/template";
+import { bbcodeAttributeDecode } from "discourse/lib/bbcode-attributes";
+import { bind } from "discourse/lib/decorators";
 import { downloadCalendar } from "discourse/lib/download-calendar";
+import { iconHTML, renderIcon } from "discourse/lib/icon-library";
 import { withPluginApi } from "discourse/lib/plugin-api";
 import {
   addTagDecorateCallback,
   addTextDecorateCallback,
 } from "discourse/lib/to-markdown";
-import { renderIcon } from "discourse-common/lib/icon-library";
-import { bind } from "discourse-common/utils/decorators";
-import I18n from "discourse-i18n";
+import { slugify } from "discourse/lib/utilities";
+import { i18n } from "discourse-i18n";
 import generateDateMarkup from "discourse/plugins/discourse-local-dates/lib/local-date-markup-generator";
 import LocalDatesCreateModal from "../discourse/components/modal/local-dates-create";
+import generateCurrentDateMarkup from "../lib/generate-current-date-markup";
 import LocalDateBuilder from "../lib/local-date-builder";
+import richEditorExtension from "../lib/rich-editor-extension";
 
 // Import applyLocalDates from discourse/lib/local-dates instead
-export function applyLocalDates(dates, siteSettings) {
+export function applyLocalDates(dates, siteSettings, timezone) {
   if (!siteSettings.discourse_local_dates_enabled) {
     return;
   }
 
-  const currentUserTZ = moment.tz.guess();
+  const currentUserTZ = timezone || moment.tz.guess();
 
   dates.forEach((element, index, arr) => {
     const opts = buildOptionsFromElement(element, siteSettings);
@@ -40,12 +46,8 @@ export function applyLocalDates(dates, siteSettings) {
     element.innerText = "";
     element.insertAdjacentHTML(
       "beforeend",
-      `
-        <svg class="fa d-icon d-icon-globe-americas svg-icon" xmlns="http://www.w3.org/2000/svg">
-          <use href="#globe-americas"></use>
-        </svg>
-        <span class="relative-time">${localDateBuilder.formatted}</span>
-      `
+      `${iconHTML("earth-americas")}
+        <span class="relative-time">${localDateBuilder.formatted}</span>`
     );
     element.setAttribute("aria-label", localDateBuilder.textPreview);
 
@@ -93,10 +95,12 @@ function buildOptionsFromElement(element, siteSettings) {
     .split("|")
     .filter(Boolean);
   opts.timezone = dataset.timezone;
-  opts.calendar = (dataset.calendar || "on") === "on";
   opts.displayedTimezone = dataset.displayedTimezone;
   opts.format = dataset.format || (opts.time ? "LLL" : "LL");
   opts.countdown = dataset.countdown;
+  opts.calendar = dataset.calendar
+    ? dataset.calendar === "on"
+    : !dataset.format;
   return opts;
 }
 
@@ -104,7 +108,7 @@ function buildOptionsFromMarkdownTag(element) {
   const opts = {};
 
   // siteSettings defaults as used by buildOptionsFromElement are purposefully
-  // ommitted to reproduce exactly what was on the original element
+  // omitted to reproduce exactly what was on the original element
   opts.time = element.attributes["data-time"];
   opts.date = element.attributes["data-date"];
   opts.recurring = element.attributes["data-recurring"];
@@ -145,8 +149,11 @@ function _partitionedRanges(element) {
 }
 
 function initializeDiscourseLocalDates(api) {
+  api.registerRichEditorExtension(richEditorExtension);
+
+  const modal = api.container.lookup("service:modal");
   const siteSettings = api.container.lookup("service:site-settings");
-  const defaultTitle = I18n.t("discourse_local_dates.default_title", {
+  const defaultTitle = i18n("discourse_local_dates.default_title", {
     site_name: siteSettings.title,
   });
 
@@ -161,47 +168,33 @@ function initializeDiscourseLocalDates(api) {
     });
   });
 
-  api.onToolbarCreate((toolbar) => {
-    toolbar.addButton({
-      title: "discourse_local_dates.title",
-      id: "local-dates",
-      group: "extras",
-      icon: "calendar-alt",
-      sendAction: (event) =>
-        toolbar.context.send("insertDiscourseLocalDate", event),
-    });
-  });
-
-  api.modifyClass("component:d-editor", {
-    modal: service(),
-    pluginId: "discourse-local-dates",
-    actions: {
-      insertDiscourseLocalDate(toolbarEvent) {
-        this.modal.show(LocalDatesCreateModal, {
-          model: {
-            insertDate: (markup) => {
-              toolbarEvent.addText(markup);
-            },
-          },
-        });
-      },
+  api.addComposerToolbarPopupMenuOption({
+    name: "local-dates",
+    label: "discourse_local_dates.title",
+    icon: "far-clock",
+    action: (event) =>
+      modal.show(LocalDatesCreateModal, {
+        model: { insertDate: (markup) => event.addText(markup) },
+      }),
+    shortcut: "Shift+.",
+    alwaysShowShortcut: true,
+    shortcutAction: (event) => {
+      const timezone = api.getCurrentUser().user_option.timezone;
+      event.addText(generateCurrentDateMarkup(timezone));
     },
   });
 
-  addTextDecorateCallback(function (
-    text,
-    nextElement,
-    _previousElement,
-    metadata
-  ) {
-    if (
-      metadata.discourseLocalDateStartRangeOpts &&
-      nextElement?.attributes.class?.includes("discourse-local-date") &&
-      text === "→"
-    ) {
-      return "";
+  addTextDecorateCallback(
+    function (text, nextElement, _previousElement, metadata) {
+      if (
+        metadata.discourseLocalDateStartRangeOpts &&
+        nextElement?.attributes.class?.includes("discourse-local-date") &&
+        text === "→"
+      ) {
+        return "";
+      }
     }
-  });
+  );
   addTagDecorateCallback(function () {
     if (this.element.attributes.class?.includes("discourse-local-date")) {
       if (this.metadata.discourseLocalDateStartRangeOpts) {
@@ -255,6 +248,7 @@ function buildHtmlPreview(element, siteSettings) {
 
   const htmlPreviews = localDateBuilder.previews.map((preview) => {
     const previewNode = document.createElement("div");
+    previewNode.dataset.timezone = dasherize(preview.timezone);
     previewNode.classList.add("preview");
     if (preview.current) {
       previewNode.classList.add("current");
@@ -315,7 +309,7 @@ function _downloadCalendarNode(element) {
 
   const node = document.createElement("div");
   node.classList.add("download-calendar");
-  node.innerHTML = `${renderIcon("string", "file")} ${I18n.t(
+  node.innerHTML = `${renderIcon("string", "file")} ${i18n(
     "download_calendar.add_to_calendar"
   )}`;
   node.setAttribute("data-starts-at", startDate.toISOString());
@@ -325,7 +319,18 @@ function _downloadCalendarNode(element) {
   if (!startDataset.time && !endDataset) {
     node.setAttribute("data-ends-at", startDate.add(24, "hours").toISOString());
   }
-  node.setAttribute("data-title", startDataset.title);
+  if (startDataset.title) {
+    node.setAttribute("data-title", startDataset.title);
+  }
+  if (startDataset.timezone) {
+    node.setAttribute("data-timezone", startDataset.timezone);
+  }
+
+  // If ics data is available, pass it to the download button
+  if (startDataset.ics) {
+    node.setAttribute("data-ics", startDataset.ics);
+  }
+
   return node;
 }
 
@@ -345,47 +350,96 @@ function _calculateDuration(element) {
   return element.dataset === startDataset ? duration : -duration;
 }
 
-export default {
-  name: "discourse-local-dates",
+class LocalDatesInit {
+  @service siteSettings;
+  @service tooltip;
+
+  constructor(owner) {
+    setOwner(this, owner);
+
+    window.addEventListener("click", this.showDatePopover, { passive: true });
+
+    if (this.siteSettings.discourse_local_dates_enabled) {
+      withPluginApi(initializeDiscourseLocalDates);
+    }
+  }
 
   @bind
   showDatePopover(event) {
-    const tooltip = this.container.lookup("service:tooltip");
-
     if (event?.target?.classList?.contains("download-calendar")) {
       const dataset = event.target.dataset;
-      downloadCalendar(dataset.title, [
-        {
-          startsAt: dataset.startsAt,
-          endsAt: dataset.endsAt,
-        },
-      ]);
 
-      return tooltip.close("local-date");
+      if (dataset.ics) {
+        const icsData = bbcodeAttributeDecode(dataset.ics);
+
+        let title;
+        if (dataset.title) {
+          title = dataset.title;
+        } else {
+          // Extract event title from ICS SUMMARY field for filename if title missing
+          const summaryMatch = icsData.match(/SUMMARY:(.+?)[\r\n]/);
+          if (summaryMatch && summaryMatch[1]) {
+            title = summaryMatch[1].trim();
+          }
+        }
+
+        this.downloadIcs(title || "event", icsData);
+      } else {
+        const dates = [
+          {
+            startsAt: dataset.startsAt,
+            endsAt: dataset.endsAt,
+          },
+        ];
+
+        // Add timezone if available
+        if (dataset.timezone) {
+          dates[0].timezone = dataset.timezone;
+        }
+
+        downloadCalendar(dataset.title, dates);
+      }
+
+      return this.tooltip.close("local-date");
     }
 
     if (!event?.target?.classList?.contains("discourse-local-date")) {
       return;
     }
 
-    const siteSettings = this.container.lookup("service:site-settings");
-    return tooltip.show(event.target, {
+    return this.tooltip.show(event.target, {
       identifier: "local-date",
-      content: htmlSafe(buildHtmlPreview(event.target, siteSettings)),
+      content: trustHTML(buildHtmlPreview(event.target, this.siteSettings)),
     });
-  },
+  }
 
-  initialize(container) {
-    this.container = container;
-    window.addEventListener("click", this.showDatePopover, { passive: true });
-
-    const siteSettings = container.lookup("service:site-settings");
-    if (siteSettings.discourse_local_dates_enabled) {
-      withPluginApi("0.8.8", initializeDiscourseLocalDates);
+  downloadIcs(title, icsData) {
+    const blob = new Blob([icsData], { type: "text/calendar;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    try {
+      const a = document.createElement("a");
+      a.href = url;
+      const fileName = slugify(title);
+      a.download = `${fileName}.ics`;
+      // Most browsers allow clicking without attaching to DOM.
+      a.click();
+    } finally {
+      // Revoke on next tick so the download can start.
+      setTimeout(() => URL.revokeObjectURL(url), 0);
     }
-  },
+  }
 
   teardown() {
     window.removeEventListener("click", this.showDatePopover);
+  }
+}
+
+export default {
+  initialize(owner) {
+    this.instance = new LocalDatesInit(owner);
+  },
+  teardown() {
+    this.instance.teardown();
+    this.instance = null;
   },
 };

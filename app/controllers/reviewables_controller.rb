@@ -8,6 +8,10 @@ class ReviewablesController < ApplicationController
   before_action :version_required, only: %i[update perform]
   before_action :ensure_can_see, except: [:destroy]
 
+  around_action :with_deleted_content,
+                only: %i[index show],
+                if: ->(controller) { controller.guardian.is_staff? }
+
   def index
     offset = params[:offset].to_i
 
@@ -32,9 +36,18 @@ class ReviewablesController < ApplicationController
       additional_filters: additional_filters.reject { |_, v| v.blank? },
     }
 
-    %i[priority username reviewed_by from_date to_date type sort_order].each do |filter_key|
-      filters[filter_key] = params[filter_key]
-    end
+    %i[
+      priority
+      username
+      reviewed_by
+      claimed_by
+      from_date
+      to_date
+      type
+      sort_order
+      flagged_by
+      score_type
+    ].each { |filter_key| filters[filter_key] = params[filter_key] }
 
     total_rows = Reviewable.list_for(current_user, **filters).count
     reviewables =
@@ -62,6 +75,12 @@ class ReviewablesController < ApplicationController
           total_rows_reviewables: total_rows,
           types: meta_types,
           reviewable_types: Reviewable.types,
+          unknown_reviewable_types_and_sources: Reviewable.unknown_types_and_sources,
+          score_types:
+            ReviewableScore
+              .types
+              .filter { |k, v| k != :notify_user }
+              .map { |k, v| { id: v, name: ReviewableScore.type_title(k) } },
           reviewable_count: current_user.reviewable_count,
           unseen_reviewable_count: Reviewable.unseen_reviewable_count(current_user),
         ),
@@ -178,6 +197,26 @@ class ReviewablesController < ApplicationController
     render json: success_json
   end
 
+  def scrub
+    raise Discourse::InvalidAccess unless @guardian.is_admin?
+
+    params.require(:reason)
+
+    reviewable =
+      Reviewable.find_by(
+        id: params[:reviewable_id],
+        status: Reviewable.statuses[:rejected],
+        type: Reviewable.scrubbable_types,
+      )
+    raise Discourse::NotFound if reviewable.blank?
+
+    raise Discourse::InvalidAccess if reviewable.payload["scrubbed_by"].present?
+
+    reviewable.scrub(params[:reason], @guardian)
+
+    render json: success_json
+  end
+
   def update
     reviewable = find_reviewable
     if error = claim_error?(reviewable)
@@ -202,6 +241,12 @@ class ReviewablesController < ApplicationController
     begin
       if reviewable.update_fields(edit_params, current_user, version: params[:version].to_i)
         result = edit_params.merge(version: reviewable.version)
+        if reviewable.is_a?(ReviewableQueuedPost) && reviewable.payload.present?
+          result[:cooked] = PrettyText.cook(reviewable.payload["raw"]) if reviewable.payload["raw"]
+          if reviewable.payload["title"]
+            result[:fancy_title] = ERB::Util.html_escape(reviewable.payload["title"])
+          end
+        end
         render json: result
       else
         render_json_error(reviewable.errors)
@@ -305,10 +350,20 @@ class ReviewablesController < ApplicationController
   end
 
   def meta_types
-    { created_by: "user", target_created_by: "user", reviewed_by: "user", claimed_by: "user" }
+    {
+      created_by: "user",
+      target_created_by: "user",
+      target_deleted_by: "user",
+      reviewed_by: "user",
+      claimed_by: "claimed_by",
+    }
   end
 
   def ensure_can_see
     Guardian.new(current_user).ensure_can_see_review_queue!
+  end
+
+  def with_deleted_content
+    Post.unscoped { Topic.unscoped { PostAction.unscoped { yield } } }
   end
 end

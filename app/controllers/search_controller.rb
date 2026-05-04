@@ -1,9 +1,12 @@
 # frozen_string_literal: true
 
 class SearchController < ApplicationController
+  before_action :block_crawler, only: :show
   before_action :cancel_overloaded_search, only: [:query]
   skip_before_action :check_xhr, only: :show
   after_action :add_noindex_header
+
+  PAGE_LIMIT = 10
 
   def self.valid_context_types
     %w[user topic category private_messages tag]
@@ -17,7 +20,8 @@ class SearchController < ApplicationController
     # eg: ?q[foo]=bar
     raise Discourse::InvalidParameters.new(:q) if params[:q].present? && !@search_term.present?
 
-    if @search_term.present? && @search_term.length < SiteSetting.min_search_term_length
+    if @search_term.present? && @search_term.length < SiteSetting.min_search_term_length &&
+         !Search.min_length_bypass?(@search_term)
       raise Discourse::InvalidParameters.new(:q)
     end
 
@@ -28,6 +32,9 @@ class SearchController < ApplicationController
     page = permitted_params[:page]
     # check for a malformed page parameter
     raise Discourse::InvalidParameters if page && (!page.is_a?(String) || page.to_i.to_s != page)
+    if page && page.to_i > PAGE_LIMIT
+      raise Discourse::InvalidParameters.new("page parameter must not be greater than 10")
+    end
 
     discourse_expires_in 1.minute
 
@@ -35,7 +42,7 @@ class SearchController < ApplicationController
       type_filter: "topic",
       guardian: guardian,
       blurb_length: 300,
-      page: ([page.to_i, 1].max if page.to_i <= 10),
+      page: [page.to_i, 1].max,
     }
 
     context, type = lookup_search_context
@@ -46,6 +53,7 @@ class SearchController < ApplicationController
 
     search_args[:search_type] = :full_page
     search_args[:ip_address] = request.remote_ip
+    search_args[:user_agent] = request.user_agent
     search_args[:user_id] = current_user.id if current_user.present?
 
     if rate_limit_search
@@ -68,7 +76,8 @@ class SearchController < ApplicationController
       result.find_user_data(guardian) if result
     end
 
-    serializer = serialize_data(result, GroupedSearchResultSerializer, result: result)
+    serializer =
+      serialize_data(result, GroupedSearchResultSerializer, result: result, scope: guardian)
 
     respond_to do |format|
       format.html { store_preloaded("search", MultiJson.dump(serializer)) }
@@ -99,6 +108,7 @@ class SearchController < ApplicationController
 
     search_args[:search_type] = :header
     search_args[:ip_address] = request.remote_ip
+    search_args[:user_agent] = request.user_agent
     search_args[:user_id] = current_user.id if current_user.present?
     search_args[:restrict_to_archetype] = params[:restrict_to_archetype] if params[
       :restrict_to_archetype
@@ -155,7 +165,7 @@ class SearchController < ApplicationController
   protected
 
   def site_overloaded?
-    queue_time = request.env["REQUEST_QUEUE_SECONDS"]
+    queue_time = request.env[Middleware::ProcessingRequest::REQUEST_QUEUE_SECONDS_ENV_KEY]
     if queue_time
       threshold = GlobalSetting.disable_search_queue_threshold.to_f
       threshold > 0 && queue_time > threshold
@@ -203,6 +213,26 @@ class SearchController < ApplicationController
       return e
     end
     false
+  end
+
+  def block_crawler
+    if use_crawler_layout?
+      crawler_html = <<~HTML
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <meta name='robots' content='noindex'>
+            </head>
+            <body>
+              <p><em>*waves hand*</em> This is not the content you are looking for</p>
+            </body>
+          </html>
+        HTML
+
+      response.headers["X-Robots-Tag"] = "noindex"
+
+      render html: crawler_html.html_safe, layout: false, content_type: "text/html"
+    end
   end
 
   def cancel_overloaded_search

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require "mysql2"
-require File.expand_path(File.dirname(__FILE__) + "/base.rb")
+require_relative "base"
 
 # Before running this script, paste these lines into your shell,
 # then use arrow keys to edit the values
@@ -18,12 +18,12 @@ export BASE="" #
 # Call it like this:
 #   RAILS_ENV=production ruby script/import_scripts/mybb.rb
 class ImportScripts::MyBB < ImportScripts::Base
-  DB_HOST ||= ENV["DB_HOST"] || "localhost"
-  DB_NAME ||= ENV["DB_NAME"] || "mybb"
-  DB_PW ||= ENV["DB_PW"] || ""
-  DB_USER ||= ENV["DB_USER"] || "root"
-  TABLE_PREFIX ||= ENV["TABLE_PREFIX"] || "mybb_"
-  UPLOADS_DIR ||= ENV["UPLOADS"] || "/data/limelightgaming/uploads"
+  DB_HOST = ENV["DB_HOST"] || "localhost"
+  DB_NAME = ENV["DB_NAME"] || "mybb"
+  DB_PW = ENV["DB_PW"] || ""
+  DB_USER = ENV["DB_USER"] || "root"
+  TABLE_PREFIX = ENV["TABLE_PREFIX"] || "mybb_"
+  UPLOADS_DIR = ENV["UPLOADS"] || "/data/limelightgaming/uploads"
   BATCH_SIZE = 1000
   BASE = ""
   QUIET = true
@@ -87,7 +87,7 @@ class ImportScripts::MyBB < ImportScripts::Base
           avatar_url: avatar_url,
           post_create_action:
             proc do |newuser|
-              if !user["avatar"].blank?
+              if user["avatar"].present?
                 avatar = user["avatar"].gsub(/\?.*/, "")
                 if avatar.match(/^http.*/)
                   UserAvatar.import_url_for_user(avatar, newuser)

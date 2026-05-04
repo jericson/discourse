@@ -7,19 +7,21 @@
 cs:
   js:
     discourse_automation:
-      create: Vytvoř
-      update: Aktualizovat
+      back: Zpět
+      edit: Upravit
+      destroy_automation:
+        confirm: "Jste si jisti, že chcete odstranit `%{name}`?"
       fields:
         user:
           label: Uživatel
         pm:
           title:
-            label: Nadpis
+            label: Název
           raw:
             label: Tělo
         pms:
           title:
-            label: Nadpis
+            label: Název
           raw:
             label: Tělo
         group:
@@ -27,6 +29,12 @@ cs:
         text:
           label: Text
       triggerables:
+        post_flag_created:
+          fields:
+            categories:
+              label: Kategorie
+            tags:
+              label: Tagy
         user_badge_granted:
           fields:
             badge:
@@ -54,17 +62,25 @@ cs:
             P3M: "Tři měsíce"
             P6M: "Šest měsíců"
             P1Y: "Rok"
+        user_added_to_group:
+          fields:
+            joined_group:
+              label: Sledovaná skupina
         topic:
           fields:
             restricted_topic:
               label: ID tématu
         post_created_edited:
           fields:
-            restricted_category:
+            restricted_tags:
+              label: Štítky
+            restricted_categories:
               label: Kategorie
-            restricted_group:
-              label: Skupina
           created: Vytvořený
+          with_images: Obrázky
+          with_links: Odkazy
+          with_code: Kód
+          with_uploads: Nahrané soubory
         category_created_edited:
           fields:
             restricted_category:
@@ -106,12 +122,18 @@ cs:
           fields:
             group:
               label: Skupina
+              description: Cílová skupina. Uživatelé se zadaným odznakem budou přidáni do této skupiny
             badge:
               label: Odznak
         suspend_user_by_email:
           fields:
+            suspend_until:
+              label: Pozastavit do (výchozí)
+            reason:
+              label: Důvod (výchozí)
             actor:
               label: Uživatel
+              description: "Uživatel odpovědný za pozastavení (výchozí: systém)"
         pin_topic:
           fields:
             pinnable_topic:
@@ -128,18 +150,20 @@ cs:
               label: ID tématu
             user:
               label: Uživatel
+        set_topic_timer:
+          title: Nastavení časovače tématu
       models:
         trigger:
           name:
             label: Spouštěč
         automation:
           name:
-            label: Jméno
+            label: Název
           trigger:
             label: Spouštěč
           version:
             label: Verze
-          enabled:
-            label: Zapnuto
+          status:
+            label: Stav
           disabled:
             label: Vypnuto

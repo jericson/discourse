@@ -47,7 +47,13 @@
         "can_ignore_user": {
           "type": "boolean"
         },
+        "can_ignore_users": {
+          "type": "boolean"
+        },
         "can_mute_user": {
+          "type": "boolean"
+        },
+        "can_mute_users": {
           "type": "boolean"
         },
         "can_send_private_messages": {
@@ -119,7 +125,7 @@
         },
         "primary_group_id": {
           "type": [
-            "string",
+            "integer",
             "null"
           ]
         },
@@ -131,7 +137,7 @@
         },
         "flair_group_id": {
           "type": [
-            "string",
+            "integer",
             "null"
           ]
         },
@@ -182,7 +188,7 @@
         },
         "uploaded_avatar_id": {
           "type": [
-            "string",
+            "integer",
             "null"
           ]
         },
@@ -208,6 +214,9 @@
           "type": "boolean"
         },
         "post_count": {
+          "type": "integer"
+        },
+        "topic_count": {
           "type": "integer"
         },
         "can_be_deleted": {
@@ -708,6 +717,12 @@
             "enable_quoting": {
               "type": "boolean"
             },
+            "enable_smart_lists": {
+              "type": "boolean"
+            },
+            "enable_markdown_monospace_font": {
+              "type": "boolean"
+            },
             "enable_defer": {
               "type": "boolean"
             },
@@ -735,6 +750,9 @@
             "like_notification_frequency": {
               "type": "integer"
             },
+            "notify_on_linked_posts": {
+              "type": "boolean"
+            },
             "include_tl0_in_digests": {
               "type": "boolean"
             },
@@ -760,6 +778,12 @@
               ]
             },
             "hide_profile_and_presence": {
+              "type": "boolean"
+            },
+            "hide_profile": {
+              "type": "boolean"
+            },
+            "hide_presence": {
               "type": "boolean"
             },
             "text_size": {
@@ -793,12 +817,21 @@
               "type": "boolean"
             },
             "watched_precedence_over_muted": {
-              "type": ["boolean", "null"]
+              "type": ["boolean"]
             },
             "seen_popups": {
               "type": ["array", "null"]
             },
             "topics_unread_when_closed": {
+              "type": "boolean"
+            },
+            "composition_mode": {
+              "type": "integer"
+            },
+            "interface_color_mode": {
+              "type": "integer"
+            },
+            "show_original_content": {
               "type": "boolean"
             }
           },
@@ -814,6 +847,8 @@
             "dark_scheme_id",
             "dynamic_favicon",
             "enable_quoting",
+            "enable_smart_lists",
+            "enable_markdown_monospace_font",
             "enable_defer",
             "digest_after_minutes",
             "automatically_unpin_topics",
@@ -823,6 +858,7 @@
             "email_previous_replies",
             "email_in_reply_to",
             "like_notification_frequency",
+            "notify_on_linked_posts",
             "include_tl0_in_digests",
             "theme_ids",
             "theme_key_seq",
@@ -830,12 +866,16 @@
             "enable_allowed_pm_users",
             "homepage_id",
             "hide_profile_and_presence",
+            "hide_profile",
+            "hide_presence",
             "text_size",
             "text_size_seq",
             "title_count_mode",
             "timezone",
             "skip_new_user_tips",
-            "topics_unread_when_closed"
+            "topics_unread_when_closed",
+            "interface_color_mode",
+            "show_original_content"
           ]
         }
       },
@@ -882,6 +922,7 @@
         "can_upload_profile_header",
         "can_upload_user_card_background",
         "post_count",
+        "topic_count",
         "can_be_deleted",
         "can_delete_all_posts",
         "locale",

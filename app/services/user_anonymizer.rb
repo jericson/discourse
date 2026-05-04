@@ -20,7 +20,9 @@ class UserAnonymizer
 
   def make_anonymous
     User.transaction do
-      @prev_email = @user.email
+      @prev_emails =
+        UserEmail.where(user_id: @user.id).pluck(:email) |
+          UserAssociatedAccount.where(user_id: @user.id).pluck(Arel.sql("info->>'email'")).compact
       @prev_username = @user.username
 
       unless UsernameChanger.new(@user, make_anon_username).change(run_update_job: false)
@@ -29,7 +31,7 @@ class UserAnonymizer
 
       @user.reload
       @user.password = SecureRandom.hex
-      @user.name = SiteSetting.full_name_required ? @user.username : nil
+      @user.name = SiteSetting.full_name_requirement == "required_at_signup" ? @user.username : nil
       @user.date_of_birth = nil
       @user.title = nil
       @user.uploaded_avatar_id = nil
@@ -40,7 +42,9 @@ class UserAnonymizer
       end
 
       @user.save!
+
       @user.primary_email.update_attribute(:email, "#{@user.username}#{EMAIL_SUFFIX}")
+      @user.primary_email.update_attribute(:normalized_email, "#{@user.username}#{EMAIL_SUFFIX}")
 
       options = @user.user_option
       options.mailing_list_mode = false
@@ -68,6 +72,11 @@ class UserAnonymizer
       @user.user_associated_accounts.destroy_all
       @user.api_keys.destroy_all
       @user.user_api_keys.destroy_all
+      @user.user_auth_tokens.destroy_all
+      @user.user_second_factors.destroy_all
+      UserSecurityKey.where(user_id: @user.id).delete_all
+      @user.push_subscriptions.destroy_all
+      PostReplyKey.where(user_id: @user.id).delete_all
       @user.user_emails.secondary.destroy_all
 
       @user_history = log_action
@@ -83,7 +92,8 @@ class UserAnonymizer
     Jobs.enqueue(
       :anonymize_user,
       user_id: @user.id,
-      prev_email: @prev_email,
+      prev_emails: @prev_emails,
+      prev_username: @prev_username,
       anonymize_ip: @opts[:anonymize_ip],
     )
 
@@ -109,7 +119,7 @@ class UserAnonymizer
     }
 
     if SiteSetting.log_anonymizer_details?
-      history_details[:email] = @prev_email
+      history_details[:email] = @prev_emails.first
       history_details[:details] = "username: #{@prev_username}"
     end
 

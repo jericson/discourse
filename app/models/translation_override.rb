@@ -22,6 +22,7 @@ class TranslationOverride < ActiveRecord::Base
       topic_id
       context
       username
+      recipient_username
       group_name
       unsubscribe_url
       subject_pm
@@ -36,32 +37,42 @@ class TranslationOverride < ActiveRecord::Base
       optional_tags
     ],
     %w[system_messages.welcome_user] => %w[username name name_or_username],
+    %w[js.welcome_banner.header] => %w[site_name],
   }
 
   include HasSanitizableFields
 
-  validates_uniqueness_of :translation_key, scope: :locale
-  validates_presence_of :locale, :translation_key, :value
+  validates :translation_key, uniqueness: { scope: :locale }
+  validates :locale, :translation_key, :value, presence: true
 
   validate :check_interpolation_keys
+  validate :check_MF_string, if: :message_format?
 
   attribute :status, :integer
-  enum status: { up_to_date: 0, outdated: 1, invalid_interpolation_keys: 2, deprecated: 3 }
+  enum :status, { up_to_date: 0, outdated: 1, invalid_interpolation_keys: 2, deprecated: 3 }
+
+  scope :mf_locales,
+        ->(locale) { not_deprecated.where(locale: locale).where("translation_key LIKE '%_MF'") }
+  scope :client_locales,
+        ->(locale) do
+          not_deprecated
+            .where(locale: locale)
+            .where("translation_key LIKE 'js.%' OR translation_key LIKE 'admin_js.%'")
+            .where.not("translation_key LIKE '%_MF'")
+        end
+
+  before_update :refresh_status
 
   def self.upsert!(locale, key, value)
     params = { locale: locale, translation_key: key }
 
     translation_override = find_or_initialize_by(params)
     sanitized_value =
-      translation_override.sanitize_field(value, additional_attributes: ["data-auto-route"])
+      translation_override.sanitize_field(value, additional_attributes: %w[data-auto-route target])
     original_translation =
       I18n.overrides_disabled { I18n.t(transform_pluralized_key(key), locale: :en) }
 
     data = { value: sanitized_value, original_translation: original_translation }
-    if key.end_with?("_MF")
-      _, filename = JsLocaleHelper.find_message_format_locale([locale], fallback_to_english: false)
-      data[:compiled_js] = JsLocaleHelper.compile_message_format(filename, locale, sanitized_value)
-    end
 
     params.merge!(data) if translation_override.new_record?
     i18n_changed(locale, [key]) if translation_override.update(data)
@@ -100,10 +111,8 @@ class TranslationOverride < ActiveRecord::Base
   end
 
   def self.expire_cache(locale, key)
-    if key.starts_with?("post_action_types.")
-      ApplicationSerializer.expire_cache_fragment!("post_action_types_#{locale}")
-    elsif key.starts_with?("topic_flag_types.")
-      ApplicationSerializer.expire_cache_fragment!("post_action_flag_types_#{locale}")
+    if key.starts_with?("post_action_types.") || key.starts_with?("topic_flag_types.")
+      PostActionType.new.expire_cache
     else
       return false
     end
@@ -143,22 +152,31 @@ class TranslationOverride < ActiveRecord::Base
   end
 
   def invalid_interpolation_keys
-    return [] if current_default.blank?
+    return [] if current_default.blank? || value.blank?
 
     original_interpolation_keys = I18nInterpolationKeysFinder.find(current_default)
-    new_interpolation_keys = I18nInterpolationKeysFinder.find(value)
-    custom_interpolation_keys = []
+    custom_keys = self.class.custom_interpolation_keys(transformed_key)
+    allowed_keys = original_interpolation_keys + custom_keys
 
-    ALLOWED_CUSTOM_INTERPOLATION_KEYS.select do |keys, value|
-      custom_interpolation_keys = value if keys.any? { |key| transformed_key.start_with?(key) }
-    end
+    # Find all patterns that look like interpolation attempts: %{...}
+    attempted_keys = value.scan(/%\{([^{}]+?)\}/).flatten.uniq
 
-    (original_interpolation_keys | new_interpolation_keys) - original_interpolation_keys -
-      custom_interpolation_keys
+    # Return keys that aren't in the allowed list
+    attempted_keys - allowed_keys
   end
 
   def current_default
     I18n.overrides_disabled { I18n.t(transformed_key, locale: :en) }
+  end
+
+  def message_format?
+    translation_key.to_s.end_with?("_MF")
+  end
+
+  def make_up_to_date!
+    return unless outdated?
+    self.original_translation = current_default
+    update_attribute!(:status, :up_to_date)
   end
 
   private
@@ -181,6 +199,29 @@ class TranslationOverride < ActiveRecord::Base
       ),
     )
   end
+
+  def check_MF_string
+    require "messageformat"
+
+    MessageFormat.compile(locale, { key: value }, strict: true)
+  rescue MessageFormat::Compiler::CompileError => e
+    errors.add(:base, e.cause.message)
+  end
+
+  def refresh_status
+    self.original_translation = current_default
+
+    self.status =
+      if original_translation_deleted?
+        "deprecated"
+      elsif invalid_interpolation_keys.present?
+        "invalid_interpolation_keys"
+      elsif original_translation_updated?
+        "outdated"
+      else
+        "up_to_date"
+      end
+  end
 end
 
 # == Schema Information
@@ -193,7 +234,6 @@ end
 #  value                :string           not null
 #  created_at           :datetime         not null
 #  updated_at           :datetime         not null
-#  compiled_js          :text
 #  original_translation :text
 #  status               :integer          default("up_to_date"), not null
 #

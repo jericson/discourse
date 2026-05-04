@@ -5,8 +5,15 @@
 # https://translate.discourse.org/
 
 he:
+  admin_js:
+    admin:
+      site_settings:
+        categories:
+          poll: "סקר של Discourse"
   js:
     poll:
+      dynamic:
+        enabled_hint: "אפשר להוסיף או להסיר אפשרויות."
       voters:
         one: "מצביע"
         two: "מצביעים"
@@ -17,6 +24,11 @@ he:
         two: "מספר הצבעות כולל"
         many: "מספר הצבעות כולל"
         other: "מספר הצבעות"
+      votes:
+        one: "הצבעה"
+        two: "שתי הצבעות"
+        many: "%{count} הצבעות"
+        other: "%{count} הצבעות"
       average_rating: "דירוג ממוצע: <strong>%{average}</strong>."
       public:
         title: "ההצבעות הן <strong>ציבוריות</strong>."
@@ -29,6 +41,9 @@ he:
           title: "התוצאות יופיעו לאחר <strong>הסגירה</strong>."
         staff:
           title: "התוצאות זמינות לחברי <strong>סגל</strong> בלבד."
+        tabs:
+          votes: "הצבעות"
+          outcome: "תוצאה"
       multiple:
         help:
           at_least_min_options:
@@ -53,6 +68,12 @@ he:
       show-results:
         title: "הצגת תוצאות הסקר"
         label: "תוצאות"
+      show-tally:
+        title: "הצגת תוצאות ההצבעה לפני מספר הקולות"
+        label: "הצגת מניין"
+      show-percentage:
+        title: "הצגת תוצאות ההצבעה כאחוזים"
+        label: "הצגה כאחוזים"
       remove-vote:
         title: "הסרת הצבעתך"
         label: "ביטול הצבעה"
@@ -82,8 +103,31 @@ he:
         breakdown: "פילוח"
         percentage: "אחוזים"
         count: "ספירה"
+      ranked_choice:
+        title:
+          rounds: "סיבובים"
+          outcome: "תוצאה"
+        none: "ללא"
+        majority: "הרוב"
+        eliminated: "הודח"
+        round: "סיבוב"
+        winner:
+          one: "הניצחון לטובת %{winner} לאחר סיבוב אחד."
+          two: "הניצחון לטובת %{winner} אחרי שני סיבובים."
+          many: "הניצחון לטובת %{winner} אחרי %{count} סיבובים."
+          other: "הניצחון לטובת %{winner} אחרי %{count} סיבובים."
+        tied:
+          one: "שוויון לאחר סיבוב אחד בין המתמודדים:"
+          two: "שוויון לאחר שני סיבובים בין המתמודדים:"
+          many: "שוויון לאחר %{count} סיבובים בין המתמודדים הבאים:"
+          other: "שוויון לאחר %{count} סיבובים בין המתמודדים הבאים:"
       options:
         label: "אפשרויות"
+        ranked_choice:
+          abstain: "הימנעות"
+          highest_priority: "(העדיפות הגבוהה ביותר)"
+          lowest_priority: "(העדיפות הנמוכה ביותר)"
+          login: "יש להיכנס כדי להצביע!"
       error_while_toggling_status: "חלה שגיאה בשינוי המצב של סקר זה, עמך הסליחה."
       error_while_casting_votes: "חלה שגיאה בהצבעתך, עמך הסליחה."
       error_while_fetching_voters: "חלה שגיאה בהצגת המצביעים, עמך הסליחה."
@@ -102,6 +146,7 @@ he:
           label: סוג
           regular: בחירה בודדת
           multiple: בחירה מרובה
+          ranked_choice: בחירה לפי דירוג
           number: ציון מספרי
         poll_result:
           label: להציג תוצאות...
@@ -121,6 +166,8 @@ he:
           step: צעד
         poll_public:
           label: להציג מי המצביעים
+        poll_dynamic:
+          label: לאפשר הוספת או הסרת אפשרויות לאחר פרסום
         poll_title:
           label: כותרת (רשות)
         poll_options:

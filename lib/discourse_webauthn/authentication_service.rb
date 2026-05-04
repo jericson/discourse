@@ -95,11 +95,9 @@ module DiscourseWebauthn
         raise(UnknownCOSEAlgorithmError, I18n.t("webauthn.validation.unknown_cose_algorithm_error"))
       end
 
-      if !cose_key.to_pkey.verify(
-           cose_algorithm.hash_function,
-           signature,
-           auth_data + client_data_hash,
-         )
+      begin
+        cose_algorithm.verify(cose_key, signature, auth_data + client_data_hash)
+      rescue COSE::Error
         raise(PublicKeyError, I18n.t("webauthn.validation.public_key_error"))
       end
 
@@ -111,6 +109,7 @@ module DiscourseWebauthn
 
       # 26. Success! Update the last used at time for the key (credentialRecord).
       security_key.update(last_used: Time.zone.now)
+      clear_challenge
 
       # Return security key record so controller can use it to update the session
       security_key

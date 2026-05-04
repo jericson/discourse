@@ -1,14 +1,16 @@
 # frozen_string_literal: true
 
-RSpec.describe "Quoting chat message transcripts", type: :system do
-  fab!(:current_user) { Fabricate(:user) }
+RSpec.describe "Quoting chat message transcripts" do
+  fab!(:current_user, :user)
   fab!(:admin)
-  fab!(:chat_channel_1) { Fabricate(:chat_channel) }
+  fab!(:chat_channel_1, :chat_channel)
 
   let(:cdp) { PageObjects::CDP.new }
   let(:chat_page) { PageObjects::Pages::Chat.new }
   let(:channel_page) { PageObjects::Pages::ChatChannel.new }
   let(:topic_page) { PageObjects::Pages::Topic.new }
+  let(:thread_page) { PageObjects::Pages::ChatThread.new }
+  let(:drawer_page) { PageObjects::Pages::ChatDrawer.new }
 
   before do
     chat_system_bootstrap(admin, [chat_channel_1])
@@ -23,9 +25,8 @@ RSpec.describe "Quoting chat message transcripts", type: :system do
     expect(PageObjects::Components::Toasts.new).to have_success(
       I18n.t("js.chat.quote.copy_success"),
     )
-    clip_text = cdp.read_clipboard
-    expect(clip_text.chomp).to eq(generate_transcript(messages, current_user))
-    clip_text
+    cdp.clipboard_has_text?(generate_transcript(messages, current_user), chomp: true)
+    cdp.read_clipboard
   end
 
   def generate_transcript(messages, acting_user)
@@ -40,7 +41,7 @@ RSpec.describe "Quoting chat message transcripts", type: :system do
     before { cdp.allow_clipboard }
 
     context "when quoting a single message into a topic" do
-      fab!(:post_1) { Fabricate(:post) }
+      fab!(:post_1, :post)
       fab!(:message_1) { Fabricate(:chat_message, chat_channel: chat_channel_1) }
 
       it "quotes the message" do
@@ -61,30 +62,28 @@ RSpec.describe "Quoting chat message transcripts", type: :system do
     end
 
     context "when quoting multiple messages into a topic" do
-      fab!(:post_1) { Fabricate(:post) }
+      fab!(:post_1, :post)
       fab!(:message_1) { Fabricate(:chat_message, chat_channel: chat_channel_1) }
       fab!(:message_2) { Fabricate(:chat_message, chat_channel: chat_channel_1) }
 
       it "quotes the messages" do
         chat_page.visit_channel(chat_channel_1)
-
         clip_text = copy_messages_to_clipboard([message_1, message_2])
         topic_page.visit_topic_and_open_composer(post_1.topic)
         topic_page.fill_in_composer("This is a new post!\n\n" + clip_text)
-        within(".d-editor-preview") { expect(page).to have_css(".chat-transcript", count: 2) }
 
+        expect(page).to have_css(".d-editor-preview .chat-transcript", count: 2)
         expect(page).to have_content("Originally sent in #{chat_channel_1.name}")
 
         topic_page.send_reply
 
         selector = topic_page.post_by_number_selector(2)
-        expect(page).to have_css(selector)
-        within(selector) { expect(page).to have_css(".chat-transcript", count: 2) }
+        expect(page).to have_css("#{selector} .chat-transcript", count: 2)
       end
     end
 
     context "when quoting a message containing a onebox" do
-      fab!(:post_1) { Fabricate(:post) }
+      fab!(:post_1, :post)
       fab!(:message_1) { Fabricate(:chat_message, chat_channel: chat_channel_1) }
 
       before do
@@ -149,6 +148,28 @@ RSpec.describe "Quoting chat message transcripts", type: :system do
 
       topic = Topic.find_by(user: current_user, title: topic_title)
       expect(page).to have_current_path(topic.url)
+    end
+
+    context "when quoting from a thread" do
+      fab!(:thread_1) { Fabricate(:chat_thread, channel: chat_channel_1) }
+
+      before { chat_channel_1.update!(threading_enabled: true) }
+
+      context "when in drawer mode" do
+        before { chat_page.prefers_drawer }
+
+        it "correctly quotes the message" do
+          visit("/")
+          chat_page.open_from_header
+          drawer_page.open_channel(thread_1.channel)
+          channel_page.reply_to(message_1)
+          expect(drawer_page).to have_open_thread
+          thread_page.messages.select(message_1)
+          thread_page.selection_management.quote
+
+          expect(topic_page).to have_composer_content(generate_transcript(message_1, current_user))
+        end
+      end
     end
 
     context "when on mobile" do

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require "csv"
-require File.expand_path(File.dirname(__FILE__) + "/base.rb")
+require_relative "base"
 
 # Edit the constants and initialize method for your import data.
 
@@ -10,7 +10,7 @@ class ImportScripts::CsvRestoreStagedUsers < ImportScripts::Base
   CSV_CUSTOM_FIELDS = ENV["CSV_CUSTOM_FIELDS"]
   CSV_EMAILS = ENV["CSV_EMAILS"]
 
-  BATCH_SIZE ||= 1000
+  BATCH_SIZE = 1000
 
   def initialize
     super

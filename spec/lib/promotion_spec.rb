@@ -16,6 +16,11 @@ RSpec.describe Promotion do
   describe "newuser" do
     fab!(:user) { Fabricate(:user, trust_level: TrustLevel[0], created_at: 2.days.ago) }
     let(:promotion) { Promotion.new(user) }
+    let!(:plugin) { Plugin::Instance.new }
+    let!(:review_modifier) { :review_trust_level }
+    let!(:recalculate_modifier) { :recalculate_trust_level }
+    let!(:deny_block) { Proc.new { false } }
+    let!(:allow_block) { Proc.new { true } }
 
     it "doesn't raise an error with a nil user" do
       expect { Promotion.new(nil).review }.not_to raise_error
@@ -49,6 +54,33 @@ RSpec.describe Promotion do
       it "has upgraded the user to basic" do
         expect(user.trust_level).to eq(TrustLevel[1])
       end
+
+      it "allows plugins to control promotion #review" do
+        DiscoursePluginRegistry.register_modifier(plugin, :review_trust_level, &deny_block)
+        action = Promotion.new(user).review
+        expect(action).to eq(false)
+
+        DiscoursePluginRegistry.register_modifier(plugin, review_modifier, &allow_block)
+        action = Promotion.new(user).review
+        expect(action).to eq(true)
+      ensure
+        DiscoursePluginRegistry.unregister_modifier(plugin, review_modifier, &deny_block)
+        DiscoursePluginRegistry.unregister_modifier(plugin, review_modifier, &allow_block)
+      end
+
+      it "allows plugins to control promotion #recalculate" do
+        DiscoursePluginRegistry.register_modifier(plugin, recalculate_modifier, &deny_block)
+        action = Promotion.recalculate(user)
+        expect(action).to eq(nil)
+
+        DiscoursePluginRegistry.register_modifier(plugin, recalculate_modifier, &allow_block)
+        action = Promotion.recalculate(user)
+
+        expect(action).to eq(true)
+      ensure
+        DiscoursePluginRegistry.unregister_modifier(plugin, recalculate_modifier, &deny_block)
+        DiscoursePluginRegistry.unregister_modifier(plugin, recalculate_modifier, &allow_block)
+      end
     end
 
     context "when user has not done the requisite things" do
@@ -61,6 +93,23 @@ RSpec.describe Promotion do
         @result = promotion.review
         expect(@result).to eq(false)
         expect(user.trust_level).to eq(TrustLevel[0])
+      end
+    end
+
+    context "when user was invited" do
+      it "respects default invitee trust level" do
+        SiteSetting.default_trust_level = 0
+        SiteSetting.default_invitee_trust_level = 1
+        Promotion.recalculate(user)
+        expect(user.trust_level).to eq(0)
+
+        invited_user = Fabricate(:invited_user, user: user)
+        Promotion.recalculate(user)
+        expect(user.trust_level).to eq(0)
+
+        invited_user.update!(redeemed_at: Time.now)
+        Promotion.recalculate(user)
+        expect(user.trust_level).to eq(1)
       end
     end
 

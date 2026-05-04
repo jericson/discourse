@@ -1,27 +1,27 @@
 # frozen_string_literal: true
 
 RSpec.describe Chat::UpdateThread do
-  describe Chat::UpdateThread::Contract, type: :model do
+  describe described_class::Contract, type: :model do
     it { is_expected.to validate_presence_of :thread_id }
+    it { is_expected.to validate_length_of(:title).is_at_most(Chat::Thread::MAX_TITLE_LENGTH) }
   end
 
   describe ".call" do
-    subject(:result) { described_class.call(params) }
+    subject(:result) { described_class.call(params:, **dependencies) }
 
-    fab!(:current_user) { Fabricate(:user) }
+    fab!(:current_user, :user)
     fab!(:channel) { Fabricate(:chat_channel, threading_enabled: true) }
     fab!(:private_channel) { Fabricate(:private_category_channel, group: Fabricate(:group)) }
     fab!(:thread) { Fabricate(:chat_thread, channel: channel, original_message_user: current_user) }
-    fab!(:other_thread) { Fabricate(:chat_thread) }
+    fab!(:other_thread, :chat_thread)
 
     let(:guardian) { Guardian.new(current_user) }
     let(:title) { "some new title :D" }
-    let(:params) { { guardian: guardian, thread_id: thread.id, title: title } }
+    let(:params) { { thread_id: thread.id, title: } }
+    let(:dependencies) { { guardian: } }
 
     context "when all steps pass" do
-      it "sets the service result as successful" do
-        expect(result).to be_a_success
-      end
+      it { is_expected.to run_successfully }
 
       it "updates the title of the thread" do
         result
@@ -40,12 +40,6 @@ RSpec.describe Chat::UpdateThread do
 
     context "when params are not valid" do
       before { params.delete(:thread_id) }
-
-      it { is_expected.to fail_a_contract }
-    end
-
-    context "when title is too long" do
-      let(:title) { "a" * Chat::Thread::MAX_TITLE_LENGTH + "a" }
 
       it { is_expected.to fail_a_contract }
     end

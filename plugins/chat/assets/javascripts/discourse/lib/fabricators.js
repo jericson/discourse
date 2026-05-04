@@ -4,8 +4,8 @@ The following fabricators are available in lib folder to allow
 styleguide to use them, and eventually to generate dummy data
 in a placeholder component. It should not be used for any other case.
 */
-import { setOwner } from "@ember/application";
 import ApplicationInstance from "@ember/application/instance";
+import { setOwner } from "@ember/owner";
 import CoreFabricators, { incrementSequence } from "discourse/lib/fabricators";
 import Category from "discourse/models/category";
 import ChatChannel, {
@@ -74,14 +74,14 @@ export default class ChatFabricators {
       title: args.title
         ? args.title
         : chatable instanceof Category
-        ? chatable.name
-        : null,
+          ? chatable.name
+          : null,
       description: args.description,
       chatable,
       status: args.status || CHANNEL_STATUSES.open,
       slug:
-        chatable?.slug || chatable instanceof Category ? chatable.slugt : null,
-      meta: Object.assign({ can_delete_self: true }, args.meta || {}),
+        chatable?.slug || chatable instanceof Category ? chatable.slug : null,
+      meta: { can_delete_self: true, ...(args.meta || {}) },
       archive_failed: args.archive_failed ?? false,
       memberships_count: args.memberships_count ?? 0,
     });

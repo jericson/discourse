@@ -7,15 +7,23 @@ class PostMover
     @move_types ||= Enum.new(:new_topic, :existing_topic)
   end
 
-  def initialize(original_topic, user, post_ids, move_to_pm: false)
+  # options:
+  # freeze_original: :boolean  - if true, the original topic will be frozen but not deleted and posts will be "copied" to topic
+  def initialize(original_topic, user, post_ids, move_to_pm: false, options: {})
     @original_topic = original_topic
+    @original_topic_title = original_topic.title
     @user = user
     @post_ids = post_ids
+    # For now we store a copy of post_ids. If `freeze_original` is present, we will have new post_ids.
+    # When we create the new posts, we will pluck out post_ids out of this and replace with updated ids.
+    @post_ids_after_move = post_ids
     @move_to_pm = move_to_pm
+    @options = options
   end
 
   def to_topic(id, participants: nil, chronological_order: false)
     @move_type = PostMover.move_types[:existing_topic]
+    @creating_new_topic = false
     @chronological_order = chronological_order
 
     topic = Topic.find_by_id(id)
@@ -30,8 +38,9 @@ class PostMover
     topic
   end
 
-  def to_new_topic(title, category_id = nil, tags = nil)
+  def to_new_topic(title, category_id = nil, tag_ids: nil, tags: nil)
     @move_type = PostMover.move_types[:new_topic]
+    @creating_new_topic = true
 
     post = Post.find_by(id: post_ids.first)
     raise Discourse::InvalidParameters unless post
@@ -47,7 +56,11 @@ class PostMover
             created_at: post.created_at,
             archetype: archetype,
           )
-        DiscourseTagging.tag_topic_by_names(new_topic, Guardian.new(user), tags)
+        if tag_ids.present?
+          DiscourseTagging.tag_topic_by_ids(new_topic, Guardian.new(user), tag_ids)
+        elsif tags.present?
+          DiscourseTagging.tag_topic_by_names(new_topic, Guardian.new(user), tags)
+        end
         move_posts_to new_topic
         watch_new_topic
         update_topic_excerpt new_topic
@@ -67,6 +80,16 @@ class PostMover
     Guardian.new(user).ensure_can_see! topic
     @destination_topic = topic
 
+    # Serialize concurrent moves/merges on the same source topic. Without this
+    # lock, two transactions can each read `ordered_posts.last.post_number` at
+    # the same value, both compute the same `@first_post_number_moved`, and
+    # then collide on the `(topic_id, post_number)` unique index when each
+    # tries to insert the "split_topic" moderator post. The lock is released
+    # on commit/rollback of the surrounding `Topic.transaction`.
+    @original_topic.lock!
+
+    ensure_acting_user_is_allowed_in_destination
+
     # when a topic contains some posts after moving posts to another topic we shouldn't close it
     # two types of posts should prevent a topic from closing:
     #   1. regular posts
@@ -83,10 +106,30 @@ class PostMover
           Post.types[:whisper],
         )
         .count
-    moving_all_posts = original_topic_posts_count == posts.length
+    @full_move = original_topic_posts_count == posts.length
 
     @first_post_number_moved =
       posts.first.is_first_post? ? posts[1]&.post_number : posts.first.post_number
+
+    if @options[:freeze_original]
+      # in this case we need to add the moderator post after the last copied post
+      if @full_move
+        # Use max_post_number (which includes soft-deleted posts) so the number
+        # we force via `add_moderator_post` matches what `Topic.next_post_number`
+        # will atomically assign via raw SQL. Otherwise a deleted post at the
+        # tail leaves a tombstone in `index_posts_on_topic_id_and_post_number`
+        # that collides with our `update!(post_number: ...)`.
+        @first_post_number_moved = @original_topic.max_post_number + 1
+      else
+        # Same reason: shift all posts above `posts.last.post_number`, including
+        # soft-deleted ones, so the slot at `posts.last.post_number + 1` is
+        # guaranteed free in the unique index.
+        from_posts =
+          @original_topic.posts.with_deleted.where("post_number > ?", posts.last.post_number)
+        shift_post_numbers(from_posts)
+        @first_post_number_moved = posts.last.post_number + 1
+      end
+    end
 
     create_temp_table
     move_each_post
@@ -99,17 +142,32 @@ class PostMover
     update_upload_security_status
     update_bookmarks
 
-    close_topic_and_schedule_deletion if moving_all_posts
+    close_topic_and_schedule_deletion if @full_move
 
     destination_topic.reload
+    DiscourseEvent.trigger(
+      :posts_moved,
+      destination_topic_id: destination_topic.id,
+      original_topic_id: original_topic.id,
+    )
     destination_topic
   end
 
+  def ensure_acting_user_is_allowed_in_destination
+    return if !@move_to_pm
+    return if destination_topic.archetype != Archetype.private_message
+    return if user.id.blank? || user.bot?
+    return if destination_topic.topic_allowed_users.exists?(user_id: user.id)
+
+    destination_topic.topic_allowed_users.create!(user_id: user.id)
+    destination_topic.notifier.watch!(user.id)
+  end
+
   def create_temp_table
-    DB.exec("DROP TABLE IF EXISTS moved_posts") if Rails.env.test?
+    DB.exec("DROP TABLE IF EXISTS temp_moved_posts") if Rails.env.test?
 
     DB.exec <<~SQL
-      CREATE TEMPORARY TABLE moved_posts (
+      CREATE TEMPORARY TABLE temp_moved_posts (
         old_topic_id INTEGER,
         old_post_id INTEGER,
         old_post_number INTEGER,
@@ -118,9 +176,8 @@ class PostMover
         new_post_id INTEGER,
         new_post_number INTEGER
       ) ON COMMIT DROP;
-
-      CREATE INDEX moved_posts_old_post_number ON moved_posts(old_post_number);
-      CREATE INDEX moved_posts_old_post_id ON moved_posts(old_post_id);
+      CREATE INDEX moved_posts_old_post_number ON temp_moved_posts(old_post_number);
+      CREATE INDEX moved_posts_old_post_id ON temp_moved_posts(old_post_id);
     SQL
   end
 
@@ -253,6 +310,7 @@ class PostMover
         created_at: post.created_at,
         guardian: Guardian.new(user),
         skip_jobs: true,
+        no_bump: true,
       )
     new_post = @post_creator.create!
 
@@ -277,8 +335,11 @@ class PostMover
     new_post.custom_fields = post.custom_fields
     new_post.save_custom_fields
 
+    @post_ids_after_move =
+      @post_ids_after_move.map { |post_id| post_id == post.id ? new_post.id : post_id }
+
     DiscourseEvent.trigger(:first_post_moved, new_post, post)
-    DiscourseEvent.trigger(:post_moved, new_post, original_topic.id)
+    DiscourseEvent.trigger(:post_moved, new_post, original_topic.id, post)
 
     # we don't want to keep the old topic's OP bookmarked when we are
     # moving it into a new topic
@@ -299,15 +360,28 @@ class PostMover
 
     update[:reply_to_user_id] = nil unless @move_map[post.reply_to_post_number]
 
-    post.attributes = update
-    post.save(validate: false)
+    moved_post =
+      if @options[:freeze_original]
+        post.dup
+      else
+        post
+      end
 
-    DiscourseEvent.trigger(:post_moved, post, original_topic.id)
+    moved_post.attributes = update
+    moved_post.disable_rate_limits! if @options[:freeze_original]
+    moved_post.save(validate: false)
+
+    if moved_post.id != post.id
+      @post_ids_after_move =
+        @post_ids_after_move.map { |post_id| post_id == post.id ? moved_post.id : post_id }
+    end
+
+    DiscourseEvent.trigger(:post_moved, moved_post, original_topic.id, post)
 
     # Move any links from the post to the new topic
-    post.topic_links.update_all(topic_id: destination_topic.id)
+    moved_post.topic_links.update_all(topic_id: destination_topic.id)
 
-    post
+    moved_post
   end
 
   def move_same_topic(post)
@@ -332,6 +406,7 @@ class PostMover
       old_topic_id: post.topic_id,
       old_post_id: post.id,
       old_post_number: post.post_number,
+      post_user_id: post.user_id,
       new_topic_id: destination_topic.id,
       new_post_number: new_post_number,
       new_topic_title: destination_topic.title,
@@ -340,11 +415,24 @@ class PostMover
 
   def store_movement(metadata, new_post)
     metadata[:new_post_id] = new_post.id
+    metadata[:now] = Time.zone.now
+    metadata[:created_new_topic] = @creating_new_topic
+    metadata[:old_topic_title] = @original_topic_title
+    metadata[:user_id] = @user.id
+    metadata[:full_move] = @full_move
 
     DB.exec(<<~SQL, metadata)
-      INSERT INTO moved_posts(old_topic_id, old_post_id, old_post_number, new_topic_id, new_topic_title, new_post_id, new_post_number)
+      INSERT INTO temp_moved_posts(old_topic_id, old_post_id, old_post_number, new_topic_id, new_topic_title, new_post_id, new_post_number)
       VALUES (:old_topic_id, :old_post_id, :old_post_number, :new_topic_id, :new_topic_title, :new_post_id, :new_post_number)
     SQL
+    DB.exec(<<~SQL, metadata)
+      INSERT INTO moved_posts(old_topic_id, old_topic_title, old_post_id, old_post_number, post_user_id, user_id, full_move, new_topic_id, new_topic_title, new_post_id, new_post_number, created_new_topic, created_at, updated_at)
+      VALUES (:old_topic_id, :old_topic_title, :old_post_id, :old_post_number, :post_user_id, :user_id, :full_move, :new_topic_id, :new_topic_title, :new_post_id, :new_post_number, :created_new_topic, :now, :now)
+    SQL
+  end
+
+  def shift_post_numbers(from_posts)
+    from_posts.reverse_each { |post| post.update_columns(post_number: post.post_number + 1) }
   end
 
   def move_incoming_emails
@@ -352,7 +440,7 @@ class PostMover
       UPDATE incoming_emails ie
       SET topic_id = mp.new_topic_id,
           post_id = mp.new_post_id
-      FROM moved_posts mp
+      FROM temp_moved_posts mp
       WHERE ie.topic_id = mp.old_topic_id AND ie.post_id = mp.old_post_id
         AND mp.old_topic_id <> mp.new_topic_id
     SQL
@@ -375,7 +463,7 @@ class PostMover
                                       ELSE mp.new_topic_title END
                 )
             )) :: JSON
-      FROM moved_posts mp
+      FROM temp_moved_posts mp
       WHERE n.topic_id = mp.old_topic_id AND n.post_number = mp.old_post_number
         AND n.notification_type <> #{Notification.types[:watching_first_post]}
     SQL
@@ -387,7 +475,7 @@ class PostMover
       SET reply_count = GREATEST(0, reply_count - x.moved_reply_count)
       FROM (
         SELECT r.post_id, mp.new_topic_id, COUNT(1) AS moved_reply_count
-        FROM moved_posts mp
+        FROM temp_moved_posts mp
                JOIN post_replies r ON (mp.old_post_id = r.reply_post_id)
         GROUP BY r.post_id, mp.new_topic_id
       ) x
@@ -402,7 +490,7 @@ class PostMover
                         ', post:' || mp.old_post_number || ', topic:' || mp.old_topic_id,
                         ', post:' || mp.new_post_number || ', topic:' || mp.new_topic_id),
           baked_version = NULL
-      FROM moved_posts mp, quoted_posts qp
+      FROM temp_moved_posts mp, quoted_posts qp
       WHERE p.id = qp.post_id AND mp.old_post_id = qp.quoted_post_id
     SQL
   end
@@ -411,15 +499,15 @@ class PostMover
     DB.exec <<~SQL
       UPDATE post_replies pr
       SET post_id = mp.new_post_id
-      FROM moved_posts mp
+      FROM temp_moved_posts mp
       WHERE mp.old_post_id <> mp.new_post_id AND pr.post_id = mp.old_post_id AND
-        EXISTS (SELECT 1 FROM moved_posts mr WHERE mr.new_post_id = pr.reply_post_id)
+        EXISTS (SELECT 1 FROM temp_moved_posts mr WHERE mr.new_post_id = pr.reply_post_id)
     SQL
   end
 
   def delete_post_replies
     DB.exec <<~SQL
-      DELETE FROM post_replies pr USING moved_posts mp
+      DELETE FROM post_replies pr USING temp_moved_posts mp
       WHERE (SELECT topic_id FROM posts WHERE id = pr.post_id) <>
             (SELECT topic_id FROM posts WHERE id = pr.reply_post_id)
         AND (pr.reply_post_id = mp.old_post_id OR pr.post_id = mp.old_post_id)
@@ -436,7 +524,7 @@ class PostMover
         AS (
           SELECT pt.topic_id, mp.new_post_number as post_number, pt.user_id, pt.msecs
           FROM post_timings pt
-          JOIN moved_posts mp
+          JOIN temp_moved_posts mp
             ON mp.old_topic_id = pt.topic_id
               AND mp.old_post_number = pt.post_number
               AND mp.old_topic_id = mp.new_topic_id
@@ -447,17 +535,22 @@ class PostMover
   def copy_shifted_post_timings_from_temp
     DB.exec <<~SQL
       INSERT INTO post_timings (topic_id, user_id, post_number, msecs)
-      SELECT topic_id, user_id, post_number, msecs FROM temp_post_timings
+      SELECT DISTINCT ON (topic_id, post_number, user_id) topic_id, user_id, post_number, msecs
+      FROM temp_post_timings
+      ORDER BY topic_id, post_number, user_id, msecs DESC
+      ON CONFLICT (topic_id, post_number, user_id) DO UPDATE
+        SET msecs = GREATEST(post_timings.msecs, excluded.msecs)
     SQL
   end
 
   def copy_first_post_timings
-    DB.exec <<~SQL
+    DB.exec(<<~SQL, post_ids: @post_ids_after_move)
       INSERT INTO post_timings (topic_id, user_id, post_number, msecs)
       SELECT mp.new_topic_id, pt.user_id, mp.new_post_number, pt.msecs
       FROM post_timings pt
-           JOIN moved_posts mp ON (pt.topic_id = mp.old_topic_id AND pt.post_number = mp.old_post_number)
+      JOIN temp_moved_posts mp ON (pt.topic_id = mp.old_topic_id AND pt.post_number = mp.old_post_number)
       WHERE mp.old_post_id <> mp.new_post_id
+        AND mp.new_post_id IN (:post_ids)
       ON CONFLICT (topic_id, post_number, user_id) DO UPDATE
         SET msecs = GREATEST(post_timings.msecs, excluded.msecs)
     SQL
@@ -467,22 +560,23 @@ class PostMover
     DB.exec <<~SQL
       DELETE
       FROM post_timings pt
-      USING moved_posts mp
+      USING temp_moved_posts mp
       WHERE pt.topic_id = mp.new_topic_id
         AND pt.post_number = mp.new_post_number
     SQL
   end
 
   def move_post_timings
-    DB.exec <<~SQL
+    DB.exec(<<~SQL, post_ids: @post_ids_after_move)
       UPDATE post_timings pt
       SET topic_id    = mp.new_topic_id,
           post_number = mp.new_post_number
-      FROM moved_posts mp
+      FROM temp_moved_posts mp
       WHERE pt.topic_id = mp.old_topic_id
         AND pt.post_number = mp.old_post_number
         AND mp.old_post_id = mp.new_post_id
         AND mp.old_topic_id <> mp.new_topic_id
+        AND mp.new_post_id IN (:post_ids)
     SQL
   end
 
@@ -509,14 +603,14 @@ class PostMover
                )                                         AS posted,
              (
                SELECT MAX(lr.new_post_number)
-               FROM moved_posts lr
+               FROM temp_moved_posts lr
                WHERE lr.old_topic_id = tu.topic_id
                  AND lr.old_post_number <= tu.last_read_post_number
                  AND lr.old_topic_id <> lr.new_topic_id
              )                                           AS last_read_post_number,
              (
                SELECT MAX(le.new_post_number)
-               FROM moved_posts le
+               FROM temp_moved_posts le
                WHERE le.old_topic_id = tu.topic_id
                  AND le.old_post_number <= tu.last_emailed_post_number
                  AND le.old_topic_id <> le.new_topic_id
@@ -532,7 +626,7 @@ class PostMover
         AND GREATEST(
                 tu.last_read_post_number,
                 tu.last_emailed_post_number
-              ) >= (SELECT MIN(mp.old_post_number) FROM moved_posts mp WHERE mp.old_topic_id <> mp.new_topic_id)
+              ) >= (SELECT MIN(mp.old_post_number) FROM temp_moved_posts mp WHERE mp.old_topic_id <> mp.new_topic_id)
       ON CONFLICT (topic_id, user_id) DO UPDATE
         SET posted                   = excluded.posted,
             last_read_post_number    = CASE
@@ -565,8 +659,8 @@ class PostMover
   end
 
   def update_statistics
-    destination_topic.update_statistics
-    original_topic.update_statistics
+    destination_topic.update_statistics!
+    original_topic.update_statistics!
     TopicUser.update_post_action_cache(
       topic_id: [original_topic.id, destination_topic.id],
       post_id: @post_ids,
@@ -581,23 +675,38 @@ class PostMover
     move_type_str = PostMover.move_types[@move_type].to_s
     move_type_str.sub!("topic", "message") if @move_to_pm
 
+    topic_link =
+      if posts.first.is_first_post?
+        "[#{destination_topic.title}](#{destination_topic.relative_url})"
+      else
+        "[#{destination_topic.title}](#{posts.first.relative_url})"
+      end
+
+    post_type = @move_to_pm ? Post.types[:whisper] : Post.types[:small_action]
+
+    continue =
+      DiscoursePluginRegistry.apply_modifier(
+        :post_mover_create_moderator_post,
+        true,
+        user: user,
+        post_type: post_type,
+        post_ids: @post_ids_after_move,
+        full_move: @full_move,
+        original_topic: original_topic,
+        destination_topic: destination_topic,
+        first_post_number_moved: @first_post_number_moved,
+      )
+    return if !continue
+
     message =
       I18n.with_locale(SiteSetting.default_locale) do
         I18n.t(
           "move_posts.#{move_type_str}_moderator_post",
           count: posts.length,
-          topic_link:
-            (
-              if posts.first.is_first_post?
-                "[#{destination_topic.title}](#{destination_topic.relative_url})"
-              else
-                "[#{destination_topic.title}](#{posts.first.relative_url})"
-              end
-            ),
+          topic_link: topic_link,
         )
       end
 
-    post_type = @move_to_pm ? Post.types[:whisper] : Post.types[:small_action]
     original_topic.add_moderator_post(
       user,
       message,
@@ -621,7 +730,7 @@ class PostMover
 
   def update_last_post_stats
     post = destination_topic.ordered_posts.where.not(post_type: Post.types[:whisper]).last
-    if post && post_ids.include?(post.id)
+    if post && @post_ids_after_move.include?(post.id)
       attrs = {}
       attrs[:last_posted_at] = post.created_at
       attrs[:last_post_user_id] = post.user_id
@@ -690,18 +799,43 @@ class PostMover
   end
 
   def enqueue_jobs(topic)
-    @post_creator.enqueue_jobs if @post_creator
+    enqueue_post_creator_jobs =
+      DiscoursePluginRegistry.apply_modifier(
+        :post_mover_enqueue_post_creator_jobs,
+        @post_creator.present?,
+      )
+    @post_creator.enqueue_jobs if enqueue_post_creator_jobs
 
-    Jobs.enqueue(:notify_moved_posts, post_ids: post_ids, moved_by_id: user.id)
+    Jobs.enqueue(:notify_moved_posts, post_ids: @post_ids_after_move, moved_by_id: user.id)
 
     Jobs.enqueue(:delete_inaccessible_notifications, topic_id: topic.id)
   end
 
   def close_topic_and_schedule_deletion
     @original_topic.update_status("closed", true, @user)
+    return if @options[:freeze_original] # we only close the topic when freezing it
 
     days_to_deleting = SiteSetting.delete_merged_stub_topics_after_days
-    if days_to_deleting > 0
+    if days_to_deleting == 0
+      is_allowed_to_delete_after_merge =
+        DiscoursePluginRegistry.apply_modifier(
+          :is_allowed_to_delete_after_merge,
+          Guardian.new(@user).can_delete?(@original_topic),
+          @original_topic,
+          @user,
+        )
+      if is_allowed_to_delete_after_merge
+        first_post = @original_topic.ordered_posts.first
+
+        PostDestroyer.new(
+          @user,
+          first_post,
+          context: I18n.t("topic_statuses.auto_deleted_by_merge"),
+        ).destroy
+
+        @original_topic.trash!(Discourse.system_user)
+      end
+    elsif days_to_deleting > 0
       @original_topic.set_or_create_timer(
         TopicTimer.types[:delete],
         days_to_deleting * 24,

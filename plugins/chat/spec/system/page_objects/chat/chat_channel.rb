@@ -11,6 +11,10 @@ module PageObjects
         @messages ||= PageObjects::Components::Chat::Messages.new(".chat-channel")
       end
 
+      def filter
+        @filter ||= PageObjects::Components::Chat::Filter.new
+      end
+
       def selection_management
         @selection_management ||=
           PageObjects::Components::Chat::SelectionManagement.new(".chat-channel")
@@ -35,7 +39,9 @@ module PageObjects
       end
 
       def click_composer
-        find(".chat-channel .chat-composer__input").click # ensures autocomplete is closed and not masking anything
+        if has_no_css?(".dialog-overlay", wait: 0) # we can't click composer if a dialog is open, in case of error for exampel
+          find(".chat-channel .chat-composer__input").click # ensures autocomplete is closed and not masking anything
+        end
       end
 
       def click_send_message
@@ -50,6 +56,16 @@ module PageObjects
         find(message_by_id_selector(id))
       end
 
+      def has_last_visit_line_at_id?(id)
+        find(".chat-message-separator[data-id=\"#{id}\"]").has_content?(
+          I18n.t("js.chat.last_visit"),
+        )
+      end
+
+      def has_no_last_visit_line?
+        has_no_content?(I18n.t("js.chat.last_visit"))
+      end
+
       def has_no_loading_skeleton?
         has_no_css?(".chat-skeleton")
       end
@@ -62,18 +78,13 @@ module PageObjects
         message_by_id(message.id).find(".chat-message-expand").click
       end
 
+      def emoji(message, code)
+        messages.emoji(message, code)
+      end
+
       def expand_message_actions(message)
         hover_message(message)
         click_more_button
-      end
-
-      def expand_message_actions_mobile(message, delay: 2)
-        find(message_by_id_selector(message.id)).find(".chat-message-content").click(delay: delay)
-      end
-
-      def click_message_action_mobile(message, message_action)
-        expand_message_actions_mobile(message, delay: 0.4)
-        find(".chat-message-actions [data-id=\"#{message_action}\"]").click
       end
 
       def hover_message(message)
@@ -81,16 +92,21 @@ module PageObjects
         # Scroll to top of message so that the actions are not hidden
         page.scroll_to(message, align: :top)
         message.hover
+        message
+      end
+
+      def react_to_message(message, emoji_name = nil)
+        message = hover_message(message)
+
+        if emoji_name
+          message.find(".chat-message-actions [data-emoji-name=\"#{emoji_name}\"]").click
+        else
+          message.find(".react-btn").click
+        end
       end
 
       def bookmark_message(message)
-        if page.has_css?("html.mobile-view", wait: 0)
-          click_message_action_mobile(message, "bookmark")
-          expect(page).to have_css(".d-modal:not(.is-animating)")
-        else
-          hover_message(message)
-          find(".bookmark-btn").click
-        end
+        messages.bookmark(message)
       end
 
       def click_more_button
@@ -103,17 +119,19 @@ module PageObjects
       end
 
       def send_message(text = nil)
-        text ||= Faker::Lorem.characters(number: SiteSetting.chat_minimum_message_length)
+        text ||= fake_chat_message
         text = text.chomp if text.present? # having \n on the end of the string counts as an Enter keypress
-        composer.fill_in(with: text)
+        fill_composer(text)
         click_send_message
         expect(page).to have_no_css(".chat-message.-not-processed")
         text
       end
 
       def reply_to(message)
+        messages.has_message?(id: message.id)
+
         if page.has_css?("html.mobile-view", wait: 0)
-          click_message_action_mobile(message, "reply")
+          messages.reply_to(message)
         else
           hover_message(message)
           find(".reply-btn").click
@@ -126,6 +144,20 @@ module PageObjects
 
       def find_reaction(message, emoji)
         within(message_reactions_list(message)) { return find("[data-emoji-name=\"#{emoji}\"]") }
+      end
+
+      def click_quick_reaction(message, emoji_name)
+        hover_message(message)
+        find(".chat-message-actions [data-emoji-name=\"#{emoji_name}\"]").click
+      end
+
+      def open_emoji_picker(message)
+        hover_message(message)
+        find(".chat-message-react-btn").click
+      end
+
+      def find_quick_reaction(emoji_name)
+        find(".chat-message-actions [data-emoji-name=\"#{emoji_name}\"]")
       end
 
       def has_reaction?(message, emoji, text = nil)
@@ -172,7 +204,7 @@ module PageObjects
 
       def open_thread_list
         find(thread_list_button_selector).click
-        PageObjects::Components::Chat::ThreadList.new.has_loaded?
+        expect(PageObjects::Components::Chat::ThreadList.new).to have_loaded
       end
 
       def has_unread_thread_indicator?(count:)

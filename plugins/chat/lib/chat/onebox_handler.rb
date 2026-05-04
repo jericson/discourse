@@ -37,7 +37,7 @@ module Chat
     private
 
     def self.build_args(url, chat_channel)
-      args = {
+      {
         channel_id: chat_channel.id,
         channel_name: chat_channel.name,
         is_category: chat_channel.category_channel?,
@@ -92,7 +92,10 @@ module Chat
       if target.is_a?(Message)
         message = target
       elsif target.is_a?(Thread)
-        message = Chat::Message.includes(:uploads).find_by(id: target.original_message_id)
+        message =
+          Chat::Message.includes(uploads: { optimized_videos: :optimized_upload }).find_by(
+            id: target.original_message_id,
+          )
       end
 
       return if !message

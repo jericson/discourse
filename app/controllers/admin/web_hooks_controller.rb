@@ -1,7 +1,17 @@
 # frozen_string_literal: true
 
 class Admin::WebHooksController < Admin::AdminController
-  before_action :fetch_web_hook, only: %i[show update destroy list_events bulk_events ping]
+  before_action :fetch_web_hook,
+                only: %i[
+                  show
+                  update
+                  destroy
+                  list_events
+                  bulk_events
+                  ping
+                  redeliver_event
+                  redeliver_failed_events
+                ]
 
   def index
     limit = 50
@@ -17,12 +27,18 @@ class Admin::WebHooksController < Admin::AdminController
 
     data = serialize_data(web_hooks, AdminWebHookSerializer, root: "web_hooks")
 
+    serialized_grouped_event_types =
+      WebHookEventType.active_grouped.transform_values do |array|
+        serialize_data(array, WebHookEventTypeSerializer)
+      end
+
     json = {
       web_hooks: data.delete("web_hooks"),
       extras:
         data.merge(
-          grouped_event_types: WebHookEventType.active_grouped,
-          default_event_types: WebHook.default_event_types,
+          grouped_event_types: serialized_grouped_event_types,
+          default_event_types:
+            serialize_data(WebHook.default_event_types, WebHookEventTypeSerializer),
           content_types: WebHook.content_types.map { |name, id| { id: id, name: name } },
           delivery_statuses:
             WebHook.last_delivery_statuses.map { |name, id| { id: id, name: name.to_s } },
@@ -32,20 +48,20 @@ class Admin::WebHooksController < Admin::AdminController
         admin_web_hooks_path(limit: limit, offset: offset + limit, format: :json),
     }
 
-    render json: MultiJson.dump(json), status: 200
+    render json: MultiJson.dump(json), status: :ok
   end
 
   def show
     data = serialize_data(@web_hook, AdminWebHookSerializer, root: "web_hook")
     web_hook = data.delete("web_hook")
     data = { "extras" => data, "web_hook" => web_hook }
-    render json: MultiJson.dump(data), status: 200
+    render json: MultiJson.dump(data), status: :ok
   end
 
   def edit
     data = serialize_data(@web_hook, AdminWebHookSerializer, root: "web_hook")
     data["extras"] = { "categories" => data.delete(:categories) }
-    render json: MultiJson.dump(data), status: 200
+    render json: MultiJson.dump(data), status: :ok
   end
 
   def create
@@ -87,7 +103,7 @@ class Admin::WebHooksController < Admin::AdminController
   def list_events
     limit = 50
     offset = params[:offset].to_i
-    events = @web_hook.web_hook_events
+    events = @web_hook.web_hook_events.includes(:redelivering_webhook_event)
     status = params[:status]
     if status == "successful"
       events = events.successful
@@ -113,7 +129,7 @@ class Admin::WebHooksController < Admin::AdminController
       },
     }
 
-    render json: MultiJson.dump(json), status: 200
+    render json: MultiJson.dump(json), status: :ok
   end
 
   def bulk_events
@@ -123,16 +139,31 @@ class Admin::WebHooksController < Admin::AdminController
   end
 
   def redeliver_event
-    web_hook_event = WebHookEvent.find_by(id: params[:event_id])
+    web_hook_event = @web_hook.web_hook_events.find_by(id: params[:event_id])
 
-    if web_hook_event
-      web_hook = web_hook_event.web_hook
-      emitter = WebHookEmitter.new(web_hook, web_hook_event)
-      emitter.emit!(headers: MultiJson.load(web_hook_event.headers), body: web_hook_event.payload)
-      render_serialized(web_hook_event, AdminWebHookEventSerializer, root: "web_hook_event")
-    else
-      render json: failed_json
+    return render_json_error(I18n.t("not_found"), status: 404) if web_hook_event.blank?
+
+    emitter = WebHookEmitter.new(@web_hook, web_hook_event)
+    emitter.emit!(headers: MultiJson.load(web_hook_event.headers), body: web_hook_event.payload)
+    render_serialized(web_hook_event, AdminWebHookEventSerializer, root: "web_hook_event")
+  end
+
+  def redeliver_failed_events
+    web_hook_events =
+      @web_hook
+        .web_hook_events
+        .includes(:redelivering_webhook_event)
+        .not_ping
+        .where(id: params[:event_ids])
+
+    raise Discourse::InvalidParameters if web_hook_events.count.zero?
+
+    web_hook_events.each do |web_hook_event|
+      if !web_hook_event.redelivering_webhook_event
+        RedeliveringWebhookEvent.create!(web_hook_event: web_hook_event)
+      end
     end
+    render json: { event_ids: web_hook_events.map(&:id) }
   end
 
   def ping
@@ -148,18 +179,33 @@ class Admin::WebHooksController < Admin::AdminController
   private
 
   def web_hook_params
-    params.require(:web_hook).permit(
-      :payload_url,
-      :content_type,
-      :secret,
-      :wildcard_web_hook,
-      :active,
-      :verify_certificate,
-      web_hook_event_type_ids: [],
-      group_ids: [],
-      tag_names: [],
-      category_ids: [],
-    )
+    permitted =
+      params.require(:web_hook).permit(
+        :payload_url,
+        :content_type,
+        :secret,
+        :wildcard_web_hook,
+        :active,
+        :verify_certificate,
+        web_hook_event_type_ids: [],
+        group_ids: [],
+        tag_names: [],
+        tag_ids: [],
+        category_ids: [],
+      )
+
+    if permitted[:tag_names].present?
+      Discourse.deprecate(
+        "The `tag_names` param for webhooks is deprecated, use `tag_ids` instead.",
+        since: "3.5.0.beta1",
+        drop_from: "3.6.0.beta1",
+      )
+      permitted.delete(:tag_ids)
+    else
+      permitted.delete(:tag_names)
+    end
+
+    permitted
   end
 
   def fetch_web_hook

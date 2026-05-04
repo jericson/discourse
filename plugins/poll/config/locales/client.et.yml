@@ -33,13 +33,14 @@ et:
         confirm: "Kas sa oled kindel, et sa tahad antud hääletuse sulgeda?"
       breakdown:
         count: "Arv"
+      ranked_choice:
+        none: "Pole"
       options:
         label: "Suvandid"
       error_while_toggling_status: "Kahjuks tekkis postituse staatuse ümberlülitamisel tõrge."
       error_while_casting_votes: "Kahjuks tekkis hääletamise käigus tõrge."
       error_while_fetching_voters: "Kahjuks tekkis hääletajate näitamise käigus tõrge."
       ui_builder:
-        title: Koosta hääletus
         insert: Sisesta hääletus
         help:
           min_step_value: Sammu minimaalne väärtus on 1

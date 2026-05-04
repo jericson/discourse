@@ -136,7 +136,8 @@ module ExternalUploadHelpers
       ExternalUploadStub.find_by(unique_identifier: unique_identifier, created_by: current_user)
     return render_404 if external_upload_stub.blank?
 
-    return render_404 if !multipart_upload_exists?(external_upload_stub)
+    message = check_multipart_upload_exists(external_upload_stub)
+    return render_404(message) if message.present?
 
     store = multipart_store(external_upload_stub.upload_type)
 
@@ -152,7 +153,7 @@ module ExternalUploadHelpers
     render json: { presigned_urls: presigned_urls }
   end
 
-  def multipart_upload_exists?(external_upload_stub)
+  def check_multipart_upload_exists(external_upload_stub)
     store = multipart_store(external_upload_stub.upload_type)
     begin
       store.list_multipart_parts(
@@ -161,16 +162,20 @@ module ExternalUploadHelpers
         max_parts: 1,
       )
     rescue Aws::S3::Errors::NoSuchUpload => err
-      debug_upload_error(
-        err,
-        I18n.t(
-          "upload.external_upload_not_found",
-          additional_detail: "path: #{external_upload_stub.key}",
-        ),
+      return(
+        debug_upload_error(
+          err,
+          I18n.t(
+            "upload.external_upload_not_found",
+            additional_detail: "path: #{external_upload_stub.key}",
+          ),
+        )
       )
-      return false
     end
-    true
+
+    # Intentional to indicate that there is no error, if there is a message
+    # then there is an error.
+    nil
   end
 
   def abort_multipart
@@ -226,7 +231,8 @@ module ExternalUploadHelpers
       ExternalUploadStub.find_by(unique_identifier: unique_identifier, created_by: current_user)
     return render_404 if external_upload_stub.blank?
 
-    return render_404 if !multipart_upload_exists?(external_upload_stub)
+    message = check_multipart_upload_exists(external_upload_stub)
+    return render_404(message) if message.present?
 
     store = multipart_store(external_upload_stub.upload_type)
     parts =
@@ -275,9 +281,11 @@ module ExternalUploadHelpers
   private
 
   def complete_external_upload_via_manager(external_upload_stub)
+    for_site_setting = params[:for_site_setting]&.to_s == "true"
     opts = {
       for_private_message: params[:for_private_message]&.to_s == "true",
-      for_site_setting: params[:for_site_setting]&.to_s == "true",
+      for_site_setting:,
+      site_setting_name: for_site_setting ? params[:site_setting_name] : nil,
       pasted: params[:pasted]&.to_s == "true",
     }
 
@@ -289,7 +297,7 @@ module ExternalUploadHelpers
         if upload.errors.empty?
           response_serialized = self.class.serialize_upload(upload)
           external_upload_stub.destroy!
-          render json: response_serialized, status: 200
+          render json: response_serialized, status: :ok
         else
           render_json_error(upload.errors.to_hash.values.flatten, status: 422)
         end
@@ -326,9 +334,8 @@ module ExternalUploadHelpers
           status: 422,
         )
       rescue => err
-        Discourse.warn_exception(
-          err,
-          message: "Complete external upload failed unexpectedly for user #{current_user.id}",
+        Rails.logger.error(
+          "Complete external upload failed unexpectedly for user #{current_user.id}: #{err.class} #{err.message}\n#{err.backtrace.join("\n")}",
         )
 
         render_json_error(I18n.t("upload.failed"), status: 422)
@@ -353,9 +360,14 @@ module ExternalUploadHelpers
   end
 
   def debug_upload_error(err, friendly_message)
-    return if !SiteSetting.enable_upload_debug_mode
-    Discourse.warn_exception(err, message: friendly_message)
-    (Rails.env.development? || Rails.env.test?) ? friendly_message : I18n.t("upload.failed")
+    return I18n.t("upload.failed") if !SiteSetting.enable_upload_debug_mode
+    Discourse.warn_exception(err, message: "[ExternalUploadError] #{friendly_message}")
+
+    if Rails.env.local? || is_api?
+      friendly_message
+    else
+      I18n.t("upload.failed")
+    end
   end
 
   def multipart_store(upload_type)
@@ -385,7 +397,11 @@ module ExternalUploadHelpers
     metadata.permit("sha1-checksum").to_h
   end
 
-  def render_404
-    raise Discourse::NotFound
+  def render_404(message = nil)
+    if message
+      render_json_error(message, status: 404)
+    else
+      raise Discourse::NotFound
+    end
   end
 end

@@ -14,33 +14,46 @@ class SidebarUrl < ActiveRecord::Base
       segment: SidebarUrl.segments["primary"],
     },
     {
-      name: "My Posts",
+      name: "My posts",
       path: "/my/activity",
       icon: "user",
       segment: SidebarUrl.segments["primary"],
     },
+    {
+      name: "My messages",
+      path: "/my/messages",
+      icon: "inbox",
+      segment: SidebarUrl.segments["primary"],
+    },
     { name: "Review", path: "/review", icon: "flag", segment: SidebarUrl.segments["primary"] },
     { name: "Admin", path: "/admin", icon: "wrench", segment: SidebarUrl.segments["primary"] },
+    {
+      name: "Invite",
+      path: "/new-invite",
+      icon: "paper-plane",
+      segment: SidebarUrl.segments["primary"],
+    },
     { name: "Users", path: "/u", icon: "users", segment: SidebarUrl.segments["secondary"] },
     {
       name: "About",
       path: "/about",
-      icon: "info-circle",
+      icon: "circle-info",
       segment: SidebarUrl.segments["secondary"],
     },
     {
       name: "FAQ",
       path: "/faq",
-      icon: "question-circle",
+      icon: "circle-question",
       segment: SidebarUrl.segments["secondary"],
     },
-    { name: "Groups", path: "/g", icon: "user-friends", segment: SidebarUrl.segments["secondary"] },
+    { name: "Groups", path: "/g", icon: "user-group", segment: SidebarUrl.segments["secondary"] },
     {
       name: "Badges",
       path: "/badges",
       icon: "certificate",
       segment: SidebarUrl.segments["secondary"],
     },
+    { name: "Filter", path: "/filter", icon: "filter", segment: SidebarUrl.segments["secondary"] },
   ]
 
   validates :icon, presence: true, length: { maximum: MAX_ICON_LENGTH }

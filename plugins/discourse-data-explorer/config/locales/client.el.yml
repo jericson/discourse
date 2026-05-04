@@ -1,0 +1,40 @@
+# WARNING: Never edit this file.
+# It will be overwritten when translations are pulled from Crowdin.
+#
+# To work with us on translations, join this project:
+# https://translate.discourse.org/
+
+el:
+  js:
+    explorer:
+      default_query: "Προεπιλογή"
+      or: "ή"
+      create: "Δημιουργία"
+      description_placeholder: "Εισάγετε εδώ μια περιγραφή"
+      import:
+        label: "Εισαγωγή"
+      help:
+        label: "Βοήθεια"
+      schema:
+        filter: "Αναζήτηση..."
+      types:
+        bool:
+          yes: "Ναι "
+          no: "Όχι"
+      export: "Εξαγωγή"
+      view: "Προβολή"
+      save: "Αποθήκευση αλλαγών"
+      undo: "Απόρριψη αλλαγών"
+      edit: "Επεξεργασία"
+      delete: "Διαγραφή"
+      result_count:
+        one: "%{count} αποτέλεσμα."
+        other: "%{count} αποτελέσματα."
+      query_groups: "Ομάδες"
+      query_description: "Περιγραφή"
+      query_time: "Τελευταία εκτέλεση"
+      query_user: "Δημιουργήθηκε από"
+      reset_params: "Επαναφορά"
+      search_placeholder: "Αναζήτηση..."
+    group:
+      reports: "Αναφορές"

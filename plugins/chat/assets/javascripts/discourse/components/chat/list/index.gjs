@@ -3,9 +3,9 @@ import { hash } from "@ember/helper";
 import { action } from "@ember/object";
 import { modifier } from "ember-modifier";
 import ConditionalLoadingSpinner from "discourse/components/conditional-loading-spinner";
+import discourseDebounce from "discourse/lib/debounce";
+import { INPUT_DELAY } from "discourse/lib/environment";
 import isElementInViewport from "discourse/lib/is-element-in-viewport";
-import { INPUT_DELAY } from "discourse-common/config/environment";
-import discourseDebounce from "discourse-common/lib/debounce";
 import EmptyState from "./empty-state";
 import Item from "./item";
 
@@ -48,7 +48,11 @@ export default class List extends Component {
 
   <template>
     <div class="c-list">
-      <div {{this.fill}} ...attributes>
+      <div
+        class={{if @collection.fetchedOnce "--loaded"}}
+        {{this.fill}}
+        ...attributes
+      >
         {{#each @collection.items as |item|}}
           {{yield (hash Item=(component this.itemComponent item=item))}}
         {{else}}

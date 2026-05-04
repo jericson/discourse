@@ -2,7 +2,7 @@
 
 require "nokogiri"
 require "optparse"
-require File.expand_path(File.dirname(__FILE__) + "/base")
+require_relative "base"
 
 class ImportScripts::Disqus < ImportScripts::Base
   # CHANGE THESE BEFORE RUNNING THE IMPORTER
@@ -17,7 +17,7 @@ class ImportScripts::Disqus < ImportScripts::Base
     abort("Category #{IMPORT_CATEGORY} not found") if @category.blank?
 
     @parser = DisqusSAX.new
-    doc = Nokogiri::XML::SAX::Parser.new(@parser)
+    doc = Nokogiri::XML::SAX::Parser.new(@parser, Encoding::UTF_8)
     doc.parse_file(IMPORT_FILE)
     @parser.normalize
 

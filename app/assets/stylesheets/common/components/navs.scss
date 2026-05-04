@@ -1,3 +1,5 @@
+@use "lib/viewport";
+
 // --------------------------------------------------
 // Navigation menus
 // --------------------------------------------------
@@ -8,6 +10,7 @@
 %nav {
   margin-left: 0;
   list-style: none;
+
   li a {
     display: block;
     text-decoration: none;
@@ -16,10 +19,8 @@
 
 // Pill nav
 // --------------------------------------------------
-
 .nav-pills {
   @extend %nav;
-
   display: flex;
   flex-direction: row;
   align-items: stretch;
@@ -31,9 +32,10 @@
     > a,
     button {
       position: relative;
+      border: 0;
       border-radius: var(--d-nav-pill-border-radius);
       padding: 0.65em 0.75em;
-      color: var(--primary);
+      color: var(--d-nav-color);
       line-height: var(--line-height-small);
       box-sizing: border-box;
       min-height: 30px;
@@ -41,6 +43,12 @@
       align-items: center;
       background-color: var(--d-nav-bg-color);
       transition: var(--d-button-transition);
+      white-space: nowrap;
+
+      @include viewport.between(sm, lg) {
+        font-size: var(--font-0);
+        padding: var(--space-2) var(--space-3);
+      }
 
       .d-icon {
         margin-right: 5px;
@@ -49,31 +57,25 @@
       }
 
       &:hover {
-        color: var(--d-nav-color--hover);
-        background: var(--d-nav-bg-color--hover);
-        .d-icon {
-          color: var(--d-nav-color--hover);
-        }
+        @include nav-hover;
       }
     }
 
     a.active,
     button.active {
-      @include nav-active();
+      @include nav-active;
     }
   }
 }
 
 // Stacked nav
 // --------------------------------------------------
-
 .nav-stacked {
   @extend %nav;
   padding: 0;
-  background: var(--primary-low);
 
   li {
-    border-bottom: 1px solid var(--primary-low);
+    border-bottom: 1px solid var(--content-border-color);
 
     &:last-of-type {
       border-bottom: 0;
@@ -90,21 +92,18 @@
     line-height: var(--line-height-small);
     cursor: pointer;
     color: var(--primary);
+
     @include ellipsis;
 
+    &:hover {
+      background: var(--d-sidebar-highlight-background);
+    }
+
     &.active {
-      position: relative;
-
-      --arrow-thickness: 8px;
-
-      &::after {
-        position: absolute;
-        right: 0;
-        top: calc(50% - var(--arrow-thickness));
-        content: " ";
-        border: var(--arrow-thickness) solid transparent;
-        border-left-color: var(--secondary);
-      }
+      color: var(--d-selected-text-color);
+      background-color: var(--d-selected);
+      font-weight: bold;
+      font-weight: var(--d-sidebar-active-font-weight);
     }
   }
 
@@ -124,6 +123,6 @@
 .user-navigation .nav-pills > li {
   a,
   button {
-    border-radius: 0px;
+    border-radius: 0;
   }
 }

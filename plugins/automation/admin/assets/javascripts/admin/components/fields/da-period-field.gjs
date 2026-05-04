@@ -3,10 +3,10 @@ import { Input } from "@ember/component";
 import { hash } from "@ember/helper";
 import { on } from "@ember/modifier";
 import { action } from "@ember/object";
+import { trackedObject } from "@ember/reactive/collections";
 import { next } from "@ember/runloop";
-import { TrackedObject } from "@ember-compat/tracked-built-ins";
-import I18n from "I18n";
-import ComboBox from "select-kit/components/combo-box";
+import ComboBox from "discourse/select-kit/components/combo-box";
+import { i18n } from "discourse-i18n";
 import BaseField from "./da-base-field";
 import DAFieldDescription from "./da-field-description";
 import DAFieldLabel from "./da-field-label";
@@ -20,7 +20,7 @@ export default class PeriodField extends BaseField {
 
     next(() => {
       if (!this.args.field.metadata.value) {
-        this.args.field.metadata.value = new TrackedObject({
+        this.args.field.metadata.value = trackedObject({
           interval: 1,
           frequency: null,
         });
@@ -32,14 +32,14 @@ export default class PeriodField extends BaseField {
   }
 
   get recurringLabel() {
-    return I18n.t("discourse_automation.triggerables.recurring.every");
+    return i18n("discourse_automation.triggerables.recurring.every");
   }
 
   get replacedContent() {
     return (this.args.field?.extra?.content || []).map((r) => {
       return {
         id: r.id,
-        name: I18n.t(r.name),
+        name: i18n(r.name),
       };
     });
   }

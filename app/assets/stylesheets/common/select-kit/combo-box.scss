@@ -43,7 +43,6 @@
       .collection-header {
         a {
           white-space: nowrap;
-          color: var(--primary);
           line-height: var(--line-height-medium);
           font-weight: bold;
           display: block;
@@ -59,9 +58,10 @@
 
     &.is-disabled {
       .select-kit-header {
-        background: var(--primary-low);
+        background: var(--d-input-bg-color--disabled);
         border-color: var(--primary-low-mid);
         color: var(--primary-medium);
+
         .d-icon {
           color: var(--primary-medium);
         }
@@ -81,12 +81,6 @@
 
     &.tag-drop {
       color: var(--primary-high);
-    }
-
-    &.group-dropdown {
-      .select-kit-row {
-        font-weight: bold;
-      }
     }
   }
 }

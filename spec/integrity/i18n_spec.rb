@@ -32,7 +32,7 @@ RSpec.describe "i18n integrity checks" do
   it "has an i18n key for each Site Setting" do
     SiteSetting.all_settings.each do |s|
       next if s[:plugin] == SiteSetting::SAMPLE_TEST_PLUGIN.name
-      expect(s[:description]).not_to match(/Translation missing/)
+      expect(s[:description]).not_to be_blank
     end
   end
 
@@ -63,11 +63,8 @@ RSpec.describe "i18n integrity checks" do
       expect(yaml.keys).to eq([locale])
 
       expect(yaml[locale]["js"]).to be
-
-      if !LocaleSiteSetting.fallback_locale(locale)
-        expect(yaml[locale]["admin_js"]).to be
-        expect(yaml[locale]["wizard_js"]).to be
-      end
+      expect(yaml[locale]["admin_js"]).to be unless LocaleSiteSetting.fallback_locale(locale)
+      expect(yaml[locale]["wizard_js"]).to be if locale == "en"
     end
   end
 

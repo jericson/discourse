@@ -11,8 +11,8 @@ class Notification < ActiveRecord::Base
 
   MEMBERSHIP_REQUEST_CONSOLIDATION_WINDOW_HOURS = 24
 
-  validates_presence_of :data
-  validates_presence_of :notification_type
+  validates :data, presence: true
+  validates :notification_type, presence: true
 
   scope :unread, lambda { where(read: false) }
   scope :recent,
@@ -160,6 +160,12 @@ class Notification < ActiveRecord::Base
         new_features: 37,
         admin_problems: 38,
         linked_consolidated: 39,
+        chat_watched_thread: 40,
+        upcoming_change_available: 41,
+        upcoming_change_automatically_promoted: 42,
+        boost: 43, # Used by https://github.com/discourse/discourse-boosts
+        suggested_edit_created: 44, # Used by https://github.com/discourse/discourse/tree/main/plugins/discourse-suggested-edits
+        suggested_edit_accepted: 45, # Used by https://github.com/discourse/discourse/tree/main/plugins/discourse-suggested-edits
         following: 800, # Used by https://github.com/discourse/discourse-follow
         following_created_topic: 801, # Used by https://github.com/discourse/discourse-follow
         following_replied: 802, # Used by https://github.com/discourse/discourse-follow
@@ -240,6 +246,28 @@ class Notification < ActiveRecord::Base
     notifications.select { |n| n.topic_id.blank? || accessible_topic_ids.include?(n.topic_id) }
   end
 
+  def self.filter_disabled_badge_notifications(notifications)
+    return notifications if notifications.blank?
+
+    if !SiteSetting.enable_badges
+      return notifications.reject { |n| n.notification_type == types[:granted_badge] }
+    end
+
+    badge_ids =
+      notifications.filter_map do |n|
+        n.data_hash[:badge_id] if n.notification_type == types[:granted_badge]
+      end
+
+    return notifications if badge_ids.empty?
+
+    enabled_badge_ids = Badge.where(id: badge_ids, enabled: true).pluck(:id).to_set
+
+    notifications.reject do |n|
+      n.notification_type == types[:granted_badge] &&
+        !enabled_badge_ids.include?(n.data_hash[:badge_id])
+    end
+  end
+
   # Be wary of calling this frequently. O(n) JSON parsing can suck.
   def data_hash
     @data_hash ||=
@@ -254,7 +282,7 @@ class Notification < ActiveRecord::Base
   end
 
   def url
-    topic.relative_url(post_number) if topic.present?
+    topic.presence&.relative_url(post_number)
   end
 
   def post
@@ -289,7 +317,7 @@ class Notification < ActiveRecord::Base
     elsif user.user_option.like_notification_frequency ==
           UserOption.like_notification_frequency_type[:never]
       like_types.each do |notification_type|
-        notifications = notifications.where("notification_type <> ?", notification_type)
+        notifications = notifications.where.not(notification_type:)
       end
     end
     notifications.to_a
@@ -307,9 +335,7 @@ class Notification < ActiveRecord::Base
       [
         Notification.types[:liked],
         Notification.types[:liked_consolidated],
-      ].each do |notification_type|
-        notifications = notifications.where("notification_type <> ?", notification_type)
-      end
+      ].each { |notification_type| notifications = notifications.where.not(notification_type:) }
     end
 
     notifications = notifications.to_a
@@ -360,19 +386,26 @@ class Notification < ActiveRecord::Base
   end
 
   def self.populate_acting_user(notifications)
+    if !(SiteSetting.show_user_menu_avatars || SiteSetting.prioritize_full_name_in_ux)
+      return notifications
+    end
     usernames =
       notifications.map do |notification|
         notification.acting_username =
           (
             notification.data_hash[:username] || notification.data_hash[:display_username] ||
               notification.data_hash[:mentioned_by_username] ||
-              notification.data_hash[:invited_by_username]
+              notification.data_hash[:invited_by_username] ||
+              notification.data_hash[:original_username]
           )&.downcase
       end
 
     users = User.where(username_lower: usernames.uniq).index_by(&:username_lower)
     notifications.each do |notification|
       notification.acting_user = users[notification.acting_username]
+      notification.data_hash[
+        :original_name
+      ] = notification.acting_user&.name if SiteSetting.enable_names
     end
 
     notifications
@@ -407,7 +440,6 @@ end
 #
 # Table name: notifications
 #
-#  id                :integer          not null, primary key
 #  notification_type :integer          not null
 #  user_id           :integer          not null
 #  data              :string(1000)     not null
@@ -418,10 +450,15 @@ end
 #  post_number       :integer
 #  post_action_id    :integer
 #  high_priority     :boolean          default(FALSE), not null
+#  id                :bigint           not null, primary key
 #
 # Indexes
 #
 #  idx_notifications_speedup_unread_count                       (user_id,notification_type) WHERE (NOT read)
+#  index_notifications_on_data_display_username                 ((((data)::jsonb ->> 'display_username'::text))) WHERE (((data)::jsonb ->> 'display_username'::text) IS NOT NULL)
+#  index_notifications_on_data_original_username                ((((data)::jsonb ->> 'original_username'::text))) WHERE (((data)::jsonb ->> 'original_username'::text) IS NOT NULL)
+#  index_notifications_on_data_username                         ((((data)::jsonb ->> 'username'::text))) WHERE (((data)::jsonb ->> 'username'::text) IS NOT NULL)
+#  index_notifications_on_data_username2                        ((((data)::jsonb ->> 'username2'::text))) WHERE (((data)::jsonb ->> 'username2'::text) IS NOT NULL)
 #  index_notifications_on_post_action_id                        (post_action_id)
 #  index_notifications_on_topic_id_and_post_number              (topic_id,post_number)
 #  index_notifications_on_user_id_and_created_at                (user_id,created_at)

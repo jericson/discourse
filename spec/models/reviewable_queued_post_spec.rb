@@ -3,6 +3,7 @@
 RSpec.describe ReviewableQueuedPost, type: :model do
   fab!(:category)
   fab!(:moderator) { Fabricate(:moderator, refresh_auto_groups: true) }
+  fab!(:admin)
 
   describe "creating a post" do
     let!(:topic) { Fabricate(:topic, category: category) }
@@ -101,6 +102,15 @@ RSpec.describe ReviewableQueuedPost, type: :model do
           result = reviewable.perform(moderator, :approve_post)
           expect(result.success?).to eq(true)
         end
+
+        it "logs a staff action linked to the reviewable" do
+          expect { reviewable.perform(moderator, :approve_post) }.to change {
+            UserHistory.where(
+              action: UserHistory.actions[:post_approved],
+              reviewable_id: reviewable.id,
+            ).count
+          }.by(1)
+        end
       end
 
       context "with reject_post" do
@@ -123,9 +133,26 @@ RSpec.describe ReviewableQueuedPost, type: :model do
             Reviewable::InvalidAction,
           )
         end
+
+        it "logs a staff action linked to the reviewable" do
+          expect { reviewable.perform(moderator, :reject_post) }.to change {
+            UserHistory.where(
+              action: UserHistory.actions[:post_rejected],
+              reviewable_id: reviewable.id,
+            ).count
+          }.by(1)
+        end
       end
 
       context "with revise_and_reject_post" do
+        fab!(:contact_group, :group)
+        fab!(:contact_user, :user)
+
+        before do
+          SiteSetting.site_contact_group_name = contact_group.name
+          SiteSetting.site_contact_username = contact_user.username
+        end
+
         it "doesn't create the post the user intended" do
           post_count = Post.public_posts.count
           result = reviewable.perform(moderator, :revise_and_reject_post)
@@ -155,13 +182,18 @@ RSpec.describe ReviewableQueuedPost, type: :model do
             feedback: args[:revise_feedback],
             original_post: reviewable.payload["raw"],
             site_name: SiteSetting.title,
+            edit_instructions:
+              I18n.t("system_messages.reviewable_queued_post_revise_and_reject_edit_post"),
           }
+          expect(topic.topic_allowed_users.pluck(:user_id)).to include(contact_user.id)
+          expect(topic.topic_allowed_groups.pluck(:group_id)).to include(contact_group.id)
           expect(topic.first_post.raw.chomp).to eq(
             I18n.t(
               "system_messages.reviewable_queued_post_revise_and_reject.text_body_template",
               translation_params,
             ).chomp,
           )
+          expect(topic.first_post.raw).to include("reply to this message")
         end
 
         it "supports sending a custom revise reason" do
@@ -175,8 +207,25 @@ RSpec.describe ReviewableQueuedPost, type: :model do
           }
           topic = Topic.where(archetype: Archetype.private_message).last
 
+          expect(topic.topic_allowed_users.pluck(:user_id)).to include(contact_user.id)
+          expect(topic.topic_allowed_groups.pluck(:group_id)).to include(contact_group.id)
           expect(topic.first_post.raw).not_to include("Other...")
           expect(topic.first_post.raw).to include("Boring")
+        end
+
+        context "when no site contact user is configured" do
+          before do
+            SiteSetting.site_contact_group_name = ""
+            SiteSetting.site_contact_username = ""
+          end
+
+          it "omits reply instructions from the PM" do
+            args = { revise_reason: "Duplicate", revise_feedback: "This is old news" }
+            reviewable.perform(moderator, :revise_and_reject_post, args)
+
+            topic = Topic.where(archetype: Archetype.private_message).last
+            expect(topic.first_post.raw).not_to include("reply to this message")
+          end
         end
 
         context "when the topic is nil in the case of a new topic being created" do
@@ -203,6 +252,8 @@ RSpec.describe ReviewableQueuedPost, type: :model do
               feedback: args[:revise_feedback],
               original_post: reviewable.payload["raw"],
               site_name: SiteSetting.title,
+              edit_instructions:
+                I18n.t("system_messages.reviewable_queued_post_revise_and_reject_edit_topic"),
             }
             expect(topic.first_post.raw.chomp).to eq(
               I18n.t(
@@ -266,6 +317,17 @@ RSpec.describe ReviewableQueuedPost, type: :model do
       expect(create_options[:archetype]).to eq("regular")
     end
 
+    it "normalizes tag objects to strings in create_options" do
+      reviewable.payload["tags"] = [
+        { "id" => 1, "name" => "tag-one", "count" => 5 },
+        { "id" => 2, "name" => "tag-two", "count" => 10 },
+      ]
+
+      create_options = reviewable.create_options
+
+      expect(create_options[:tags]).to eq(%w[tag-one tag-two])
+    end
+
     it "creates the post and topic when approved" do
       topic_count, post_count = Topic.count, Post.count
       result = reviewable.perform(moderator, :approve_post)
@@ -284,8 +346,7 @@ RSpec.describe ReviewableQueuedPost, type: :model do
 
     it "creates a topic with staff tag when approved" do
       hidden_tag = Fabricate(:tag)
-      staff_tag_group =
-        Fabricate(:tag_group, permissions: { "staff" => 1 }, tag_names: [hidden_tag.name])
+      Fabricate(:tag_group, permissions: { "staff" => 1 }, tag_names: [hidden_tag.name])
       reviewable.payload["tags"] += [hidden_tag.name]
 
       result = reviewable.perform(moderator, :approve_post)
@@ -295,6 +356,21 @@ RSpec.describe ReviewableQueuedPost, type: :model do
       expect(result.created_post_topic).to be_valid
       expect(reviewable.topic_id).to eq(result.created_post_topic.id)
       expect(result.created_post_topic.tags.pluck(:name)).to match_array(reviewable.payload["tags"])
+    end
+
+    it "approves successfully when tags are stored as objects instead of strings" do
+      tag1 = Fabricate(:tag, name: "tag-one")
+      tag2 = Fabricate(:tag, name: "tag-two")
+      reviewable.payload["tags"] = [
+        { "id" => tag1.id, "name" => "tag-one", "count" => 5 },
+        { "id" => tag2.id, "name" => "tag-two", "count" => 10 },
+      ]
+      reviewable.save!
+
+      result = reviewable.perform(moderator, :approve_post)
+
+      expect(result.success?).to eq(true)
+      expect(result.created_post_topic.tags.pluck(:name)).to contain_exactly("tag-one", "tag-two")
     end
 
     it "does not create the post and topic when rejected" do
@@ -307,6 +383,16 @@ RSpec.describe ReviewableQueuedPost, type: :model do
 
       expect(Topic.count).to eq(topic_count)
       expect(Post.count).to eq(post_count)
+    end
+
+    it "remaps tags with synonyms when approved" do
+      Fabricate(:tag, name: "syntag", target_tag: Fabricate(:tag, name: "maintag"))
+      reviewable.payload["tags"] += ["syntag"]
+
+      result = reviewable.perform(moderator, :approve_post)
+
+      expect(result.success?).to eq(true)
+      expect(result.created_post_topic.tags.pluck(:name)).to match_array(%w[cool neat maintag])
     end
   end
 
@@ -345,6 +431,26 @@ RSpec.describe ReviewableQueuedPost, type: :model do
           user_stats.expects(:update_pending_posts).never
           reviewable.update!(score: 10)
         end
+      end
+
+      it "uses bundle structure" do
+        actions = reviewable.actions_for(Guardian.new(admin))
+        bundle_ids = actions.bundles.map(&:id)
+
+        expect(bundle_ids).to include("#{reviewable.id}-reject-post")
+        expect(bundle_ids).not_to include("#{reviewable.id}-post-actions")
+        expect(bundle_ids).not_to include("#{reviewable.id}-user-actions")
+      end
+
+      it "includes actions" do
+        actions = reviewable.actions_for(Guardian.new(admin))
+        action_ids = actions.to_a.map(&:id).map(&:to_s)
+
+        expect(action_ids).to include("approve_post")
+        expect(action_ids).to include("reject_post")
+        expect(action_ids).to include("revise_and_reject_post")
+        expect(action_ids).to include("delete_user")
+        expect(action_ids).to include("delete_user_block")
       end
     end
   end

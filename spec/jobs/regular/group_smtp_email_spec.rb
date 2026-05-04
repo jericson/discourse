@@ -107,7 +107,7 @@ RSpec.describe Jobs::GroupSmtpEmail do
     expect(email_log.message_id).to eq("discourse/post/#{post.id}@test.localhost")
   end
 
-  it "creates an IncomingEmail record with the correct details to avoid double processing IMAP" do
+  it "creates an IncomingEmail record with the correct details" do
     job.execute(args)
     expect(ActionMailer::Base.deliveries.count).to eq(1)
     expect(ActionMailer::Base.deliveries.last.subject).to eq("Re: Help I need support")
@@ -191,12 +191,6 @@ RSpec.describe Jobs::GroupSmtpEmail do
     expect { Jobs.enqueue(:group_smtp_email, **args) }.not_to raise_error
   end
 
-  it "does not retry the job on SMTP read timeouts, because we can't be sure if the send actually failed or if ENTER . ENTER just timed out" do
-    Jobs.run_immediately!
-    Email::Sender.any_instance.expects(:send).raises(Net::ReadTimeout)
-    expect { Jobs.enqueue(:group_smtp_email, **args) }.not_to raise_error
-  end
-
   context "when there are cc_addresses" do
     it "has the cc_addresses and cc_user_ids filled in correctly" do
       job.execute(args)
@@ -223,28 +217,6 @@ RSpec.describe Jobs::GroupSmtpEmail do
       expect(email_log.cc_addresses).to eq("otherguy@test.com")
       expect(email_log.bcc_addresses).to eq("cormac@lit.com")
       expect(email_log.cc_user_ids).to match_array([staged1.id])
-    end
-  end
-
-  context "when the post in the argument is the OP" do
-    let(:post_id) { post.topic.posts.first.id }
-
-    context "when the group has imap enabled" do
-      before { group.update!(imap_enabled: true) }
-
-      it "aborts and does not send a group SMTP email; the OP is the one that sent the email in the first place" do
-        expect { job.execute(args) }.not_to(change { EmailLog.count })
-        expect(ActionMailer::Base.deliveries.count).to eq(0)
-      end
-    end
-
-    context "when the group does not have imap enabled" do
-      before { group.update!(imap_enabled: false) }
-
-      it "sends the email as expected" do
-        job.execute(args)
-        expect(ActionMailer::Base.deliveries.count).to eq(1)
-      end
     end
   end
 
@@ -321,5 +293,39 @@ RSpec.describe Jobs::GroupSmtpEmail do
         ),
       ).to eq(true)
     end
+  end
+
+  it "re-raises Net::ReadTimeout to trigger Sidekiq retries" do
+    allow_any_instance_of(Email::Sender).to receive(:send).and_raise(
+      Net::ReadTimeout.new("timeout"),
+    )
+    expect { job.execute(args) }.to raise_error(Net::ReadTimeout)
+  end
+
+  it "does not send email if an EmailLog with the same message_id already exists" do
+    message = Mail::Message.new(body: "hello", to: "myemail@example.invalid")
+    message.message_id = "unique_message_id"
+    GroupSmtpMailer
+      .expects(:send_mail)
+      .with(
+        group,
+        "test@test.com",
+        post,
+        cc_addresses: %w[otherguy@test.com cormac@lit.com],
+        bcc_addresses: [],
+      )
+      .returns(message)
+    EmailLog.expects(:exists?).with(message_id: message.message_id).returns(true)
+    Email::Sender.any_instance.expects(:send).never
+
+    job.execute(args)
+    expect(ActionMailer::Base.deliveries.count).to eq(0)
+  end
+
+  it "retries the job on SMTP read timeouts when there are no duplicates" do
+    Jobs.run_immediately!
+    EmailLog.stubs(:exists?).with(message_id: anything).returns(false)
+    Email::Sender.any_instance.expects(:send).raises(Net::ReadTimeout)
+    expect { Jobs.enqueue(:group_smtp_email, **args) }.to raise_error(Net::ReadTimeout)
   end
 end

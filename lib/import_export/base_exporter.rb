@@ -13,6 +13,9 @@ module ImportExport
       slug
       description
       text_color
+      style_type
+      icon
+      emoji
       auto_close_hours
       position
       parent_category_id
@@ -119,7 +122,6 @@ module ImportExport
     end
 
     def export_category_groups
-      groups = []
       group_names = []
       auto_group_names = Group::AUTO_GROUPS.keys.map(&:to_s)
 

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-RSpec.describe "Archive channel", type: :system do
-  fab!(:channel_1) { Fabricate(:chat_channel) }
+RSpec.describe "Archive channel" do
+  fab!(:channel_1, :chat_channel)
 
   let(:chat) { PageObjects::Pages::Chat.new }
   let(:channel) { PageObjects::Pages::ChatChannel.new }
@@ -14,7 +14,7 @@ RSpec.describe "Archive channel", type: :system do
 
   context "when archiving is disabled" do
     context "when admin user" do
-      fab!(:current_user) { Fabricate(:admin) }
+      fab!(:current_user, :admin)
 
       before { sign_in(current_user) }
 
@@ -30,7 +30,7 @@ RSpec.describe "Archive channel", type: :system do
     before { SiteSetting.chat_allow_archiving_channels = true }
 
     context "when regular user" do
-      fab!(:current_user) { Fabricate(:user) }
+      fab!(:current_user, :user)
 
       before { sign_in(current_user) }
 
@@ -42,7 +42,7 @@ RSpec.describe "Archive channel", type: :system do
     end
 
     context "when admin user" do
-      fab!(:current_user) { Fabricate(:admin) }
+      fab!(:current_user, :admin)
 
       before { sign_in(current_user) }
 
@@ -104,23 +104,21 @@ RSpec.describe "Archive channel", type: :system do
             chat_channel: channel_1,
             archived_by: current_user,
             destination_topic_title: "This will be the archive topic",
+            destination_category_id: channel_1.chatable_id,
             total_messages: 2,
             archived_messages: 1,
             archive_error: "Something went wrong",
           )
         end
 
-        xit "can be retried" do
-          Jobs.run_immediately!
-
+        it "can be retried" do
           chat.visit_channel(channel_1)
           click_button(I18n.t("js.chat.channel_archive.retry"))
-          expect(page).to have_css(".chat-channel-archive-status a")
 
-          new_window = window_opened_by { find(".chat-channel-archive-status a").click }
-          within_window(new_window) do
-            expect(page).to have_content(archive.destination_topic_title)
-          end
+          Jobs::Chat::ChannelArchive.new.execute(chat_channel_archive_id: archive.id)
+
+          archive_link = find(".chat-channel-archive-status a")
+          expect(archive_link[:href]).to end_with("/t/-/#{archive.reload.destination_topic_id}")
         end
       end
     end

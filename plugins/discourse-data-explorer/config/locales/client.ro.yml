@@ -1,0 +1,36 @@
+# WARNING: Never edit this file.
+# It will be overwritten when translations are pulled from Crowdin.
+#
+# To work with us on translations, join this project:
+# https://translate.discourse.org/
+
+ro:
+  js:
+    explorer:
+      default_query: "Implicit"
+      or: "sau"
+      create: "Creează"
+      import:
+        label: "Importă"
+      help:
+        label: "Ajutor"
+      schema:
+        filter: "Caută..."
+      types:
+        bool:
+          yes: "Da"
+          no: "Nu"
+      export: "Exportă"
+      save: "Salvează modificări"
+      undo: "Renunță la modificări"
+      edit: "Editează"
+      delete: "Șterge"
+      query_groups: "Grupuri"
+      report_name: "Raport"
+      query_description: "Descriere"
+      query_time: "Ultima rulare"
+      query_user: "Creată de"
+      reset_params: "Resetare"
+      search_placeholder: "Caută..."
+    group:
+      reports: "Rapoarte"

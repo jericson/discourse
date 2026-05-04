@@ -5,9 +5,14 @@
 # https://translate.discourse.org/
 
 pt_BR:
+  admin_js:
+    admin:
+      site_settings:
+        categories:
+          spoiler_alert: "Alerta de spoiler Discourse"
   js:
     spoiler:
-      title: Dificuldador de desfoque
+      title: Desfocar spoiler
       label:
         show: "Exibir conteúdo oculto"
     composer:

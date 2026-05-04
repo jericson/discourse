@@ -55,7 +55,7 @@ RSpec.describe Chat::CategoryChannel do
     end
 
     context "when channel is not public" do
-      let(:staff_groups) { Group::AUTO_GROUPS.slice(:staff, :moderators, :admins).values }
+      let(:staff_groups) { Group::AUTO_GROUPS.values_at(:staff, :moderators, :admins) }
       let(:group) { Fabricate(:group) }
       let(:private_category) { Fabricate(:private_category, group: group) }
       let(:channel) { Fabricate(:category_channel, chatable: private_category) }
@@ -85,6 +85,18 @@ RSpec.describe Chat::CategoryChannel do
       it "returns the name from the associated category" do
         expect(title).to eq(channel.category.name)
       end
+    end
+  end
+
+  describe "#leave" do
+    let(:public_category) { Fabricate(:category, read_restricted: false) }
+    let(:channel) { Fabricate(:category_channel, chatable: public_category) }
+
+    it "calls #remove" do
+      Fabricate(:user_chat_channel_membership, chat_channel: channel)
+      user = channel.user_chat_channel_memberships.first.user
+      channel.expects(:remove).with(user)
+      channel.leave(user)
     end
   end
 

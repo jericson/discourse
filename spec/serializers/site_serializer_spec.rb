@@ -58,7 +58,7 @@ RSpec.describe SiteSerializer do
     serialized = described_class.new(Site.new(guardian), scope: guardian, root: false).as_json
     c1 = serialized[:categories].find { |c| c[:id] == category.id }
 
-    expect(c1[:allowed_tags]).to contain_exactly(tag.name)
+    expect(c1[:allowed_tags]).to contain_exactly({ id: tag.id, name: tag.name, slug: tag.slug })
     expect(c1[:allowed_tag_groups]).to contain_exactly(tag_group.name)
     expect(c1[:required_tag_groups]).to eq([{ name: tag_group_2.name, min_count: 1 }])
   end
@@ -88,34 +88,48 @@ RSpec.describe SiteSerializer do
   end
 
   it "includes user-selectable color schemes" do
-    # it includes seeded color schemes
-    serialized = described_class.new(Site.new(guardian), scope: guardian, root: false).as_json
-    expect(serialized[:user_color_schemes].count).to eq(6)
-
-    scheme_names = serialized[:user_color_schemes].map { |x| x[:name] }
-    expect(scheme_names).to include(I18n.t("color_schemes.dark"))
-    expect(scheme_names).to include(I18n.t("color_schemes.wcag"))
-    expect(scheme_names).to include(I18n.t("color_schemes.wcag_dark"))
-    expect(scheme_names).to include(I18n.t("color_schemes.solarized_light"))
-    expect(scheme_names).to include(I18n.t("color_schemes.solarized_dark"))
-    expect(scheme_names).to include(I18n.t("color_schemes.dracula"))
-
-    dark_scheme = ColorScheme.create_from_base(name: "AnotherDarkScheme", base_scheme_id: "Dark")
+    dark_scheme =
+      ColorScheme.create_from_base(
+        name: "AnotherDarkScheme",
+        base_scheme_id: ColorScheme::NAMES_TO_ID_MAP["Dark"],
+      )
     dark_scheme.user_selectable = true
     dark_scheme.save!
 
     serialized = described_class.new(Site.new(guardian), scope: guardian, root: false).as_json
-    expect(serialized[:user_color_schemes].count).to eq(7)
+    expect(serialized[:user_color_schemes].count).to eq(1)
     expect(serialized[:user_color_schemes][0][:is_dark]).to eq(true)
+  end
+
+  describe "only_theme_color_schemes modifier" do
+    fab!(:theme)
+    fab!(:color_scheme) { Fabricate(:color_scheme, theme_id: theme.id, user_selectable: false) }
+
+    before do
+      theme.update!(user_selectable: true)
+      theme.theme_modifier_set.update!(only_theme_color_schemes: true)
+    end
+
+    it "includes theme color schemes in user_color_schemes when modifier is active" do
+      serialized = described_class.new(Site.new(guardian), scope: guardian, root: false).as_json
+      scheme_ids = serialized[:user_color_schemes].map { |s| s[:id] }
+      expect(scheme_ids).to include(color_scheme.id)
+    end
+
+    it "includes only_theme_color_schemes flag in user_themes" do
+      serialized = described_class.new(Site.new(guardian), scope: guardian, root: false).as_json
+      theme_data = serialized[:user_themes].find { |t| t["theme_id"] == theme.id }
+      expect(theme_data["only_theme_color_schemes"]).to eq(true)
+    end
   end
 
   it "includes default dark mode scheme" do
     scheme = ColorScheme.last
-    SiteSetting.default_dark_mode_color_scheme_id = scheme.id
+    Theme.find_default.update!(dark_color_scheme_id: scheme.id)
     serialized = described_class.new(Site.new(guardian), scope: guardian, root: false).as_json
-    default_dark_scheme = expect(serialized[:default_dark_color_scheme]["name"]).to eq(scheme.name)
+    default_dark_scheme = expect(serialized[:default_dark_color_scheme][:name]).to eq(scheme.name)
 
-    SiteSetting.default_dark_mode_color_scheme_id = -1
+    Theme.find_default.update!(dark_color_scheme_id: nil)
     serialized = described_class.new(Site.new(guardian), scope: guardian, root: false).as_json
     expect(serialized[:default_dark_color_scheme]).to eq(nil)
   end
@@ -196,8 +210,20 @@ RSpec.describe SiteSerializer do
 
       expect(serialized[:anonymous_default_navigation_menu_tags]).to eq(
         [
-          { name: "dev", description: "some description", pm_only: false },
-          { name: "random", description: tag2.description, pm_only: false },
+          {
+            id: tag.id,
+            name: "dev",
+            slug: tag.slug,
+            description: "some description",
+            pm_only: false,
+          },
+          {
+            id: tag2.id,
+            name: "random",
+            slug: tag2.slug,
+            description: tag2.description,
+            pm_only: false,
+          },
         ],
       )
     end
@@ -214,8 +240,8 @@ RSpec.describe SiteSerializer do
 
     it "is not included in the serialised object when user is not anonymous" do
       guardian = Guardian.new(user)
-
       serialized = described_class.new(Site.new(guardian), scope: guardian, root: false).as_json
+      expect(serialized).not_to have_key(:anonymous_sidebar_sections)
     end
 
     it "includes only public sidebar sections serialised object when user is anonymous" do
@@ -279,8 +305,8 @@ RSpec.describe SiteSerializer do
     end
 
     describe "when tagging is enabled" do
-      fab!(:tag2) { Fabricate(:tag) }
-      fab!(:tag3) { Fabricate(:tag) }
+      fab!(:tag2, :tag)
+      fab!(:tag3, :tag)
 
       before { SiteSetting.tagging_enabled = true }
 
@@ -316,7 +342,12 @@ RSpec.describe SiteSerializer do
 
         serialized = described_class.new(Site.new(guardian), scope: guardian, root: false).as_json
 
-        expect(serialized[:top_tags]).to eq([tag3.name, tag2.name])
+        expect(serialized[:top_tags]).to eq(
+          [
+            { id: tag3.id, name: tag3.name, slug: tag3.slug },
+            { id: tag2.id, name: tag2.name, slug: tag2.slug },
+          ],
+        )
       end
     end
   end
@@ -347,9 +378,27 @@ RSpec.describe SiteSerializer do
 
       expect(serialized[:navigation_menu_site_top_tags]).to eq(
         [
-          { name: tag3.name, description: tag2.description, pm_only: false },
-          { name: tag1.name, description: tag1.description, pm_only: false },
-          { name: tag2.name, description: tag3.description, pm_only: false },
+          {
+            id: tag3.id,
+            name: tag3.name,
+            slug: tag3.slug_for_url,
+            description: tag3.description,
+            pm_only: false,
+          },
+          {
+            id: tag1.id,
+            name: tag1.name,
+            slug: tag1.slug_for_url,
+            description: tag1.description,
+            pm_only: false,
+          },
+          {
+            id: tag2.id,
+            name: tag2.name,
+            slug: tag2.slug_for_url,
+            description: tag2.description,
+            pm_only: false,
+          },
         ],
       )
     end
@@ -360,6 +409,19 @@ RSpec.describe SiteSerializer do
       serialized = described_class.new(Site.new(guardian), scope: guardian, root: false).as_json
 
       expect(serialized[:navigation_menu_site_top_tags]).to eq(nil)
+    end
+
+    it "should use slug_for_url for tags with empty slugs" do
+      numeric_tag =
+        Fabricate(:tag, name: "1").tap { |tag| Fabricate.times(10, :topic, tags: [tag]) }
+
+      expect(numeric_tag.slug).to eq("")
+
+      serialized = described_class.new(Site.new(guardian), scope: guardian, root: false).as_json
+      numeric_entry =
+        serialized[:navigation_menu_site_top_tags].find { |t| t[:id] == numeric_tag.id }
+
+      expect(numeric_entry[:slug]).to eq("#{numeric_tag.id}-tag")
     end
 
     it "should return an empty array if site has no top tags" do
@@ -373,8 +435,8 @@ RSpec.describe SiteSerializer do
 
   describe "#whispers_allowed_groups_names" do
     fab!(:admin)
-    fab!(:allowed_user) { Fabricate(:user) }
-    fab!(:not_allowed_user) { Fabricate(:user) }
+    fab!(:allowed_user, :user)
+    fab!(:not_allowed_user, :user)
     fab!(:group1) { Fabricate(:group, name: "whisperers1", users: [allowed_user]) }
     fab!(:group2) { Fabricate(:group, name: "whisperers2", users: [allowed_user]) }
 
@@ -423,6 +485,114 @@ RSpec.describe SiteSerializer do
       serialized =
         described_class.new(Site.new(user_guardian), scope: user_guardian, root: false).as_json
       expect(serialized[:whispers_allowed_groups_names]).to eq(nil)
+    end
+  end
+
+  describe "#full_name_required_for_signup" do
+    let(:site_json) do
+      described_class.new(Site.new(guardian), scope: guardian, root: false).as_json
+    end
+
+    it "is false when full_name_requirement setting is optional_at_signup" do
+      SiteSetting.full_name_requirement = "optional_at_signup"
+      expect(site_json[:full_name_required_for_signup]).to eq(false)
+    end
+
+    it "is false when full_name_requirement setting is hidden_at_signup" do
+      SiteSetting.full_name_requirement = "hidden_at_signup"
+      SiteSetting.enable_names = true
+      expect(site_json[:full_name_required_for_signup]).to eq(false)
+    end
+
+    it "is true when full_name_requirement setting is required_at_signup and enable_names is true" do
+      SiteSetting.full_name_requirement = "required_at_signup"
+      SiteSetting.enable_names = true
+      expect(site_json[:full_name_required_for_signup]).to eq(true)
+    end
+  end
+
+  describe "#full_name_visible_in_signup" do
+    let(:site_json) do
+      described_class.new(Site.new(guardian), scope: guardian, root: false).as_json
+    end
+
+    it "is false when full_name_requirement is hidden_at_signup" do
+      SiteSetting.full_name_requirement = "hidden_at_signup"
+      expect(site_json[:full_name_visible_in_signup]).to eq(false)
+    end
+
+    it "is true when enable_names setting is true and full_name_requirement is optional_at_signup" do
+      SiteSetting.full_name_requirement = "optional_at_signup"
+      expect(site_json[:full_name_visible_in_signup]).to eq(true)
+    end
+
+    it "is true when enable_names setting is true and full_name_requirement is required_at_signup" do
+      SiteSetting.full_name_requirement = "required_at_signup"
+      expect(site_json[:full_name_visible_in_signup]).to eq(true)
+    end
+
+    it "is false when enable_names setting is true and full_name_requirement is hidden_at_signup" do
+      SiteSetting.full_name_requirement = "hidden_at_signup"
+      expect(site_json[:full_name_visible_in_signup]).to eq(false)
+    end
+  end
+
+  describe "#email_configured" do
+    it "returns true when smtp_address is set" do
+      global_setting :smtp_address, "smtp.example.com"
+
+      serialized = described_class.new(Site.new(guardian), scope: guardian, root: false).as_json
+      expect(serialized[:email_configured]).to eq(true)
+    end
+
+    it "returns false when smtp_address is blank" do
+      global_setting :smtp_address, ""
+
+      serialized = described_class.new(Site.new(guardian), scope: guardian, root: false).as_json
+      expect(serialized[:email_configured]).to eq(false)
+    end
+  end
+
+  describe "#groups" do
+    fab!(:group)
+    fab!(:admin)
+
+    it "serializes the automatic field of each group" do
+      serialized_groups =
+        described_class.new(Site.new(admin.guardian), scope: admin.guardian, root: false).as_json[
+          :groups
+        ]
+
+      expect(serialized_groups.find { |g| g["name"] == "everyone" }["automatic"]).to eq(true)
+      expect(serialized_groups.find { |g| g["name"] == group.name }["automatic"]).to eq(false)
+    end
+  end
+
+  describe "#admin_config_login_routes" do
+    fab!(:admin)
+    fab!(:user)
+
+    before { DiscoursePluginRegistry.admin_config_login_routes << "plugin_login_route" }
+
+    after { DiscoursePluginRegistry.admin_config_login_routes.delete("plugin_login_route") }
+
+    it "is included for admin users" do
+      admin_guardian = Guardian.new(admin)
+      serialized =
+        described_class.new(Site.new(admin_guardian), scope: admin_guardian, root: false).as_json
+      expect(serialized[:admin_config_login_routes]).to include("plugin_login_route")
+    end
+
+    it "is not included for anonymous users" do
+      serialized = described_class.new(Site.new(guardian), scope: guardian, root: false).as_json
+      expect(serialized).not_to have_key(:admin_config_login_routes)
+    end
+
+    it "is not included for non-admin users" do
+      user_guardian = Guardian.new(user)
+      serialized =
+        described_class.new(Site.new(user_guardian), scope: user_guardian, root: false).as_json
+      expect(serialized).not_to have_key(:admin_config_login_routes)
     end
   end
 end

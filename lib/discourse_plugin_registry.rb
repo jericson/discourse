@@ -1,9 +1,9 @@
 # frozen_string_literal: true
-
-#
 #  A class that handles interaction between a plugin and the Discourse App.
 #
 class DiscoursePluginRegistry
+  @@register_names = Set.new
+
   # Plugins often need to be able to register additional handlers, data, or
   # classes that will be used by core classes. This should be used if you
   # need to control which type the registry is, and if it doesn't need to
@@ -15,7 +15,7 @@ class DiscoursePluginRegistry
   #   - Defines instance method as a shortcut to the singleton method
   #   - Automatically deletes the register on registry.reset!
   def self.define_register(register_name, type)
-    @@register_names ||= Set.new
+    return if respond_to?(register_name)
     @@register_names << register_name
 
     define_singleton_method(register_name) do
@@ -36,18 +36,20 @@ class DiscoursePluginRegistry
   #   - Defines instance method as a shortcut to the singleton method
   #   - Automatically deletes the register on registry.reset!
   def self.define_filtered_register(register_name)
+    return if respond_to?(register_name)
     define_register(register_name, Array)
 
     singleton_class.alias_method :"_raw_#{register_name}", :"#{register_name}"
 
     define_singleton_method(register_name) do
-      unfiltered = public_send(:"_raw_#{register_name}")
-      unfiltered.filter { |v| v[:plugin].enabled? }.map { |v| v[:value] }.uniq
+      public_send(:"_raw_#{register_name}").filter_map { |h| h[:value] if h[:plugin].enabled? }.uniq
     end
 
     define_singleton_method("register_#{register_name.to_s.singularize}") do |value, plugin|
       public_send(:"_raw_#{register_name}") << { plugin: plugin, value: value }
     end
+
+    yield(self) if block_given?
   end
 
   define_register :javascripts, Set
@@ -58,8 +60,8 @@ class DiscoursePluginRegistry
   define_register :desktop_stylesheets, Hash
   define_register :color_definition_stylesheets, Hash
   define_register :serialized_current_user_fields, Set
-  define_register :seed_data, HashWithIndifferentAccess
-  define_register :locales, HashWithIndifferentAccess
+  define_register :seed_data, ActiveSupport::HashWithIndifferentAccess
+  define_register :locales, ActiveSupport::HashWithIndifferentAccess
   define_register :svg_icons, Set
   define_register :custom_html, Hash
   define_register :html_builders, Hash
@@ -70,6 +72,10 @@ class DiscoursePluginRegistry
   define_register :demon_processes, Set
   define_register :groups_callback_for_users_search_controller_action, Hash
   define_register :mail_pollers, Set
+  define_register :site_setting_areas, Set
+  define_register :admin_config_login_routes, Set
+  define_register :discourse_dev_populate_reviewable_types, Set
+  define_register :category_update_param_with_callback, Hash
 
   define_filtered_register :staff_user_custom_fields
   define_filtered_register :public_user_custom_fields
@@ -85,6 +91,7 @@ class DiscoursePluginRegistry
 
   define_filtered_register :topic_thumbnail_sizes
   define_filtered_register :topic_preloader_associations
+  define_filtered_register :category_list_topics_preloader_associations
 
   define_filtered_register :api_parameter_routes
   define_filtered_register :api_key_scope_mappings
@@ -109,19 +116,32 @@ class DiscoursePluginRegistry
   define_filtered_register :hashtag_autocomplete_contextual_type_priorities
 
   define_filtered_register :search_groups_set_query_callbacks
+  define_filtered_register :search_handlers
 
   define_filtered_register :stats
   define_filtered_register :bookmarkables
 
   define_filtered_register :list_suggested_for_providers
 
-  define_filtered_register :summarization_strategies
-
   define_filtered_register :post_action_notify_user_handlers
 
   define_filtered_register :post_strippers
 
   define_filtered_register :problem_checks
+
+  define_filtered_register :flag_applies_to_types
+
+  define_filtered_register :calendar_subscription_feeds
+
+  define_filtered_register :custom_filter_mappings
+
+  define_filtered_register :reviewable_types do |singleton|
+    singleton.define_singleton_method("reviewable_types_lookup") do
+      public_send(:"_raw_reviewable_types")
+        .filter_map { |h| { plugin: h[:plugin].name, klass: h[:value] } if h[:plugin].enabled? }
+        .uniq
+    end
+  end
 
   def self.register_auth_provider(auth_provider)
     self.auth_providers << auth_provider
@@ -141,7 +161,7 @@ class DiscoursePluginRegistry
   end
 
   def self.register_svg_icon(icon)
-    self.svg_icons << icon
+    self.svg_icons << icon.strip
   end
 
   def register_css(filename, plugin_directory_name)
@@ -151,6 +171,12 @@ class DiscoursePluginRegistry
 
   def self.register_locale(locale, options = {})
     self.locales[locale] = options
+  end
+
+  def self.unregister_locale(locale)
+    raise "unregister_locale can only be used in tests" if !Rails.env.test?
+
+    self.locales.delete(locale)
   end
 
   def register_archetype(name, options = {})
@@ -208,9 +234,9 @@ class DiscoursePluginRegistry
     html_builders[name] << block
   end
 
-  def self.build_html(name, ctx = nil)
+  def self.build_html(name, ctx = nil, **kwargs)
     builders = html_builders[name] || []
-    builders.map { |b| b.call(ctx) }.join("\n").html_safe
+    builders.map { |b| b.call(ctx, **kwargs) }.join("\n").html_safe
   end
 
   def self.seed_paths
@@ -226,9 +252,11 @@ class DiscoursePluginRegistry
   end
 
   VENDORED_CORE_PRETTY_TEXT_MAP = {
-    "moment.js" => "vendor/assets/javascripts/moment.js",
-    "moment-timezone.js" => "vendor/assets/javascripts/moment-timezone-with-data.js",
+    "moment.js" => "frontend/discourse/node_modules/moment/moment.js",
+    "moment-timezone.js" =>
+      "frontend/discourse/node_modules/moment-timezone/builds/moment-timezone-with-data.js",
   }
+
   def self.core_asset_for_name(name)
     asset = VENDORED_CORE_PRETTY_TEXT_MAP[name]
     raise KeyError, "Asset #{name} not found in #{VENDORED_CORE_PRETTY_TEXT_MAP}" unless asset

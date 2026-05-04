@@ -7,6 +7,11 @@ if GlobalSetting.skip_redis?
   return
 end
 
+if (Rails.env.local?) && ENV["FORCE_RAILS_LOGS_STDOUT"] == "1"
+  Rails.logger = Logger.new(STDOUT)
+  return
+end
+
 if Rails.env.development? && !Sidekiq.server? && ENV["RAILS_LOGS_STDOUT"] == "1"
   Rails.application.config.after_initialize do
     console = ActiveSupport::Logger.new(STDOUT)
@@ -56,6 +61,8 @@ if Rails.env.production?
     # we handle this cleanly in the message bus middleware
     # no point logging to logster
     /RateLimiter::LimitExceeded.*/m,
+    # Pitchfork workers call Process.exit when timeouting
+    /SystemExit/,
   ]
   Logster.config.env_expandable_keys.push(:hostname, :problem_db)
 end
@@ -81,7 +88,7 @@ store.redis_prefix = Proc.new { redis.namespace }
 store.redis_raw_connection = redis.without_namespace
 severities = [Logger::WARN, Logger::ERROR, Logger::FATAL, Logger::UNKNOWN]
 
-RailsMultisite::ConnectionManagement.each_connection do
+RailsMultisite::ConnectionManagement.safe_each_connection do
   error_rate_per_minute =
     begin
       SiteSetting.alert_admins_if_errors_per_minute

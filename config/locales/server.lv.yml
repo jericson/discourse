@@ -64,6 +64,10 @@ lv:
       exclusion: ir rezervēts
   not_in_group:
     join_group: "Pievienoties grupai"
+  reading_time_minutes:
+    zero: "%{count} minūtes 🕑"
+    one: "%{count} minūtes 🕑"
+    other: "%{count} minūtes 🕑"
   likes: "Patīk"
   embed:
     start_discussion: "Sākt Diskusiju"
@@ -126,6 +130,8 @@ lv:
       user_profile:
         bio_raw: "Par Mani"
       user:
+        password: "Parole"
+      user_password:
         password: "Parole"
     errors:
       <<: *errors
@@ -199,9 +205,6 @@ lv:
         other: "pirms %{count} dienām"
   password_reset:
     title: "Atjaunot paroli"
-  activation:
-    continue_button: "Turpināt %{site_name}"
-    welcome_to: "Laipni lūdzam %{site_name}!"
   reviewable_score_types:
     needs_approval:
       title: "Nepieciešama apstiprināšana"
@@ -230,7 +233,9 @@ lv:
       every_month: "katru mēnesi"
       every_six_months: "katrus sešus mēnešus"
   user_api_key:
+    deny: "Atcelt"
     read: "izlasīts"
+    copied: "Nokopēts!"
     otp_confirmation:
       confirm_title: Turpināt %{site_name}
       logging_in_as: Piesakoties kā %{username}
@@ -256,7 +261,9 @@ lv:
       labels:
         flag: Tips
     visits:
-      xaxis: "Diena"
+      xaxis:
+        desktop: "Personālais dators"
+        mobile: "Mobilais"
     signups:
       xaxis: "Diena"
     new_contributors:
@@ -274,6 +281,8 @@ lv:
         user_api: "Lietotāja API"
       yaxis: "Diena"
     consolidated_page_views_browser_detection:
+      yaxis: "Diena"
+    site_traffic:
       yaxis: "Diena"
     dau_by_mau:
       xaxis: "Diena"
@@ -348,6 +357,8 @@ lv:
     page_view_total_reqs:
       title: "Lapu skatījumi"
       xaxis: "Diena"
+    page_view_legacy_total_reqs:
+      xaxis: "Diena"
     page_view_logged_in_mobile_reqs:
       xaxis: "Diena"
     page_view_anon_mobile_reqs:
@@ -379,6 +390,8 @@ lv:
     web_crawlers:
       labels:
         page_views: "Lapu skatījumi"
+    web_hook_events_daily_aggregate:
+      xaxis: "Diena"
     suspicious_logins:
       labels:
         user: Lietotājs
@@ -402,6 +415,11 @@ lv:
       labels:
         user: Lietotājs
         qtt_like: Saņemtās atzinības
+    topic_view_stats:
+      labels:
+        topic: Tēmas
+        anon_views: Anonīmi
+        total_views: Kopā
   site_settings:
     disabled: "atslēgt"
     send_welcome_message: "Nosūtiet visiem jaunajiem lietotājiem apsveikuma ziņojumu ar īso darba sākšanas rokasgrāmatu."
@@ -410,15 +428,6 @@ lv:
     default_other_skip_new_user_tips: "Izlaist padomus un emblēmas par jaunu lietotāju iesaisti."
     errors:
       invalid_email: "Nepareiza e-pasta adrese."
-    keywords:
-      clean_up_inactive_users_after_days:
-      - ""
-      - "neaktīvs"
-      - ""
-      purge_unactivated_users_grace_period_days:
-      - ""
-      - "neaktīvs"
-      - ""
   search:
     within_post: "#%{post_number} - %{username}"
     types:
@@ -447,27 +456,27 @@ lv:
     queued_by_staff:
       title: "Ieraksts gaida apstiprinājumu"
     welcome_user:
+      preview: "Laipni lūdzam %{site_name}!"
       subject_template: "Laipni lūdzam %{site_name}!"
     welcome_invite:
+      preview: "Laipni lūdzam %{site_name}!"
       subject_template: "Laipni lūdzam %{site_name}!"
   user_notifications:
     digest:
       liked_received: "Saņemtās atzinības"
       new_users: "Jauni lietotāji"
       join_the_discussion: "Lasīt vairāk"
+      subject_template_improved: "Kopsavilkums"
     set_password:
       title: "Iestatīt paroli"
+    admin_login:
+      subject_template_improved: "Ielogoties"
   page_not_found:
     page_title: "Lapa nav atrasta"
-    popular_topics: "Populāri"
-    recent_topics: "Neseni"
     see_more: "Vairāk"
-    search_title: "Meklēt šajā vietnē"
     search_button: "Meklēt"
   upload:
     unauthorized: "Atvainojiet, fails, ko mēģināt augšuplādēt, nav atļauts (atļautie paplašinājumi: %{authorized_extensions})."
-  color_schemes:
-    default_theme_name: "Noklusējums"
   csv_export:
     boolean_yes: "Jā"
     boolean_no: "Nē"
@@ -495,27 +504,20 @@ lv:
       title: "Atkārtoti nosūtīt aktivācijas e-pastu"
   wizard:
     step:
-      privacy:
+      setup:
         fields:
           login_required:
-            placeholder: "Privāts"
-      styling:
-        fields:
-          styling_preview:
-            label: "Priekšskatījums"
-          homepage_style:
             choices:
-              categories_only:
-                label: "Tikai sadaļas"
-              categories_with_featured_topics:
-                label: "Sadaļas un to labākās tēmas"
-              categories_and_latest_topics:
-                label: "Sadaļas un jaunākās tēmas"
-              categories_and_top_topics:
-                label: "Kategorijas un populārākās tēmas"
+              public:
+                label: "Publisks"
+              private:
+                label: "Privāts"
   onebox:
     github:
       closed: "slēgts"
+      status_date:
+        approved: "apstiprināt"
+        closed: "slēgts"
   discourse_push_notifications:
     popup:
       mentioned: '%{username} pieminēja jūs "%{topic}" - %{site_title}'
@@ -540,19 +542,46 @@ lv:
     actions:
       agree:
         title: "Jā"
-      delete_single:
+      delete:
         title: "Dzēst"
-      disagree:
+        complete: "Ieraksts dzēsts."
+      delete_and_ignore:
+        complete: "Ieraksts dzēsts."
+      delete_and_agree:
+        complete: "Ieraksts dzēsts."
+      disagree_bundle:
         title: "Nē"
       ignore:
         title: "Ignorēt"
       approve:
-        title: "Apstiprināt"
+        title: "Jā"
+      approve_post:
+        title: "Jā"
+      approve_post_closed:
+        title: "Jā"
+      reject_post_bundle:
+        title: "Nē"
+      approve_user:
+        title: "Jā"
       reject_user:
+        title: "Nē"
         delete:
           title: "Dzēst lietotāju."
+          complete: "Lietotājs dzēsts."
+      confirm_spam:
+        title: "Jā"
+      not_spam:
+        title: "Nē"
       reject:
         title: "Noraidīt"
+      approve_and_restore:
+        title: "Jā"
+      approve_and_unhide:
+        title: "Jā"
+      delete_post:
+        complete: "Ieraksts dzēsts"
+      delete_user:
+        complete: "Lietotājs dzēsts"
   fallback_username: "lietotājs"
   activemodel:
     errors:

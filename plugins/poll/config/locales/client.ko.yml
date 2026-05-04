@@ -11,6 +11,8 @@ ko:
         other: "투표자"
       total_votes:
         other: "전체 투표"
+      votes:
+        other: "%{count} 투표"
       average_rating: "평균: <strong>%{average}</strong>."
       public:
         title: "투표는 <strong>공개</strong> 입니다."
@@ -56,6 +58,8 @@ ko:
         breakdown: "분석"
         percentage: "백분율"
         count: "수"
+      ranked_choice:
+        none: "없음"
       options:
         label: "옵션"
       error_while_toggling_status: "죄송합니다. 이 투표의 상태를 바꾸는 도중 에러가 발생하였습니다."
@@ -63,7 +67,6 @@ ko:
       error_while_fetching_voters: "죄송합니다. 투표한 사람을 표시하는 도중 에러가 발생하였습니다."
       error_while_exporting_results: "설문 조사 결과를 내보내는 중에 오류가 발생했습니다."
       ui_builder:
-        title: 투표 만들기
         insert: 투표 삽입하기
         help:
           options_min_count: 옵션을 하나 이상 입력하세요.

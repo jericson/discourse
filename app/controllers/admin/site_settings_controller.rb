@@ -6,57 +6,55 @@ class Admin::SiteSettingsController < Admin::AdminController
   end
 
   def index
-    params.permit(:categories, :plugin)
-    params.permit(:filter_names, [])
-
+    params.permit(:categories, :plugin, :names)
     render_json_dump(
       site_settings:
         SiteSetting.all_settings(
           filter_categories: params[:categories],
           filter_plugin: params[:plugin],
-          filter_names: params[:filter_names],
-          include_locale_setting: params[:filter_names].blank?,
+          filter_names: params[:names],
         ),
+      default_theme:
+        BasicThemeSerializer.new(Theme.find_default, scope: guardian, root: false).as_json,
     )
   end
 
   def update
-    params.require(:id)
-    id = params[:id]
-    update_existing_users = params[:update_existing_user].present?
-    value = params[id]
+    id = params.require(:id)
 
-    new_setting_name =
-      SiteSettings::DeprecatedSettings::SETTINGS.find do |old_name, new_name, override, _|
-        if old_name == id
-          if !override
-            raise Discourse::InvalidParameters,
-                  "You cannot change this site setting because it is deprecated, use #{new_name} instead."
-          end
-
-          break new_name
+    if id === "bulk_update"
+      settings =
+        params[:settings].to_unsafe_h.map do |setting_name, config|
+          { setting_name:, value: config[:value], backfill: config[:backfill] }
         end
+    else
+      backfill = params[:update_existing_user]
+      settings = [{ setting_name: id, value: params[id], backfill: }]
+    end
+
+    SiteSetting::Update.call(
+      guardian:,
+      params: {
+        settings:,
+      },
+      options: {
+        # TODO: remove once the site setting is no longer hidden
+        allow_changing_hidden: %i[enable_site_owner_onboarding],
+      },
+    ) do
+      on_success { head :no_content }
+      on_exceptions { |e| raise Discourse::InvalidParameters, e }
+      on_failed_policy(:settings_are_not_deprecated) do |policy|
+        raise Discourse::InvalidParameters, policy.reason
       end
-
-    id = new_setting_name if new_setting_name
-
-    previous_value = value_or_default(SiteSetting.get(id)) if update_existing_users
-
-    with_service(UpdateSiteSetting, setting_name: id, new_value: value) do
-      on_success do
-        value = result.new_value
-        SiteSettingUpdateExistingUsers.call(id, value, previous_value) if update_existing_users
-
-        render body: nil
+      on_failed_policy(:settings_are_visible) do |policy|
+        raise Discourse::InvalidParameters, policy.reason
       end
-
-      on_failed_policy(:setting_is_visible) do
-        raise Discourse::InvalidParameters, I18n.t("errors.site_settings.site_setting_is_hidden")
+      on_failed_policy(:settings_are_unshadowed_globally) do |policy|
+        raise Discourse::InvalidParameters, policy.reason
       end
-
-      on_failed_policy(:setting_is_configurable) do
-        raise Discourse::InvalidParameters,
-              I18n.t("errors.site_settings.site_setting_is_unconfigurable")
+      on_failed_policy(:settings_are_configurable) do |policy|
+        raise Discourse::InvalidParameters, policy.reason
       end
     end
   end
@@ -65,6 +63,7 @@ class Admin::SiteSettingsController < Admin::AdminController
     params.require(:site_setting_id)
     id = params[:site_setting_id]
     raise Discourse::NotFound unless id.start_with?("default_")
+    raise Discourse::NotFound unless SiteSetting.has_setting?(id)
     new_value = value_or_default(params[id])
 
     raise_access_hidden_setting(id)

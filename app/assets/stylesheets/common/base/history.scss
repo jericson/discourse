@@ -1,20 +1,7 @@
+@use "lib/viewport";
+
 // styles that apply to the popup that appears when you show the edit history of a post
-
 .modal.history-modal {
-  .modal-inner-container {
-    max-width: var(--d-max-width);
-    width: 100dvw;
-  }
-  &.--mode-inline {
-    .modal-inner-container {
-      width: auto;
-    }
-  }
-
-  .modal-body:not(.theme-change-modal-body) {
-    min-height: 65dvh;
-  }
-
   .d-modal__footer {
     justify-content: space-between;
   }
@@ -34,10 +21,12 @@
     padding-bottom: 0.5em;
     overflow: auto;
     border-bottom: 3px solid var(--primary-low);
-    @include breakpoint(tablet) {
+
+    @include viewport.until(md) {
       padding-bottom: 0;
     }
-    @include breakpoint(mobile-large) {
+
+    @include viewport.until(sm) {
       padding-bottom: 0.5em;
     }
   }
@@ -55,15 +44,19 @@
       padding: 0;
       border: none;
     }
-    @include breakpoint(tablet) {
+
+    @include viewport.until(md) {
       width: 100%;
       margin-top: 0.5em;
+
       .nav-pills {
         width: 100%;
+
         li {
           margin: 0;
           flex: 1 1 auto;
         }
+
         a {
           width: 100%;
           justify-content: center;
@@ -79,6 +72,7 @@
   }
 
   .revision__title,
+  .revision__locale,
   .body-diff,
   table.markdown > tbody > tr,
   .-tag-revisions {
@@ -91,6 +85,7 @@
     .-tag-revisions {
       display: block;
     }
+
     .discourse-tags {
       display: inline;
       font-size: var(--font-down-1);
@@ -107,7 +102,7 @@
   }
 
   pre code {
-    word-wrap: anywhere; // prevent long strings from breaking modal width
+    overflow-wrap: anywhere; // prevent long strings from breaking modal width
     min-width: 0;
     overflow: auto;
     flex: 0 1 auto;
@@ -118,8 +113,20 @@
     line-height: var(--line-height-medium);
   }
 
+  .revision__locale {
+    font-size: var(--font-down-1);
+    color: var(--primary-high);
+    margin-top: 0.5em;
+    margin-bottom: 0.5em;
+
+    .diff-ins,
+    .diff-del {
+      width: fit-content;
+    }
+  }
+
   &:not(.--mode-inline) {
-    .-tag-revisions span {
+    .-tag-revisions .tag-revision__wrapper {
       flex: 0 1 50%;
       min-width: 0;
       align-self: start;
@@ -136,11 +143,13 @@
     width: 100%;
     border-collapse: collapse;
     border-spacing: 0;
+
     td {
-      word-wrap: anywhere;
+      overflow-wrap: anywhere;
       white-space: pre-wrap;
       flex: 0 1 50%;
     }
+
     tbody {
       border: none;
     }
@@ -154,7 +163,7 @@
       margin: 0;
     }
 
-    @include breakpoint(tablet) {
+    @include viewport.until(md) {
       width: 100%;
       justify-content: space-between;
     }
@@ -166,9 +175,11 @@
   }
 
   #revisions {
-    word-wrap: break-word;
+    overflow-wrap: break-word;
+
     table {
       margin-top: 10px;
+
       tr {
         border: none;
       }
@@ -177,6 +188,7 @@
     .row:first-of-type {
       margin-top: 10px;
     }
+
     .revision-content table {
       thead {
         th {
@@ -188,6 +200,7 @@
 
       td {
         padding: 3px 3px 3px 0.5em;
+
         img {
           max-width: none;
         }
@@ -198,17 +211,21 @@
   #revision-footer-buttons {
     display: flex;
     gap: 0.5em;
+
     button {
       margin: 0;
       flex: 1 1 auto;
       min-width: 0;
+
       .d-button-label {
         @include ellipsis;
       }
     }
-    @include breakpoint(tablet) {
+
+    @include viewport.until(md) {
       width: 100%;
       flex: 1 1 100%;
+
       button {
         font-size: var(--font-down-1);
       }
@@ -226,11 +243,16 @@
   del,
   .diff-del {
     color: var(--primary);
-    text-decoration: none;
+
+    &:not(s, .bbcode-u, .bbcode-s) {
+      text-decoration: none;
+    }
+
     code,
     img {
       border: 2px solid;
     }
+
     a {
       text-decoration: none;
     }
@@ -239,14 +261,17 @@
   ins,
   .diff-ins {
     background: var(--success-low);
+
     code,
     img {
       border-color: var(--success);
     }
+
     img {
       opacity: 0.75;
       filter: alpha(opacity=75);
     }
+
     a {
       color: var(--success);
     }
@@ -255,15 +280,17 @@
   del,
   .diff-del {
     background: var(--danger-low);
-    text-decoration: none;
+
     code,
     img {
       border-color: var(--danger);
     }
+
     img {
       opacity: 0.5;
       filter: alpha(opacity=50);
     }
+
     a {
       color: var(--danger);
     }
@@ -272,24 +299,27 @@
   span.date {
     font-weight: bold;
   }
+
   span.edit-reason {
     background-color: var(--highlight-bg);
   }
+
   .d-icon-ban {
     color: var(--danger);
   }
+
   .hidden-revision-either {
     opacity: 0.5;
   }
+
   .hidden-revision-previous .row {
-    div:nth-of-type(1),
-    td:nth-of-type(1) {
+    .--previous {
       opacity: 0.5;
     }
   }
+
   .hidden-revision-current .row {
-    div:nth-of-type(2),
-    td:nth-of-type(2) {
+    .--current {
       opacity: 0.5;
     }
   }

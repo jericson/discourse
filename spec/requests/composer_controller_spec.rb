@@ -2,7 +2,7 @@
 
 RSpec.describe ComposerController do
   describe "#mentions" do
-    fab!(:current_user) { Fabricate(:user) }
+    fab!(:current_user, :user)
     fab!(:user)
 
     fab!(:group) do
@@ -116,7 +116,7 @@ RSpec.describe ComposerController do
     end
 
     context "with a private message" do
-      fab!(:allowed_user) { Fabricate(:user) }
+      fab!(:allowed_user, :user)
       fab!(:topic) { Fabricate(:private_message_topic, user: allowed_user) }
 
       it "does not work if topic is not visible" do
@@ -212,7 +212,7 @@ RSpec.describe ComposerController do
     end
 
     context "with a new private message" do
-      fab!(:allowed_user) { Fabricate(:user) }
+      fab!(:allowed_user, :user)
 
       it "finds mentions" do
         get "/composer/mentions.json",
@@ -285,6 +285,46 @@ RSpec.describe ComposerController do
           },
         )
         expect(response.parsed_body["group_reasons"]).to eq(other_group.name => "some_not_allowed")
+      end
+    end
+
+    context "with a new private message to a group with hidden members" do
+      fab!(:alice) { Fabricate(:user, username: "alice") }
+      fab!(:bob) { Fabricate(:user, username: "bob") }
+      fab!(:hidden_members_group) do
+        Fabricate(
+          :group,
+          messageable_level: Group::ALIAS_LEVELS[:everyone],
+          mentionable_level: Group::ALIAS_LEVELS[:everyone],
+          members_visibility_level: Group.visibility_levels[:staff],
+        )
+      end
+
+      before { hidden_members_group.add(alice) }
+
+      it "does not leak hidden group membership via user_reasons" do
+        get "/composer/mentions.json",
+            params: {
+              names: [alice.username, bob.username],
+              allowed_names: [hidden_members_group.name],
+            }
+
+        expect(response.status).to eq(200)
+
+        user_reasons = response.parsed_body["user_reasons"]
+        expect(user_reasons[alice.username]).to eq(user_reasons[bob.username])
+      end
+    end
+
+    context "with invalid allowed_names parameter" do
+      it "returns 400 when allowed_names is not an array" do
+        get "/composer/mentions.json",
+            params: {
+              names: [user.username],
+              allowed_names: "not_an_array",
+            }
+
+        expect(response.status).to eq(400)
       end
     end
 

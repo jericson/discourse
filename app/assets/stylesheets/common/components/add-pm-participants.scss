@@ -1,3 +1,9 @@
+.d-modal.add-pm-participants {
+  .d-modal__body {
+    overflow-y: visible;
+  }
+}
+
 .add-pm-participants.modal .share.modal-panel {
   .header {
     display: flex;
@@ -24,9 +30,6 @@
       width: 100%;
       height: auto;
       box-sizing: border-box;
-    }
-
-    .topic-share-url {
       margin-bottom: 8px;
     }
 
@@ -90,6 +93,7 @@
 
     .invite-user-input-wrapper {
       display: flex;
+
       div.ac-wrap {
         flex: 1;
       }

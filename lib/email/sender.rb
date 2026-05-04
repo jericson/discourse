@@ -171,7 +171,9 @@ module Email
 
           if topic
             if SiteSetting.private_email?
-              @message.header["List-Archive"] = "#{Discourse.base_url}#{topic.slugless_url}"
+              @message.header[
+                "List-Archive"
+              ] = "#{Discourse.base_url_no_prefix}#{topic.slugless_url}"
             else
               @message.header["List-Archive"] = topic.url
             end
@@ -255,7 +257,7 @@ module Email
         add_attachments(post)
       elsif @email_type.to_s == "digest"
         @stripped_secure_upload_shas = style.stripped_upload_sha_map.values
-        add_attachments(*digest_posts)
+        add_attachments(*digest_posts, is_digest: true)
       end
 
       # Suppress images from short emails
@@ -300,6 +302,11 @@ module Email
         end
       rescue *SMTP_CLIENT_ERRORS => e
         return skip(SkippedEmailLog.reason_types[:custom], custom_reason: e.message)
+      rescue Net::SMTPError => e
+        response = e.try(:response)
+        response = " response: #{response.try(:string) || response}" if response
+        Rails.logger.error("SMTP Error #{e.class} with message: #{e.message}#{response}")
+        raise
       end
 
       DiscourseEvent.trigger(:after_email_send, @message, @email_type)
@@ -354,18 +361,24 @@ module Email
       Post.where(id: header_value("X-Discourse-Post-Ids")&.split(","))
     end
 
-    def add_attachments(*posts)
+    def add_attachments(*posts, is_digest: false)
       max_email_size = SiteSetting.email_total_attachment_size_limit_kb.kilobytes
       return if max_email_size == 0
 
       email_size = 0
       posts.each do |post|
+        next unless DiscoursePluginRegistry.apply_modifier(:should_add_email_attachments, post)
+
         post.uploads.each do |original_upload|
           optimized_1X = original_upload.optimized_images.first
 
-          if FileHelper.is_supported_image?(original_upload.original_filename) &&
-               !should_attach_image?(original_upload, optimized_1X)
-            next
+          if FileHelper.is_supported_image?(original_upload.original_filename)
+            next if !should_attach_image?(original_upload, optimized_1X)
+            # Don't attach images that aren't rendered in the e-mail.
+            next if is_digest && !@message.html_part.body.include?(original_upload.sha1)
+          else
+            # Only attach images in digests.
+            next if is_digest
           end
 
           attached_upload = optimized_1X || original_upload
@@ -376,7 +389,7 @@ module Email
               if attached_upload.local?
                 Discourse.store.path_for(attached_upload)
               else
-                Discourse.store.download!(attached_upload).path
+                Discourse.store.download!(attached_upload)
               end
 
             @message_attachments_index[original_upload.sha1] = @message.attachments.size
@@ -435,12 +448,18 @@ module Email
     # Due to mail gem magic, @message.text_part and @message.html_part still
     # refer to the same objects.
     #
+    # Most imporantly, we need to specify the boundary for the multipart/mixed
+    # part of the email, otherwise we can end up with an email that appears to
+    # be empty with the entire body attached as a single attachment, and some
+    # mail parsers consider the entire email as a preamble/epilogue.
+    #
+    # c.f. https://www.w3.org/Protocols/rfc1341/7_2_Multipart.html
     def fix_parts_after_attachments!
       has_attachments = @message.attachments.present?
       has_alternative_renderings = @message.html_part.present? && @message.text_part.present?
 
       if has_attachments && has_alternative_renderings
-        @message.content_type = "multipart/mixed"
+        @message.content_type = "multipart/mixed; boundary=\"#{@message.body.boundary}\""
 
         html_part = @message.html_part
         @message.html_part = nil

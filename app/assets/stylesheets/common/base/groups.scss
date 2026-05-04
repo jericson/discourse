@@ -4,6 +4,7 @@
   display: flex;
   flex-wrap: wrap;
   margin-bottom: 1em;
+
   .groups-header-new {
     order: 2;
     margin-bottom: 0.5em;
@@ -34,7 +35,7 @@
 
 .groups-boxes {
   display: grid;
-  grid-gap: 1em;
+  gap: 1em;
   grid-template-columns: repeat(auto-fit, minmax(16em, 1fr));
   margin: 1em 0;
   width: 100%;
@@ -43,12 +44,12 @@
     display: flex;
     box-sizing: border-box;
     cursor: pointer;
-    border: 1px solid var(--primary-low);
+    border: 1px solid var(--content-border-color);
     color: var(--primary);
+    border-radius: var(--d-border-radius);
 
     .discourse-no-touch & {
       &:hover {
-        box-shadow: var(--shadow-card);
         border-color: var(--primary-low-mid-or-secondary-high);
       }
     }
@@ -88,7 +89,6 @@
           flex: 1 1 auto;
 
           span {
-            width: 100%;
             word-break: break-word;
             line-height: var(--line-height-medium);
           }
@@ -99,22 +99,18 @@
         display: flex;
         align-items: center;
         color: var(--primary-high);
+
         .d-icon {
           margin-right: 0.25em;
           font-size: 0.8em;
           color: var(--primary-medium);
         }
       }
+
       .group-description {
         color: var(--primary-high);
-        word-wrap: break-word;
+        overflow-wrap: break-word;
       }
-    }
-
-    .groups-info-name {
-      font-size: var(--font-up-1);
-      font-weight: bold;
-      color: var(--primary);
     }
 
     $size: 40px;
@@ -140,6 +136,7 @@
         }
       }
     }
+
     .avatar-flair-image {
       width: $size;
     }
@@ -150,8 +147,10 @@
   .control-group-inline {
     display: inline;
   }
+
   &.groups-notifications-form {
     max-width: 33em;
+
     .control-instructions {
       color: var(--primary-medium);
       margin-bottom: 10px;
@@ -176,6 +175,22 @@
       // flip the icon order for the remove button
       order: 2;
       margin: 0 0 0 0.45em;
+    }
+  }
+}
+
+.group-automatic-tooltip {
+  align-items: center;
+  font-size: var(--font-down-2);
+  padding: 0.2em 1em;
+  background-color: var(--primary-low);
+  border-radius: var(--d-border-radius);
+
+  .fk-d-tooltip__trigger-container {
+    align-items: center;
+
+    .d-icon {
+      margin-right: 0.25em;
     }
   }
 }

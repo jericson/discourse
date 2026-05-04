@@ -4,7 +4,7 @@ module HasCustomFields
   extend ActiveSupport::Concern
 
   module Helpers
-    CUSTOM_FIELD_TRUE ||= %w[1 t true T True TRUE].freeze
+    CUSTOM_FIELD_TRUE = %w[1 t true T True TRUE].freeze
   end
 
   class FieldDescriptor < Struct.new(:type, :max_length)
@@ -300,8 +300,6 @@ module HasCustomFields
           if descriptor.array_type? || (field_type != :json && Array === value)
             value = Array(value || [])
             value.compact!
-            sub_type = field_type[0]
-
             value.map! { |v| descriptor.serialize(v) }
 
             unless value == fields.map(&:value)
@@ -346,7 +344,7 @@ module HasCustomFields
   protected
 
   def refresh_custom_fields_from_db
-    target = HashWithIndifferentAccess.new
+    target = ActiveSupport::HashWithIndifferentAccess.new
     _custom_fields
       .order(:id)
       .pluck(:name, :value)

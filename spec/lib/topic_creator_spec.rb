@@ -91,6 +91,18 @@ RSpec.describe TopicCreator do
             )
           expect(topic.participant_count).to eq(3)
         end
+
+        describe "locale" do
+          it "updates the locale of the topic" do
+            topic = TopicCreator.create(user, Guardian.new(user), valid_attrs.merge(locale: "ja"))
+            expect(topic.locale).to eq("ja")
+          end
+
+          it "sets the locale of the topic to nil if blank" do
+            topic1 = TopicCreator.create(user, Guardian.new(user), valid_attrs.merge(locale: ""))
+            expect(topic1.locale).to eq(nil)
+          end
+        end
       end
     end
 
@@ -110,11 +122,36 @@ RSpec.describe TopicCreator do
       end
 
       context "with regular tags" do
-        it "user can add tags to topic" do
+        it "can add tag names to topic" do
           topic =
             TopicCreator.create(user, Guardian.new(user), valid_attrs.merge(tags: [tag1.name]))
           expect(topic).to be_valid
           expect(topic.tags.length).to eq(1)
+        end
+
+        it "can add tags to topic" do
+          topic =
+            TopicCreator.create(
+              user,
+              Guardian.new(user),
+              valid_attrs.merge(
+                tags: [{ id: tag1.id, name: tag1.name }, { id: tag2.id, name: tag2.name }],
+              ),
+            )
+          expect(topic).to be_valid
+          expect(topic.tags).to contain_exactly(tag1, tag2)
+        end
+
+        it "can create new tags" do
+          SiteSetting.create_tag_allowed_groups = Group::AUTO_GROUPS[:trust_level_0]
+          topic =
+            TopicCreator.create(
+              user,
+              Guardian.new(user),
+              valid_attrs.merge(tags: [{ id: tag1.id, name: tag1.name }, { name: "brand-new" }]),
+            )
+          expect(topic).to be_valid
+          expect(topic.tags).to contain_exactly(have_attributes(name: "brand-new"), tag1)
         end
       end
 
@@ -563,6 +600,29 @@ RSpec.describe TopicCreator do
         end
       end
 
+      context "with too many users in a group" do
+        fab!(:group) { Fabricate(:group, messageable_level: Group::ALIAS_LEVELS[:everyone]) }
+
+        before do
+          SiteSetting.group_pm_user_limit = 1
+          Fabricate.times(2, :user).each { |user| group.add(user) }
+          pm_valid_attrs[:target_group_names] = group.name
+        end
+
+        it "fails with an error" do
+          expect do
+            TopicCreator.create(user, Guardian.new(admin), pm_valid_attrs)
+          end.to raise_error(
+            ActiveRecord::Rollback,
+            I18n.t(
+              "activerecord.errors.models.topic.attributes.base.too_large_group",
+              limit: SiteSetting.group_pm_user_limit,
+              group_name: group.name,
+            ),
+          )
+        end
+      end
+
       context "with to emails" do
         it "works for staff" do
           SiteSetting.send_email_messages_allowed_groups = "1|3"
@@ -674,6 +734,31 @@ RSpec.describe TopicCreator do
           )
         end
       end
+    end
+  end
+
+  describe "private message with target_user_ids" do
+    it "creates a PM targeting users by ID" do
+      topic =
+        TopicCreator.create(
+          admin,
+          Guardian.new(admin),
+          pm_valid_attrs.except(:target_usernames).merge(target_user_ids: [moderator.id]),
+        )
+
+      expect(topic).to be_valid
+      expect(topic.archetype).to eq(Archetype.private_message)
+      expect(topic.topic_allowed_users.map(&:user_id)).to include(moderator.id)
+    end
+
+    it "raises when both target_usernames and target_user_ids are provided" do
+      expect {
+        TopicCreator.create(
+          admin,
+          Guardian.new(admin),
+          pm_valid_attrs.merge(target_user_ids: [moderator.id]),
+        )
+      }.to raise_error(ArgumentError, /Cannot specify both/)
     end
   end
 end

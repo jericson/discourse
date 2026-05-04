@@ -7,7 +7,7 @@ RSpec.describe PostTiming do
   it { is_expected.to validate_presence_of :msecs }
 
   describe "pretend_read" do
-    fab!(:p1) { Fabricate(:post) }
+    fab!(:p1, :post)
     fab!(:p2) { Fabricate(:post, topic: p1.topic, user: p1.user) }
     fab!(:p3) { Fabricate(:post, topic: p1.topic, user: p1.user) }
 
@@ -126,48 +126,47 @@ RSpec.describe PostTiming do
   end
 
   describe "recording" do
-    before do
-      @topic = post.topic
-      @coding_horror = Fabricate(:coding_horror)
-      @timing_attrs = {
+    let(:topic) { post.topic }
+    let(:coding_horror) { Fabricate(:coding_horror) }
+    let(:timing_attrs) do
+      {
         msecs: 1234,
         topic_id: post.topic_id,
-        user_id: @coding_horror.id,
+        user_id: coding_horror.id,
         post_number: post.post_number,
       }
     end
 
     it "adds a view to the post" do
       expect {
-        PostTiming.record_timing(@timing_attrs)
+        PostTiming.record_timing(timing_attrs)
         post.reload
       }.to change(post, :reads).by(1)
     end
 
     it "doesn't update the posts read count if the topic is a PM" do
       pm = Fabricate(:private_message_post).topic
-      @timing_attrs = @timing_attrs.merge(topic_id: pm.id)
 
-      PostTiming.record_timing(@timing_attrs)
+      PostTiming.record_timing(timing_attrs.merge(topic_id: pm.id))
 
-      expect(@coding_horror.user_stat.posts_read_count).to eq(0)
+      expect(coding_horror.user_stat.posts_read_count).to eq(0)
     end
 
     describe "multiple calls" do
       it "correctly works" do
-        PostTiming.record_timing(@timing_attrs)
-        PostTiming.record_timing(@timing_attrs)
+        PostTiming.record_timing(timing_attrs)
+        PostTiming.record_timing(timing_attrs)
         timing =
           PostTiming.find_by(
             topic_id: post.topic_id,
-            user_id: @coding_horror.id,
+            user_id: coding_horror.id,
             post_number: post.post_number,
           )
 
         expect(timing).to be_present
         expect(timing.msecs).to eq(2468)
 
-        expect(@coding_horror.user_stat.posts_read_count).to eq(1)
+        expect(coding_horror.user_stat.posts_read_count).to eq(1)
       end
     end
   end
@@ -225,6 +224,32 @@ RSpec.describe PostTiming do
       expect(GroupUser.find_by(user: user, group: group).first_unread_pm_at).to eq_time(
         post.topic.updated_at,
       )
+    end
+  end
+
+  describe ".destroy_for" do
+    it "updates first unread for a user correctly when topic is a pm" do
+      post = Fabricate(:private_message_post)
+      post.topic.update!(updated_at: 10.minutes.ago)
+      PostTiming.process_timings(post.user, post.topic_id, 1, [[post.post_number, 100]])
+
+      PostTiming.destroy_for(post.user.id, [post.topic_id])
+
+      expect(post.user.user_stat.reload.first_unread_pm_at).to eq_time(post.topic.updated_at)
+    end
+
+    it "updates first unread for a user correctly when topic is a group pm" do
+      topic = Fabricate(:private_message_topic, updated_at: 10.minutes.ago)
+      post = Fabricate(:post, topic:)
+      user = Fabricate(:user)
+      group = Fabricate(:group)
+      group.add(user)
+      topic.allowed_groups << group
+      PostTiming.process_timings(user, topic.id, 1, [[post.post_number, 100]])
+
+      PostTiming.destroy_for(user.id, [topic.id])
+
+      expect(GroupUser.find_by(user:, group:).first_unread_pm_at).to eq_time(topic.updated_at)
     end
   end
 end

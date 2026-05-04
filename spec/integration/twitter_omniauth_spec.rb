@@ -6,7 +6,7 @@ describe "Twitter OAuth 1.0a" do
   let(:consumer_secret) { "adddcccdddd99922" }
   let(:oauth_token_secret) { "twitter_temp_code_544254" }
 
-  fab!(:user1) { Fabricate(:user) }
+  fab!(:user1, :user)
 
   def setup_twitter_email_stub(email:)
     body = {
@@ -104,6 +104,21 @@ describe "Twitter OAuth 1.0a" do
     expect(response.status).to eq(302)
     expect(response.location).to eq("http://test.localhost/")
     expect(session[:current_user_id]).to eq(user1.id)
+  end
+
+  it "doesn't sign in the user discourse connect is enabled" do
+    SiteSetting.discourse_connect_url = "https://example.com/sso"
+    SiteSetting.enable_discourse_connect = true
+    post "/auth/twitter"
+    expect(response.status).to eq(302)
+    expect(response.location).to start_with("https://api.twitter.com/oauth/authenticate")
+
+    setup_twitter_email_stub(email: user1.email)
+
+    post "/auth/twitter/callback", params: { state: session["omniauth.state"] }
+
+    expect(response.status).to eq(403)
+    expect(session[:current_user_id]).to be_blank
   end
 
   it "doesn't sign in anyone if the API response from twitter doesn't include an email (implying the user's email on twitter isn't verified)" do

@@ -5,6 +5,7 @@ class TopicViewSerializer < ApplicationSerializer
   include SuggestedTopicsMixin
   include TopicTagsMixin
   include ApplicationHelper
+  include LocalizedFancyTopicTitleMixin
 
   def self.attributes_from_topic(*list)
     [list].flatten.each do |attribute|
@@ -18,7 +19,6 @@ class TopicViewSerializer < ApplicationSerializer
   attributes_from_topic(
     :id,
     :title,
-    :fancy_title,
     :posts_count,
     :created_at,
     :views,
@@ -64,7 +64,6 @@ class TopicViewSerializer < ApplicationSerializer
     :is_warning,
     :chunk_size,
     :bookmarked,
-    :bookmarks,
     :message_archived,
     :topic_timer,
     :unicode_title,
@@ -79,12 +78,15 @@ class TopicViewSerializer < ApplicationSerializer
     :user_last_posted_at,
     :is_shared_draft,
     :slow_mode_enabled_until,
-    :summarizable,
+    :has_localized_content,
+    :can_localize_topic,
+    :is_nested_view,
   )
 
   has_one :details, serializer: TopicViewDetailsSerializer, root: false, embed: :objects
   has_many :pending_posts, serializer: TopicPendingPostSerializer, root: false, embed: :objects
   has_many :categories, serializer: CategoryBadgeSerializer, embed: :objects
+  has_many :bookmarks, serializer: TopicViewBookmarkSerializer, root: false, embed: :objects
 
   has_one :published_page, embed: :objects
 
@@ -186,7 +188,7 @@ class TopicViewSerializer < ApplicationSerializer
   end
 
   def include_has_deleted?
-    object.guardian.can_see_deleted_posts?
+    !object.skip_post_loading && object.guardian.can_see_deleted_posts?
   end
 
   def expandable_first_post
@@ -199,10 +201,6 @@ class TopicViewSerializer < ApplicationSerializer
 
   def bookmarked
     object.has_bookmarks?
-  end
-
-  def bookmarks
-    object.bookmarks
   end
 
   def topic_timer
@@ -315,15 +313,38 @@ class TopicViewSerializer < ApplicationSerializer
     object.topic.slow_mode_topic_timer&.execute_at
   end
 
-  def summarizable
-    object.summarizable?
-  end
-
   def include_categories?
     scope.can_lazy_load_categories?
   end
 
   def include_visibility_reason_id?
     object.topic.visibility_reason_id.present?
+  end
+
+  def has_localized_content
+    topic_has_localization = !object.topic.in_user_locale? && object.topic.has_localization?
+    return true if topic_has_localization
+
+    object.posts.any? { |post| !post.in_user_locale? && post.has_localization? }
+  end
+
+  def include_has_localized_content?
+    SiteSetting.content_localization_enabled
+  end
+
+  def can_localize_topic
+    true
+  end
+
+  def include_can_localize_topic?
+    SiteSetting.content_localization_enabled && scope.can_localize_topic?(object.topic)
+  end
+
+  def is_nested_view
+    object.topic.nested_topic.present? || SiteSetting.nested_replies_default
+  end
+
+  def include_is_nested_view?
+    SiteSetting.nested_replies_enabled && !object.topic.private_message?
   end
 end

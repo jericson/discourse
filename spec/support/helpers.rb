@@ -6,6 +6,11 @@ GIT_INITIAL_BRANCH_SUPPORTED =
 module Helpers
   extend ActiveSupport::Concern
 
+  class NotAThemeError < StandardError
+  end
+  class NotAComponentThemeError < StandardError
+  end
+
   def self.next_seq
     @next_seq = (@next_seq || 0) + 1
   end
@@ -91,6 +96,10 @@ module Helpers
     create_limited_tags("Staff Tags", Group::AUTO_GROUPS[:staff], tag_names)
   end
 
+  def create_admin_only_tags(tag_names)
+    create_limited_tags("Admin Tags", Group::AUTO_GROUPS[:admins], tag_names)
+  end
+
   def create_limited_tags(tag_group_name, group_id, tag_names)
     tag_group = Fabricate(:tag_group, name: tag_group_name)
     TagGroupPermission.where(
@@ -170,26 +179,43 @@ module Helpers
 
   def setup_git_repo(files)
     repo_dir = Dir.mktmpdir
-    `cd #{repo_dir} && git init . #{"--initial-branch=main" if GIT_INITIAL_BRANCH_SUPPORTED}`
-    `cd #{repo_dir} && git config user.email 'someone@cool.com'`
-    `cd #{repo_dir} && git config user.name 'The Cool One'`
-    `cd #{repo_dir} && git config commit.gpgsign 'false'`
+    system(
+      "git -C #{repo_dir} init -q . #{"--initial-branch=main" if GIT_INITIAL_BRANCH_SUPPORTED}",
+      exception: true,
+    )
+    system("git -C #{repo_dir} config user.email 'someone@cool.com'", exception: true)
+    system("git -C #{repo_dir} config user.name 'The Cool One'", exception: true)
+    system("git -C #{repo_dir} config commit.gpgsign 'false'", exception: true)
     files.each do |name, data|
       FileUtils.mkdir_p(Pathname.new("#{repo_dir}/#{name}").dirname)
       File.write("#{repo_dir}/#{name}", data)
-      `cd #{repo_dir} && git add #{name}`
+      system("git -C #{repo_dir} add #{name}", exception: true)
     end
-    `cd #{repo_dir} && git commit -am 'first commit'`
+    system(
+      "git -C #{repo_dir} commit -q -am 'first commit'",
+      out: File::NULL,
+      err: File::NULL,
+      exception: false,
+    )
     repo_dir
+  end
+
+  def setup_remote_upstream(path)
+    system("git -C #{path} remote add origin #{path}/.git", exception: true)
+    system("git -C #{path} fetch -q", exception: true)
+    branch = `git -C #{path} rev-parse --abbrev-ref HEAD`.strip
+    raise "no branch in setup_remote_upstream" if branch.blank?
+    system("git -C #{path} branch -q -u origin/#{branch}", exception: true)
+    system("git -C #{path} remote set-head origin #{branch}", exception: true)
   end
 
   def add_to_git_repo(repo_dir, files)
     files.each do |name, data|
       FileUtils.mkdir_p(Pathname.new("#{repo_dir}/#{name}").dirname)
       File.write("#{repo_dir}/#{name}", data)
-      `cd #{repo_dir} && git add #{name}`
+      system("git -C #{repo_dir} add #{name}", exception: true)
     end
-    `cd #{repo_dir} && git commit -am 'add #{files.size} files'`
+    system("git -C #{repo_dir} commit -q -am 'add #{files.size} files'", exception: true)
     repo_dir
   end
 
@@ -209,7 +235,9 @@ module Helpers
       queries << payload.fetch(:sql) if %w[CACHE SCHEMA].exclude?(payload.fetch(:name))
     end
 
-    ActiveSupport::Notifications.subscribed(callback, "sql.active_record") { yield }
+    ActiveSupport::Notifications.subscribed(callback, "sql.active_record") do
+      ActiveSupport::Notifications.subscribed(callback, "sql.mini_sql") { yield }
+    end
 
     queries
   end
@@ -239,14 +267,22 @@ module Helpers
   # @example Upload a theme and set it as default
   #   upload_theme("/path/to/theme")
   def upload_theme(set_theme_as_default: true)
-    theme = RemoteTheme.import_theme_from_directory(theme_dir_from_caller)
+    theme = RemoteTheme.import_theme_from_directory(directory_from_caller)
 
     if theme.component
-      raise "Uploaded theme is a theme component, please use the `upload_theme_component` method instead."
+      raise NotAThemeError,
+            "Uploaded theme is a theme component, please use the `upload_theme_component` method instead."
     end
 
     theme.set_default! if set_theme_as_default
     theme
+  end
+
+  # Invokes a Rake task in a way that is safe for the test environment
+  def invoke_rake_task(task_name, *args)
+    Rake::Task[task_name].invoke(*args)
+  ensure
+    Rake::Task[task_name].reenable
   end
 
   # Uploads a theme component from a directory.
@@ -261,14 +297,21 @@ module Helpers
   # @example Upload a theme component and add it to a specific theme
   #   upload_theme_component("/path/to/theme_component", parent_theme_id: 123)
   def upload_theme_component(parent_theme_id: SiteSetting.default_theme_id)
-    theme = RemoteTheme.import_theme_from_directory(theme_dir_from_caller)
+    theme = RemoteTheme.import_theme_from_directory(directory_from_caller)
 
     if !theme.component
-      raise "Uploaded theme is not a theme component, please use the `upload_theme` method instead."
+      raise NotAComponentThemeError,
+            "Uploaded theme is not a theme component, please use the `upload_theme` method instead."
     end
 
     Theme.find(parent_theme_id).child_themes << theme
     theme
+  end
+
+  def upload_theme_or_component
+    upload_theme
+  rescue NotAThemeError
+    upload_theme_component
   end
 
   # Runs named migration for a given theme.
@@ -286,9 +329,62 @@ module Helpers
     nil
   end
 
+  def enable_current_plugin
+    plugin = Discourse.plugins_by_name[directory_from_caller.split("/").last]
+    return if plugin.enabled?
+    SiteSetting.public_send("#{plugin.enabled_site_setting}=", true)
+  end
+
+  def mock_upcoming_change_metadata(metadata)
+    # Without ||= here nested blocks would further mutate the instance var so
+    # resetting in clear_mocked_upcoming_change_metadata would not work.
+    @original_upcoming_changes_metadata ||= SiteSetting.upcoming_change_metadata.dup
+
+    # We do this because upcoming changes are ephemeral in site settings,
+    # so we cannot rely on them for specs. Instead we can fake some metadata
+    # for an existing stable setting.
+    SiteSetting.instance_variable_set(
+      :@upcoming_change_metadata,
+      @original_upcoming_changes_metadata.merge(metadata),
+    )
+  end
+
+  def clear_mocked_upcoming_change_metadata
+    return if @original_upcoming_changes_metadata.nil?
+
+    SiteSetting.instance_variable_set(
+      :@upcoming_change_metadata,
+      @original_upcoming_changes_metadata,
+    )
+  end
+
+  def mock_upcoming_change_default_overrides(overrides)
+    # Without ||= here nested blocks would further mutate the instance var so
+    # resetting in clear_mocked_upcoming_change_metadata would not work.
+    @original_upcoming_change_default_overrides ||=
+      SiteSetting.upcoming_change_default_overrides.dup
+
+    # We do this because upcoming changes are ephemeral in site settings,
+    # so we cannot rely on them for specs. Instead we can fake some metadata
+    # for an existing stable setting.
+    SiteSetting.instance_variable_set(
+      :@upcoming_change_default_overrides,
+      @original_upcoming_change_default_overrides.merge(overrides),
+    )
+  end
+
+  def clear_mocked_upcoming_change_default_overrides
+    return if @original_upcoming_change_default_overrides.nil?
+
+    SiteSetting.instance_variable_set(
+      :@upcoming_change_default_overrides,
+      @original_upcoming_change_default_overrides,
+    )
+  end
+
   private
 
-  def theme_dir_from_caller
+  def directory_from_caller
     caller.each do |line|
       if (split = line.split(%r{/spec/*/.+_spec.rb})).length > 1
         return split.first

@@ -38,6 +38,34 @@ RSpec.describe Category do
     expect(cats.errors[:name]).to be_present
   end
 
+  it "validates format of color" do
+    expect(Fabricate.build(:category, color: "fff", user:)).to be_valid
+    expect(Fabricate.build(:category, color: "1ac", user:)).to be_valid
+    expect(Fabricate.build(:category, color: "fffeee", user:)).to be_valid
+    expect(Fabricate.build(:category, color: "FF11CC", user:)).to be_valid
+    expect(Fabricate.build(:category, color: "ABC", user:)).to be_valid
+
+    expect(Fabricate.build(:category, color: "ffq1e1", user:)).to_not be_valid
+    expect(Fabricate.build(:category, color: "", user:)).to_not be_valid
+    expect(Fabricate.build(:category, color: "f", user:)).to_not be_valid
+    expect(Fabricate.build(:category, color: "21", user:)).to_not be_valid
+    expect(Fabricate.build(:category, color: "XCA", user:)).to_not be_valid
+  end
+
+  it "validates format of text_color" do
+    expect(Fabricate.build(:category, text_color: "fff", user:)).to be_valid
+    expect(Fabricate.build(:category, text_color: "1ac", user:)).to be_valid
+    expect(Fabricate.build(:category, text_color: "fffeee", user:)).to be_valid
+    expect(Fabricate.build(:category, text_color: "FF11CC", user:)).to be_valid
+    expect(Fabricate.build(:category, text_color: "ABC", user:)).to be_valid
+
+    expect(Fabricate.build(:category, text_color: "ffq1e1", user:)).to_not be_valid
+    expect(Fabricate.build(:category, text_color: "", user:)).to_not be_valid
+    expect(Fabricate.build(:category, text_color: "f", user:)).to_not be_valid
+    expect(Fabricate.build(:category, text_color: "21", user:)).to_not be_valid
+    expect(Fabricate.build(:category, text_color: "XCA", user:)).to_not be_valid
+  end
+
   describe "Associations" do
     it { is_expected.to have_one(:category_setting).dependent(:destroy) }
 
@@ -47,13 +75,133 @@ RSpec.describe Category do
 
     it "should delete associated sidebar_section_links when category is destroyed" do
       category_sidebar_section_link = Fabricate(:category_sidebar_section_link)
-      Fabricate(:category_sidebar_section_link, linkable: category_sidebar_section_link.linkable)
-      tag_sidebar_section_link = Fabricate(:tag_sidebar_section_link)
+      category_sidebar_section_link_2 =
+        Fabricate(:category_sidebar_section_link, linkable: category_sidebar_section_link.linkable)
 
       expect { category_sidebar_section_link.linkable.destroy! }.to change {
         SidebarSectionLink.count
-      }.from(12).to(10)
-      expect(SidebarSectionLink.last).to eq(tag_sidebar_section_link)
+      }.by(-2)
+      expect(
+        SidebarSectionLink.where(
+          id: [category_sidebar_section_link.id, category_sidebar_section_link_2.id],
+        ).count,
+      ).to eq(0)
+    end
+
+    it "destroys category_posting_review_groups when category is destroyed" do
+      category = Fabricate(:category)
+      category.update!(
+        topic_posting_review_mode: :everyone_except,
+        topic_posting_review_group_ids: [Group::AUTO_GROUPS[:everyone]],
+      )
+
+      expect { category.destroy! }.to change { CategoryPostingReviewGroup.count }.by(-1)
+    end
+  end
+
+  describe "#topic_posting_review_mode" do
+    fab!(:category)
+    fab!(:group)
+
+    it "sets mode to everyone" do
+      category.update!(topic_posting_review_mode: :everyone)
+      expect(category.reload.topic_posting_review_mode).to eq("everyone")
+    end
+
+    it "saves group associations for everyone_except mode" do
+      category.update!(
+        topic_posting_review_mode: :everyone_except,
+        topic_posting_review_group_ids: [group.id],
+      )
+
+      expect(category.topic_posting_review_group_ids).to contain_exactly(group.id)
+    end
+
+    it "saves group associations for no_one_except mode" do
+      category.update!(
+        topic_posting_review_mode: :no_one_except,
+        topic_posting_review_group_ids: [group.id],
+      )
+
+      expect(category.topic_posting_review_group_ids).to contain_exactly(group.id)
+    end
+
+    it "replaces existing groups when updated with new group_ids" do
+      other_group = Fabricate(:group)
+      category.update!(
+        topic_posting_review_mode: :everyone_except,
+        topic_posting_review_group_ids: [group.id],
+      )
+      category.update!(
+        topic_posting_review_mode: :everyone_except,
+        topic_posting_review_group_ids: [other_group.id],
+      )
+
+      expect(category.topic_posting_review_group_ids).to contain_exactly(other_group.id)
+    end
+
+    it "clears groups when changing from everyone_except to everyone" do
+      category.update!(
+        topic_posting_review_mode: :everyone_except,
+        topic_posting_review_group_ids: [group.id],
+      )
+      category.update!(topic_posting_review_mode: :everyone)
+
+      expect(category.topic_posting_review_group_ids).to be_empty
+    end
+
+    it "ignores group_ids for non-group-based modes" do
+      category.update!(
+        topic_posting_review_mode: :everyone,
+        topic_posting_review_group_ids: [group.id],
+      )
+
+      expect(category.reload.topic_posting_review_mode).to eq("everyone")
+      expect(category.topic_posting_review_group_ids).to be_empty
+    end
+
+    it "validates group_ids are present for everyone_except mode" do
+      category.topic_posting_review_mode = :everyone_except
+      expect(category).not_to be_valid
+    end
+
+    it "validates group_ids are present for no_one_except mode" do
+      category.topic_posting_review_mode = :no_one_except
+      expect(category).not_to be_valid
+    end
+  end
+
+  describe "#reply_posting_review_mode" do
+    fab!(:category)
+    fab!(:group)
+
+    it "sets mode to everyone" do
+      category.update!(reply_posting_review_mode: :everyone)
+      expect(category.reload.reply_posting_review_mode).to eq("everyone")
+    end
+
+    it "saves group associations for everyone_except mode" do
+      category.update!(
+        reply_posting_review_mode: :everyone_except,
+        reply_posting_review_group_ids: [group.id],
+      )
+
+      expect(category.reply_posting_review_group_ids).to contain_exactly(group.id)
+    end
+
+    it "clears groups when changing from everyone_except to everyone" do
+      category.update!(
+        reply_posting_review_mode: :everyone_except,
+        reply_posting_review_group_ids: [group.id],
+      )
+      category.update!(reply_posting_review_mode: :everyone)
+
+      expect(category.reply_posting_review_group_ids).to be_empty
+    end
+
+    it "validates group_ids are present for everyone_except mode" do
+      category.reply_posting_review_mode = :everyone_except
+      expect(category).not_to be_valid
     end
   end
 
@@ -82,51 +230,19 @@ RSpec.describe Category do
     end
   end
 
-  describe "#review_group_id" do
+  describe "#category_moderation_groups" do
     fab!(:group)
-    fab!(:category) { Fabricate(:category_with_definition, reviewable_by_group: group) }
+    fab!(:category, :category_with_definition)
     fab!(:topic) { Fabricate(:topic, category: category) }
     fab!(:post) { Fabricate(:post, topic: topic) }
+    fab!(:category_moderation_group) { Fabricate(:category_moderation_group, category:, group:) }
     fab!(:user) { Fabricate(:user, refresh_auto_groups: true) }
 
-    it "will add the group to the reviewable" do
-      SiteSetting.enable_category_group_moderation = true
-      reviewable = PostActionCreator.spam(user, post).reviewable
-      expect(reviewable.reviewable_by_group_id).to eq(group.id)
-    end
-
-    it "will add the group to the reviewable even if created manually" do
-      SiteSetting.enable_category_group_moderation = true
-      reviewable =
-        ReviewableFlaggedPost.create!(
-          created_by: user,
-          payload: {
-            raw: "test raw",
-          },
-          category: category,
-        )
-      expect(reviewable.reviewable_by_group_id).to eq(group.id)
-    end
-
-    it "will not add add the group to the reviewable" do
-      SiteSetting.enable_category_group_moderation = false
-      reviewable = PostActionCreator.spam(user, post).reviewable
-      expect(reviewable.reviewable_by_group_id).to be_nil
-    end
-
-    it "will nullify the group_id if destroyed" do
+    it "is destroyed if the group is destroyed" do
+      expect(category.category_moderation_groups).to contain_exactly(category_moderation_group)
       reviewable = PostActionCreator.spam(user, post).reviewable
       group.destroy
-      expect(category.reload.reviewable_by_group).to be_blank
-      expect(reviewable.reload.reviewable_by_group_id).to be_blank
-    end
-
-    it "will remove the reviewable_by_group if the category is updated" do
-      SiteSetting.enable_category_group_moderation = true
-      reviewable = PostActionCreator.spam(user, post).reviewable
-      category.reviewable_by_group_id = nil
-      category.save!
-      expect(reviewable.reload.reviewable_by_group_id).to be_nil
+      expect(category.reload.category_moderation_groups).to be_blank
     end
   end
 
@@ -142,7 +258,7 @@ RSpec.describe Category do
 
     fab!(:admin)
 
-    fab!(:default_category) { Fabricate(:category_with_definition) }
+    fab!(:default_category, :category_with_definition)
 
     fab!(:full_category) do
       c = Fabricate(:category_with_definition)
@@ -236,8 +352,8 @@ RSpec.describe Category do
   end
 
   describe "security" do
-    fab!(:category) { Fabricate(:category_with_definition) }
-    fab!(:category_2) { Fabricate(:category_with_definition) }
+    fab!(:category, :category_with_definition)
+    fab!(:category_2, :category_with_definition)
     fab!(:user)
     fab!(:group)
 
@@ -319,54 +435,40 @@ RSpec.describe Category do
   end
 
   describe "non-english characters" do
+    let(:category) { Fabricate(:category_with_definition, name: "测试") }
+
     context "when using ascii slug generator" do
-      before do
-        SiteSetting.slug_generation_method = "ascii"
-        @category = Fabricate(:category_with_definition, name: "测试")
-      end
-      after { @category.destroy }
+      before { SiteSetting.slug_generation_method = "ascii" }
 
       it "creates a blank slug" do
-        expect(@category.slug).to be_blank
-        expect(@category.slug_for_url).to eq("#{@category.id}-category")
+        expect(category.slug).to be_blank
+        expect(category.slug_for_url).to eq("#{category.id}-category")
       end
     end
 
     context "when using none slug generator" do
-      before do
-        SiteSetting.slug_generation_method = "none"
-        @category = Fabricate(:category_with_definition, name: "测试")
-      end
-      after do
-        SiteSetting.slug_generation_method = "ascii"
-        @category.destroy
-      end
+      before { SiteSetting.slug_generation_method = "none" }
+      after { SiteSetting.slug_generation_method = "ascii" }
 
       it "creates a blank slug" do
-        expect(@category.slug).to be_blank
-        expect(@category.slug_for_url).to eq("#{@category.id}-category")
+        expect(category.slug).to be_blank
+        expect(category.slug_for_url).to eq("#{category.id}-category")
       end
     end
 
     context "when using encoded slug generator" do
-      before do
-        SiteSetting.slug_generation_method = "encoded"
-        @category = Fabricate(:category_with_definition, name: "测试")
-      end
-      after do
-        SiteSetting.slug_generation_method = "ascii"
-        @category.destroy
-      end
+      before { SiteSetting.slug_generation_method = "encoded" }
+      after { SiteSetting.slug_generation_method = "ascii" }
 
       it "creates a slug" do
-        expect(@category.slug).to eq("%E6%B5%8B%E8%AF%95")
-        expect(@category.slug_for_url).to eq("%E6%B5%8B%E8%AF%95")
+        expect(category.slug).to eq("%E6%B5%8B%E8%AF%95")
+        expect(category.slug_for_url).to eq("%E6%B5%8B%E8%AF%95")
       end
 
       it "keeps the encoded slug after saving" do
-        @category.save
-        expect(@category.slug).to eq("%E6%B5%8B%E8%AF%95")
-        expect(@category.slug_for_url).to eq("%E6%B5%8B%E8%AF%95")
+        category.save
+        expect(category.slug).to eq("%E6%B5%8B%E8%AF%95")
+        expect(category.slug_for_url).to eq("%E6%B5%8B%E8%AF%95")
       end
     end
   end
@@ -381,25 +483,25 @@ RSpec.describe Category do
   end
 
   describe "custom slug can be provided" do
-    it "can be sanitized" do
-      @c = Fabricate(:category_with_definition, name: "Fun Cats", slug: "fun-cats")
-      @cat = Fabricate(:category_with_definition, name: "love cats", slug: "love-cats")
+    let(:category_1) { Fabricate(:category_with_definition, name: "Fun Cats", slug: "fun-cats") }
+    let!(:category_2) { Fabricate(:category_with_definition, name: "love cats", slug: "love-cats") }
 
-      @c.slug = "  invalid slug"
-      @c.save
-      expect(@c.slug).to eq("invalid-slug")
+    it "can be sanitized" do
+      category_1.slug = "  invalid slug"
+      category_1.save
+      expect(category_1.slug).to eq("invalid-slug")
 
       c = Fabricate.build(:category, name: "More Fun Cats", slug: "love-cats")
       expect(c).not_to be_valid
       expect(c.errors[:slug]).to be_present
 
-      @cat.slug = "#{@c.id}-category"
-      expect(@cat).not_to be_valid
-      expect(@cat.errors[:slug]).to be_present
+      category_2.slug = "#{category_1.id}-category"
+      expect(category_2).not_to be_valid
+      expect(category_2.errors[:slug]).to be_present
 
-      @cat.slug = "#{@cat.id}-category"
-      expect(@cat).to be_valid
-      expect(@cat.errors[:slug]).not_to be_present
+      category_2.slug = "#{category_2.id}-category"
+      expect(category_2).to be_valid
+      expect(category_2.errors[:slug]).not_to be_present
     end
 
     context "if SiteSettings.slug_generation_method = ascii" do
@@ -423,41 +525,69 @@ RSpec.describe Category do
     end
   end
 
-  describe "after create" do
-    before do
-      @category = Fabricate(:category_with_definition, name: "Amazing Category")
-      @topic = @category.topic
+  describe "description sanitization" do
+    fab!(:admin)
+
+    it "sanitizes description to prevent XSS on create" do
+      category =
+        Category.create!(
+          name: "XSS Test Category",
+          user: admin,
+          description:
+            "This has <script>alert('xss')</script> and <img src=x onerror=alert('xss')>",
+        )
+
+      expect(category.description).not_to include("<script>")
+      expect(category.description).not_to include("&lt;script&gt;")
+      expect(category.description).to include("&lt;img")
     end
 
+    it "sanitizes description to prevent XSS on update" do
+      category = Fabricate(:category_with_definition, user: admin)
+      category.update(
+        description: "This has <script>alert('xss')</script> and <img src=x onerror=alert('xss')>",
+      )
+
+      category.reload
+      expect(category.description).not_to include("<script>")
+      expect(category.description).not_to include("&lt;script&gt;")
+      expect(category.description).to include("&lt;img")
+    end
+  end
+
+  describe "after create" do
+    fab!(:category) { Fabricate(:category_with_definition, name: "Amazing Category") }
+    let(:topic) { category.topic }
+
     it "is created correctly" do
-      expect(@category.slug).to eq("amazing-category")
-      expect(@category.slug_for_url).to eq(@category.slug)
+      expect(category.slug).to eq("amazing-category")
+      expect(category.slug_for_url).to eq(category.slug)
 
-      expect(@category.description).to be_blank
+      expect(category.description).to be_blank
 
-      expect(Topic.where(category_id: @category).count).to eq(1)
+      expect(Topic.where(category_id: category).count).to eq(1)
 
-      expect(@topic).to be_present
+      expect(topic).to be_present
 
-      expect(@topic.category).to eq(@category)
+      expect(topic.category).to eq(category)
 
-      expect(@topic).to be_visible
+      expect(topic).to be_visible
 
-      expect(@topic.pinned_at).to be_present
+      expect(topic.pinned_at).to be_present
 
-      expect(Guardian.new(@category.user).can_delete?(@topic)).to be false
+      expect(Guardian.new(category.user).can_delete?(topic)).to be false
 
-      expect(@topic.posts.count).to eq(1)
+      expect(topic.posts.count).to eq(1)
 
-      expect(@category.topic_url).to be_present
+      expect(category.topic_url).to be_present
 
-      expect(@category.posts_week).to eq(0)
-      expect(@category.posts_month).to eq(0)
-      expect(@category.posts_year).to eq(0)
+      expect(category.posts_week).to eq(0)
+      expect(category.posts_month).to eq(0)
+      expect(category.posts_year).to eq(0)
 
-      expect(@category.topics_week).to eq(0)
-      expect(@category.topics_month).to eq(0)
-      expect(@category.topics_year).to eq(0)
+      expect(category.topics_week).to eq(0)
+      expect(category.topics_month).to eq(0)
+      expect(category.topics_year).to eq(0)
     end
 
     it "cooks the definition" do
@@ -472,43 +602,43 @@ RSpec.describe Category do
     end
 
     it "renames the definition when renamed" do
-      @category.update(name: "Troutfishing")
-      @topic.reload
-      expect(@topic.title).to match(/Troutfishing/)
-      expect(@topic.fancy_title).to match(/Troutfishing/)
+      category.update(name: "Troutfishing")
+      topic.reload
+      expect(topic.title).to match(/Troutfishing/)
+      expect(topic.fancy_title).to match(/Troutfishing/)
     end
 
     it "doesn't raise an error if there is no definition topic to rename (uncategorized)" do
-      expect { @category.update(name: "Troutfishing", topic_id: nil) }.to_not raise_error
+      expect { category.update(name: "Troutfishing", topic_id: nil) }.to_not raise_error
     end
 
     it "creates permalink when category slug is changed" do
-      @category.update(slug: "new-category")
+      category.update(slug: "new-category")
       expect(Permalink.count).to eq(1)
     end
 
     it "reuses existing permalink when category slug is changed" do
-      permalink = Permalink.create!(url: "c/#{@category.slug}/#{@category.id}", category_id: 42)
+      permalink = Permalink.create!(url: "c/#{category.slug}/#{category.id}", category_id: 42)
 
-      expect { @category.update(slug: "new-slug") }.to_not change { Permalink.count }
-      expect(permalink.reload.category_id).to eq(@category.id)
+      expect { category.update(slug: "new-slug") }.to_not change { Permalink.count }
+      expect(permalink.reload.category_id).to eq(category.id)
     end
 
     it "creates permalink when sub category slug is changed" do
       sub_category =
-        Fabricate(:category_with_definition, slug: "sub-category", parent_category_id: @category.id)
+        Fabricate(:category_with_definition, slug: "sub-category", parent_category_id: category.id)
       sub_category.update(slug: "new-sub-category")
       expect(Permalink.count).to eq(1)
     end
 
     it "deletes permalink when category slug is reused" do
-      Fabricate(:permalink, url: "/c/bikeshed-category")
+      Fabricate(:permalink, url: "/c/bikeshed-category", category_id: 42)
       Fabricate(:category_with_definition, slug: "bikeshed-category")
       expect(Permalink.count).to eq(0)
     end
 
     it "deletes permalink when sub category slug is reused" do
-      Fabricate(:permalink, url: "/c/main-category/sub-category")
+      Fabricate(:permalink, url: "/c/main-category/sub-category", category_id: 42)
       main_category = Fabricate(:category_with_definition, slug: "main-category")
       Fabricate(
         :category_with_definition,
@@ -520,8 +650,8 @@ RSpec.describe Category do
 
     it "correctly creates permalink when category slug is changed in subfolder install" do
       set_subfolder "/forum"
-      old_url = @category.url
-      @category.update(slug: "new-category")
+      old_url = category.url
+      category.update(slug: "new-category")
       permalink = Permalink.last
       expect(permalink.url).to eq(old_url[1..-1])
     end
@@ -552,17 +682,19 @@ RSpec.describe Category do
     end
 
     describe "trying to change the category topic's category" do
+      let(:new_category) do
+        Fabricate(:category_with_definition, name: "2nd Category", user: category.user)
+      end
       before do
-        @new_cat = Fabricate(:category_with_definition, name: "2nd Category", user: @category.user)
-        @topic.change_category_to_id(@new_cat.id)
-        @topic.reload
-        @category.reload
+        topic.change_category_to_id(new_category.id)
+        topic.reload
+        category.reload
       end
 
       it "does not cause changes" do
-        expect(@category.topic_count).to eq(0)
-        expect(@topic.category).to eq(@category)
-        expect(@category.topic).to eq(@topic)
+        expect(category.topic_count).to eq(0)
+        expect(topic.category).to eq(category)
+        expect(category.topic).to eq(topic)
       end
     end
   end
@@ -589,31 +721,30 @@ RSpec.describe Category do
   end
 
   describe "destroy" do
-    before do
-      @category = Fabricate(:category_with_definition)
-      @category_id = @category.id
-      @topic_id = @category.topic_id
-      SiteSetting.shared_drafts_category = @category.id.to_s
-    end
+    let(:category) { Fabricate(:category_with_definition) }
+    let(:category_id) { category.id }
+    let(:topic_id) { category.topic_id }
+
+    before { SiteSetting.shared_drafts_category = category.id.to_s }
 
     it "is deleted correctly" do
-      @category.destroy
-      expect(Category.exists?(id: @category_id)).to be false
-      expect(Topic.with_deleted.where.not(deleted_at: nil).exists?(id: @topic_id)).to be true
+      category.destroy
+      expect(Category.exists?(id: category_id)).to be false
+      expect(Topic.with_deleted.where.not(deleted_at: nil).exists?(id: topic_id)).to be true
       expect(SiteSetting.shared_drafts_category).to be_blank
     end
 
     it "deletes related embeddable host" do
-      embeddable_host = Fabricate(:embeddable_host, category: @category)
-      @category.destroy!
+      embeddable_host = Fabricate(:embeddable_host, category:)
+      category.destroy!
       expect { embeddable_host.reload }.to raise_error(ActiveRecord::RecordNotFound)
     end
 
     it "triggers a extensibility event" do
-      event = DiscourseEvent.track(:category_destroyed) { @category.destroy }
+      event = DiscourseEvent.track(:category_destroyed) { category.destroy }
 
       expect(event[:event_name]).to eq(:category_destroyed)
-      expect(event[:params].first).to eq(@category)
+      expect(event[:params].first).to eq(category)
     end
   end
 
@@ -644,101 +775,101 @@ RSpec.describe Category do
   end
 
   describe "update_stats" do
-    before do
-      @category =
-        Fabricate(:category_with_definition, user: Fabricate(:user, refresh_auto_groups: true))
+    let(:category) do
+      Fabricate(:category_with_definition, user: Fabricate(:user, refresh_auto_groups: true))
     end
 
     context "with regular topics" do
       before do
-        create_post(user: @category.user, category: @category.id)
+        create_post(user: category.user, category:)
         Category.update_stats
-        @category.reload
+        category.reload
       end
 
       it "updates topic stats" do
-        expect(@category.topics_week).to eq(1)
-        expect(@category.topics_month).to eq(1)
-        expect(@category.topics_year).to eq(1)
-        expect(@category.topic_count).to eq(1)
-        expect(@category.post_count).to eq(1)
-        expect(@category.posts_year).to eq(1)
-        expect(@category.posts_month).to eq(1)
-        expect(@category.posts_week).to eq(1)
+        expect(category.topics_week).to eq(1)
+        expect(category.topics_month).to eq(1)
+        expect(category.topics_year).to eq(1)
+        expect(category.topic_count).to eq(1)
+        expect(category.post_count).to eq(1)
+        expect(category.posts_year).to eq(1)
+        expect(category.posts_month).to eq(1)
+        expect(category.posts_week).to eq(1)
       end
     end
 
     context "with deleted topics" do
       before do
-        @category.topics << Fabricate(:deleted_topic, user: @category.user)
+        category.topics << Fabricate(:deleted_topic, user: category.user)
         Category.update_stats
-        @category.reload
+        category.reload
       end
 
       it "does not count deleted topics" do
-        expect(@category.topics_week).to eq(0)
-        expect(@category.topic_count).to eq(0)
-        expect(@category.topics_month).to eq(0)
-        expect(@category.topics_year).to eq(0)
-        expect(@category.post_count).to eq(0)
-        expect(@category.posts_year).to eq(0)
-        expect(@category.posts_month).to eq(0)
-        expect(@category.posts_week).to eq(0)
+        expect(category.topics_week).to eq(0)
+        expect(category.topic_count).to eq(0)
+        expect(category.topics_month).to eq(0)
+        expect(category.topics_year).to eq(0)
+        expect(category.post_count).to eq(0)
+        expect(category.posts_year).to eq(0)
+        expect(category.posts_month).to eq(0)
+        expect(category.posts_week).to eq(0)
       end
     end
 
     context "with revised post" do
       before do
-        post = create_post(user: @category.user, category: @category.id)
+        post = create_post(user: category.user, category:)
 
         SiteSetting.editing_grace_period = 1.minute
         post.revise(post.user, { raw: "updated body" }, revised_at: post.updated_at + 2.minutes)
 
         Category.update_stats
-        @category.reload
+        category.reload
       end
 
       it "doesn't count each version of a post" do
-        expect(@category.post_count).to eq(1)
-        expect(@category.posts_year).to eq(1)
-        expect(@category.posts_month).to eq(1)
-        expect(@category.posts_week).to eq(1)
+        expect(category.post_count).to eq(1)
+        expect(category.posts_year).to eq(1)
+        expect(category.posts_month).to eq(1)
+        expect(category.posts_week).to eq(1)
       end
     end
 
     context "for uncategorized category" do
+      let(:uncategorized) { Category.find(SiteSetting.uncategorized_category_id) }
+
       before do
-        @uncategorized = Category.find(SiteSetting.uncategorized_category_id)
-        create_post(user: Fabricate(:user, refresh_auto_groups: true), category: @uncategorized.id)
+        create_post(user: Fabricate(:user, refresh_auto_groups: true), category: uncategorized)
         Category.update_stats
-        @uncategorized.reload
+        uncategorized.reload
       end
 
       it "updates topic stats" do
-        expect(@uncategorized.topics_week).to eq(1)
-        expect(@uncategorized.topics_month).to eq(1)
-        expect(@uncategorized.topics_year).to eq(1)
-        expect(@uncategorized.topic_count).to eq(1)
-        expect(@uncategorized.post_count).to eq(1)
-        expect(@uncategorized.posts_year).to eq(1)
-        expect(@uncategorized.posts_month).to eq(1)
-        expect(@uncategorized.posts_week).to eq(1)
+        expect(uncategorized.topics_week).to eq(1)
+        expect(uncategorized.topics_month).to eq(1)
+        expect(uncategorized.topics_year).to eq(1)
+        expect(uncategorized.topic_count).to eq(1)
+        expect(uncategorized.post_count).to eq(1)
+        expect(uncategorized.posts_year).to eq(1)
+        expect(uncategorized.posts_month).to eq(1)
+        expect(uncategorized.posts_week).to eq(1)
       end
     end
 
     context "when there are no topics left" do
-      let!(:topic) { create_post(user: @category.user, category: @category.id).reload.topic }
+      let!(:topic) { create_post(user: category.user, category:).reload.topic }
 
       it "can update the topic count to zero" do
-        @category.reload
-        expect(@category.topic_count).to eq(1)
-        expect(@category.topics.count).to eq(2)
+        category.reload
+        expect(category.topic_count).to eq(1)
+        expect(category.topics.count).to eq(2)
         topic.delete # Delete so the post trash/destroy hook doesn't fire
 
         Category.update_stats
-        @category.reload
-        expect(@category.topics.count).to eq(1)
-        expect(@category.topic_count).to eq(0)
+        category.reload
+        expect(category.topics.count).to eq(1)
+        expect(category.topic_count).to eq(0)
       end
     end
   end
@@ -918,24 +1049,6 @@ RSpec.describe Category do
     end
   end
 
-  describe "require topic/post approval" do
-    fab!(:category) { Fabricate(:category_with_definition) }
-
-    it "delegates methods to category settings" do
-      expect(category).to delegate_method(:require_reply_approval).to(:category_setting)
-      expect(category).to delegate_method(:require_reply_approval=).with_arguments(true).to(
-        :category_setting,
-      )
-      expect(category).to delegate_method(:require_reply_approval?).to(:category_setting)
-
-      expect(category).to delegate_method(:require_topic_approval).to(:category_setting)
-      expect(category).to delegate_method(:require_topic_approval=).with_arguments(true).to(
-        :category_setting,
-      )
-      expect(category).to delegate_method(:require_topic_approval?).to(:category_setting)
-    end
-  end
-
   describe "auto bump" do
     it "should correctly automatically bump topics" do
       freeze_time
@@ -1057,7 +1170,7 @@ RSpec.describe Category do
   describe "validate permissions compatibility" do
     fab!(:admin)
     fab!(:group)
-    fab!(:group2) { Fabricate(:group) }
+    fab!(:group2, :group)
     fab!(:parent_category) { Fabricate(:category_with_definition, name: "parent") }
     fab!(:subcategory) do
       Fabricate(:category_with_definition, name: "child1", parent_category_id: parent_category.id)
@@ -1442,7 +1555,7 @@ RSpec.describe Category do
   describe "allowed_tags=" do
     let(:category) { Fabricate(:category) }
     fab!(:tag)
-    fab!(:tag2) { Fabricate(:tag) }
+    fab!(:tag2, :tag)
 
     before { SiteSetting.tagging_enabled = true }
 
@@ -1551,18 +1664,66 @@ RSpec.describe Category do
     end
   end
 
-  describe ".limited_categories_matching" do
-    before_all { SiteSetting.max_category_nesting = 3 }
+  describe ".set_permission!" do
+    fab!(:category)
+    fab!(:group)
+    fab!(:user)
 
-    fab!(:foo) { Fabricate(:category, name: "foo") }
-    fab!(:bar) { Fabricate(:category, name: "bar", parent_category: foo) }
-    fab!(:baz) { Fabricate(:category, name: "baz", parent_category: bar) }
+    it "sets full permission for admin users" do
+      admin = Fabricate(:admin)
+      guardian = Guardian.new(admin)
 
-    it "produces results in depth-first pre-order" do
-      SiteSetting.max_category_nesting = 3
-      expect(Category.limited_categories_matching(nil, nil, nil, "baz").pluck(:name)).to eq(
-        %w[foo bar baz],
-      )
+      result = Category.set_permission!(guardian, category)
+
+      expect(result).to eq(category)
+      expect(category.permission).to eq(CategoryGroup.permission_types[:full])
+    end
+
+    it "sets full permission for users who can create topics" do
+      category.set_permissions(group => :full)
+      category.save!
+      group.add(user)
+      guardian = Guardian.new(user)
+
+      result = Category.set_permission!(guardian, category)
+
+      expect(result).to eq(category)
+      expect(category.permission).to eq(CategoryGroup.permission_types[:full])
+    end
+
+    it "sets create_post permission for users who can post but not create topics" do
+      category.set_permissions(group => :create_post)
+      category.save!
+      group.add(user)
+      guardian = Guardian.new(user)
+
+      result = Category.set_permission!(guardian, category)
+
+      expect(result).to eq(category)
+      expect(category.permission).to eq(CategoryGroup.permission_types[:create_post])
+    end
+
+    it "sets readonly permission for users who can see but not post" do
+      category.set_permissions(group => :readonly)
+      category.save!
+      group.add(user)
+      guardian = Guardian.new(user)
+
+      result = Category.set_permission!(guardian, category)
+
+      expect(result).to eq(category)
+      expect(category.permission).to eq(CategoryGroup.permission_types[:readonly])
+    end
+
+    it "sets no permission for users who cannot see the category" do
+      category.set_permissions(group => :full)
+      category.save!
+      guardian = Guardian.new(user)
+
+      result = Category.set_permission!(guardian, category)
+
+      expect(result).to eq(category)
+      expect(category.permission).to be_nil
     end
   end
 end

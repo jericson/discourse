@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 class ReviewablePost < Reviewable
+  include ReviewableActionBuilder
+
   def self.action_aliases
     { reject_and_silence: :reject_and_suspend }
   end
@@ -13,6 +15,10 @@ class ReviewablePost < Reviewable
          created_or_edited_by.has_trust_level?(TrustLevel[4])
       return
     end
+    queue_for_review(post)
+  end
+
+  def self.queue_for_review(post)
     system_user = Discourse.system_user
 
     needs_review!(
@@ -28,7 +34,10 @@ class ReviewablePost < Reviewable
 
   def build_actions(actions, guardian, args)
     return unless pending?
+    super
+  end
 
+  def build_combined_actions(actions, guardian, args)
     if post.trashed? && guardian.can_recover_post?(post)
       build_action(actions, :approve_and_restore, icon: "check")
     elsif post.hidden?
@@ -39,18 +48,34 @@ class ReviewablePost < Reviewable
 
     reject =
       actions.add_bundle(
-        "#{id}-reject",
-        icon: "times",
-        label: "reviewables.actions.reject.bundle_title",
+        "#{id}-reject-post",
+        icon: "xmark",
+        label: "reviewables.actions.reject_post_bundle.title",
       )
 
+    can_penalize = guardian.can_suspend?(target_created_by)
+
     if post.trashed?
-      build_action(actions, :reject_and_keep_deleted, icon: "trash-alt", bundle: reject)
+      if can_penalize
+        build_action(actions, :reject_and_keep_deleted, icon: "trash-can", bundle: reject)
+      else
+        actions.add(:reject_and_keep_deleted, bundle: reject) do |a|
+          a.icon = "trash-can"
+          a.label = "reviewables.actions.reject_and_keep_deleted_standalone.title"
+        end
+      end
     elsif guardian.can_delete_post_or_topic?(post)
-      build_action(actions, :reject_and_delete, icon: "trash-alt", bundle: reject)
+      if can_penalize
+        build_action(actions, :reject_and_delete, icon: "trash-can", bundle: reject)
+      else
+        actions.add(:reject_and_delete, bundle: reject) do |a|
+          a.icon = "trash-can"
+          a.label = "reviewables.actions.reject_and_delete_standalone.title"
+        end
+      end
     end
 
-    if guardian.can_suspend?(target_created_by)
+    if can_penalize
       build_action(
         actions,
         :reject_and_suspend,
@@ -69,66 +94,40 @@ class ReviewablePost < Reviewable
   end
 
   def perform_approve(performed_by, _args)
-    successful_transition :approved, recalculate_score: false
+    create_result(:success, :approved, [created_by_id], false)
   end
 
   def perform_reject_and_keep_deleted(performed_by, _args)
-    successful_transition :rejected, recalculate_score: false
+    create_result(:success, :rejected, [created_by_id], false)
   end
 
   def perform_approve_and_restore(performed_by, _args)
     PostDestroyer.new(performed_by, post).recover
 
-    successful_transition :approved, recalculate_score: false
+    create_result(:success, :approved, [created_by_id], false)
   end
 
   def perform_approve_and_unhide(performed_by, _args)
+    post.acting_user = performed_by
     post.unhide!
 
-    successful_transition :approved, recalculate_score: false
+    create_result(:success, :approved, [created_by_id], false)
   end
 
   def perform_reject_and_delete(performed_by, _args)
-    PostDestroyer.new(performed_by, post, reviewable: self).destroy
+    PostDestroyer.new(performed_by, post, reviewable_id: self.id).destroy
 
-    successful_transition :rejected, recalculate_score: false
+    create_result(:success, :rejected, [created_by_id], false)
   end
 
   def perform_reject_and_suspend(performed_by, _args)
-    successful_transition :rejected, recalculate_score: false
+    create_result(:success, :rejected, [created_by_id], false)
   end
 
   private
 
   def post
     @post ||= (target || Post.with_deleted.find_by(id: target_id))
-  end
-
-  def build_action(
-    actions,
-    id,
-    icon:,
-    button_class: nil,
-    bundle: nil,
-    client_action: nil,
-    confirm: false
-  )
-    actions.add(id, bundle: bundle) do |action|
-      prefix = "reviewables.actions.#{id}"
-      action.icon = icon
-      action.button_class = button_class
-      action.label = "#{prefix}.title"
-      action.description = "#{prefix}.description"
-      action.client_action = client_action
-      action.confirm_message = "#{prefix}.confirm" if confirm
-    end
-  end
-
-  def successful_transition(to_state, recalculate_score: true)
-    create_result(:success, to_state) do |result|
-      result.recalculate_score = recalculate_score
-      result.update_flag_stats = { status: to_state, user_ids: [created_by_id] }
-    end
   end
 end
 
@@ -138,10 +137,10 @@ end
 #
 #  id                      :bigint           not null, primary key
 #  type                    :string           not null
+#  type_source             :string           default("unknown"), not null
 #  status                  :integer          default("pending"), not null
 #  created_by_id           :integer          not null
 #  reviewable_by_moderator :boolean          default(FALSE), not null
-#  reviewable_by_group_id  :integer
 #  category_id             :integer
 #  topic_id                :integer
 #  score                   :float            default(0.0), not null
@@ -156,6 +155,7 @@ end
 #  updated_at              :datetime         not null
 #  force_review            :boolean          default(FALSE), not null
 #  reject_reason           :text
+#  potentially_illegal     :boolean          default(FALSE)
 #
 # Indexes
 #

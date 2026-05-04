@@ -4,17 +4,18 @@ module Chat
   # List of the channels a user is tracking
   #
   # @example
-  #  Chat::ListUserChannels.call(guardian: guardian, **optional_params)
+  #  Chat::ListUserChannels.call(guardian:)
   #
   class ListUserChannels
     include Service::Base
 
-    # @!method call(guardian:)
+    # @!method self.call(guardian:)
     #   @param [Guardian] guardian
     #   @return [Service::Base::Context]
 
     model :structured
     step :inject_unread_thread_overview
+    step :inject_has_threads
     model :post_allowed_category_ids, optional: true
 
     private
@@ -23,10 +24,16 @@ module Chat
       ::Chat::ChannelFetcher.structured(guardian)
     end
 
+    def inject_has_threads(structured:, guardian:)
+      structured[:has_threads] = ::Chat::Thread.viewable_by_user(guardian.user).exists?
+    end
+
     def inject_unread_thread_overview(structured:, guardian:)
+      channel_ids =
+        structured[:public_channels].map(&:id) + structured[:direct_message_channels].map(&:id)
       structured[:unread_thread_overview] = ::Chat::TrackingStateReportQuery.call(
         guardian: guardian,
-        channel_ids: structured[:public_channels].map(&:id),
+        channel_ids: channel_ids,
         include_threads: true,
         include_read: false,
         include_last_reply_details: true,
@@ -36,7 +43,7 @@ module Chat
     def fetch_post_allowed_category_ids(guardian:, structured:)
       ::Category
         .post_create_allowed(guardian)
-        .where(id: structured[:public_channels].map { |c| c.chatable_id })
+        .where(id: structured[:public_channels].map(&:chatable_id))
         .pluck(:id)
     end
   end

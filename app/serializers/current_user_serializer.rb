@@ -12,6 +12,7 @@ class CurrentUserSerializer < BasicUserSerializer
              :read_first_notification?,
              :admin?,
              :notification_channel_position,
+             :do_not_disturb_channel_position,
              :moderator?,
              :staff?,
              :whisperer?,
@@ -26,9 +27,10 @@ class CurrentUserSerializer < BasicUserSerializer
              :no_password,
              :can_delete_account,
              :can_post_anonymously,
+             :can_toggle_nested_mode,
              :can_ignore_users,
+             :can_edit_tags,
              :can_delete_all_posts_and_topics,
-             :can_summarize,
              :custom_fields,
              :muted_category_ids,
              :indirectly_muted_category_ids,
@@ -52,17 +54,18 @@ class CurrentUserSerializer < BasicUserSerializer
              :primary_group_id,
              :flair_group_id,
              :can_create_topic,
+             :can_create_category,
              :can_create_group,
              :link_posting_access,
              :external_id,
              :associated_account_ids,
              :top_category_ids,
              :groups,
+             :needs_required_fields_check?,
              :second_factor_enabled,
              :ignored_users,
              :featured_topic,
              :do_not_disturb_until,
-             :has_topic_draft,
              :can_review,
              :draft_count,
              :pending_posts_count,
@@ -72,10 +75,17 @@ class CurrentUserSerializer < BasicUserSerializer
              :sidebar_category_ids,
              :sidebar_sections,
              :new_new_view_enabled?,
-             :use_experimental_topic_bulk_actions?,
-             :use_admin_sidebar,
              :can_view_raw_email,
-             :use_glimmer_topic_list?
+             :login_method,
+             :has_unseen_features,
+             :has_new_upcoming_changes,
+             :can_see_emails,
+             :can_localize_content?,
+             :effective_locale,
+             :can_see_ip,
+             :is_impersonating,
+             :can_change_post_owner,
+             :show_site_owner_onboarding
 
   delegate :user_stat, to: :object, private: true
   delegate :any_posts, :draft_count, :pending_posts_count, :read_faq?, to: :user_stat
@@ -89,6 +99,25 @@ class CurrentUserSerializer < BasicUserSerializer
   def initialize(object, options = {})
     super
     options[:include_status] = true
+  end
+
+  def login_method
+    @options[:login_method]
+  end
+
+  def is_impersonating
+    !!object.is_impersonating
+  end
+
+  def include_can_change_post_owner?
+    return true if admin?
+    return true if SiteSetting.moderators_change_post_ownership && moderator?
+    return true if object.in_any_groups?(SiteSetting.change_post_ownership_allowed_groups_map)
+    false
+  end
+
+  def can_change_post_owner
+    true
   end
 
   def groups
@@ -112,8 +141,16 @@ class CurrentUserSerializer < BasicUserSerializer
     scope.can_create_topic?(nil)
   end
 
+  def can_create_category
+    true
+  end
+
+  def include_can_create_category?
+    scope.can_create_category?
+  end
+
   def can_create_group
-    scope.can_create_group?
+    true
   end
 
   def include_can_create_group?
@@ -128,29 +165,55 @@ class CurrentUserSerializer < BasicUserSerializer
     scope.can_send_private_messages?
   end
 
-  def use_admin_sidebar
-    object.staff? && object.in_any_groups?(SiteSetting.admin_sidebar_enabled_groups_map)
+  def include_show_site_owner_onboarding?
+    SiteSetting.enable_site_owner_onboarding && object.admin? &&
+      User.where(admin: true).human_users.minimum(:id) == object.id &&
+      Topic.minimum(:created_at)&.after?(SiteSetting.site_owner_onboarding_max_days.days.ago)
   end
 
-  def include_user_admin_sidebar?
-    object.admin?
+  def show_site_owner_onboarding
+    true
+  end
+
+  def include_has_unseen_features?
+    object.staff?
+  end
+
+  def has_unseen_features
+    DiscourseUpdates.has_unseen_features?(object.id)
+  end
+
+  def include_has_new_upcoming_changes?
+    object.staff?
+  end
+
+  def has_new_upcoming_changes
+    last_visited = object.custom_fields["last_visited_upcoming_changes_at"]
+
+    scope = UpcomingChangeEvent.added
+    scope = scope.where("created_at > ?", Time.zone.parse(last_visited)) if last_visited.present?
+    scope.exists?
   end
 
   def can_post_anonymously
-    SiteSetting.allow_anonymous_posting &&
+    SiteSetting.allow_anonymous_mode &&
       (is_anonymous || object.in_any_groups?(SiteSetting.anonymous_posting_allowed_groups_map))
   end
 
+  def can_toggle_nested_mode
+    object.in_any_groups?(SiteSetting.nested_replies_toggle_mode_groups_map)
+  end
+
+  def include_can_toggle_nested_mode?
+    SiteSetting.nested_replies_enabled
+  end
+
   def can_ignore_users
-    !is_anonymous && object.in_any_groups?(SiteSetting.ignore_allowed_groups_map)
+    scope.can_ignore_users?
   end
 
   def can_delete_all_posts_and_topics
     object.in_any_groups?(SiteSetting.delete_all_posts_and_topics_allowed_groups_map)
-  end
-
-  def can_summarize
-    object.in_any_groups?(SiteSetting.custom_summarization_allowed_groups_map)
   end
 
   def can_upload_avatar
@@ -161,8 +224,12 @@ class CurrentUserSerializer < BasicUserSerializer
     true
   end
 
+  def can_edit_tags
+    scope.can_edit_tag_names?
+  end
+
   def can_invite_to_forum
-    scope.can_invite_to_forum?
+    true
   end
 
   def include_can_invite_to_forum?
@@ -177,12 +244,12 @@ class CurrentUserSerializer < BasicUserSerializer
     !object.has_password?
   end
 
-  def include_can_delete_account?
-    scope.can_delete_user?(object)
-  end
-
   def can_delete_account
     true
+  end
+
+  def include_can_delete_account?
+    scope.can_delete_user?(object)
   end
 
   def custom_fields
@@ -293,30 +360,50 @@ class CurrentUserSerializer < BasicUserSerializer
   end
 
   def featured_topic
-    object.user_profile.featured_topic
-  end
-
-  def has_topic_draft
-    true
-  end
-
-  def include_has_topic_draft?
-    Draft.has_topic_draft(object)
+    BasicTopicSerializer.new(object.user_profile.featured_topic, scope: scope, root: false).as_json
   end
 
   def unseen_reviewable_count
     Reviewable.unseen_reviewable_count(object)
   end
 
-  def use_experimental_topic_bulk_actions?
-    scope.user.in_any_groups?(SiteSetting.experimental_topic_bulk_actions_enabled_groups_map)
-  end
-
   def can_view_raw_email
     scope.user.in_any_groups?(SiteSetting.view_raw_email_allowed_groups_map)
   end
 
-  def use_glimmer_topic_list?
-    scope.user.in_any_groups?(SiteSetting.experimental_glimmer_topic_list_groups_map)
+  def do_not_disturb_channel_position
+    MessageBus.last_id("/do-not-disturb/#{object.id}")
+  end
+
+  def can_see_emails
+    scope.can_see_emails?
+  end
+
+  def include_can_see_emails?
+    object.staff?
+  end
+
+  def can_localize_content?
+    scope.can_localize_content?
+  end
+
+  def include_can_localize_content?
+    SiteSetting.content_localization_enabled
+  end
+
+  def effective_locale
+    scope.user.effective_locale
+  end
+
+  def include_effective_locale?
+    SiteSetting.content_localization_enabled
+  end
+
+  def can_see_ip
+    scope.can_see_ip?
+  end
+
+  def include_can_see_ip?
+    object.admin? || (object.moderator? && SiteSetting.moderators_view_ips)
   end
 end

@@ -2,12 +2,15 @@
 
 class RobotsTxtController < ApplicationController
   layout false
-  skip_before_action :preload_json, :check_xhr, :redirect_to_login_if_required
+  skip_before_action :preload_json,
+                     :check_xhr,
+                     :redirect_to_login_if_required,
+                     :redirect_to_profile_if_required
 
   OVERRIDDEN_HEADER = "# This robots.txt file has been customized at /admin/customize/robots\n"
 
   # NOTE: order is important!
-  DISALLOWED_PATHS ||= %w[
+  DISALLOWED_PATHS = %w[
     /admin/
     /auth/
     /assets/browser-update*.js
@@ -18,7 +21,7 @@ class RobotsTxtController < ApplicationController
     /*?*api_key*
   ]
 
-  DISALLOWED_WITH_HEADER_PATHS ||= %w[/badges /u/ /my /search /tag/*/l /g /t/*/*.rss /c/*.rss]
+  DISALLOWED_WITH_HEADER_PATHS = %w[/badges /my /search /tag/*/l /g /t/*/*.rss /c/*.rss]
 
   def index
     if (overridden = SiteSetting.overridden_robots_txt.dup).present?
@@ -51,11 +54,10 @@ class RobotsTxtController < ApplicationController
       deny_paths_googlebot + DISALLOWED_WITH_HEADER_PATHS.map { |p| Discourse.base_path + p }
     deny_all = ["#{Discourse.base_path}/"]
 
-    result = {
-      header:
-        "# See http://www.robotstxt.org/robotstxt.html for documentation on how to use the robots.txt file",
-      agents: [],
-    }
+    result = { header: <<~ROBOTS, agents: [] }
+              # See https://datatracker.ietf.org/doc/rfc9309 for documentation on how to use the robots.txt file
+              # Google uses the same format as the standard above. More info at https://developers.google.com/search/docs/crawling-indexing/robots/robots_txt
+              ROBOTS
 
     if SiteSetting.allowed_crawler_user_agents.present?
       SiteSetting

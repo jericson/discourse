@@ -2,17 +2,17 @@
 
 describe UserNotifications do
   fab!(:user) { Fabricate(:user, last_seen_at: 1.hour.ago) }
-  fab!(:other) { Fabricate(:user) }
-  fab!(:another) { Fabricate(:user) }
-  fab!(:someone) { Fabricate(:user) }
+  fab!(:other, :user)
+  fab!(:another, :user)
+  fab!(:someone, :user)
   fab!(:group) { Fabricate(:group, users: [user, other]) }
 
-  fab!(:followed_channel) { Fabricate(:category_channel) }
-  fab!(:followed_channel_2) { Fabricate(:category_channel) }
-  fab!(:followed_channel_3) { Fabricate(:category_channel) }
-  fab!(:non_followed_channel) { Fabricate(:category_channel) }
-  fab!(:muted_channel) { Fabricate(:category_channel) }
-  fab!(:unseen_channel) { Fabricate(:category_channel) }
+  fab!(:followed_channel, :category_channel)
+  fab!(:followed_channel_2, :category_channel)
+  fab!(:followed_channel_3, :category_channel)
+  fab!(:non_followed_channel, :category_channel)
+  fab!(:muted_channel, :category_channel)
+  fab!(:unseen_channel, :category_channel)
   fab!(:private_channel) { Fabricate(:private_category_channel, group:) }
   fab!(:direct_message) { Fabricate(:direct_message_channel, users: [user, other]) }
   fab!(:direct_message_2) { Fabricate(:direct_message_channel, users: [user, another]) }
@@ -123,6 +123,11 @@ describe UserNotifications do
         end
       end
 
+      it "sends an email even if the user has disabled chat emails" do
+        user.user_option.update!(chat_email_frequency: UserOption.chat_email_frequencies[:never])
+        chat_summary_email
+      end
+
       it "does not send an email if user can't chat" do
         SiteSetting.chat_allowed_groups = Group::AUTO_GROUPS[:admins]
         no_chat_summary_email
@@ -130,11 +135,6 @@ describe UserNotifications do
 
       it "does not send an email if the user has been seen recently" do
         user.update!(last_seen_at: 5.minutes.ago)
-        no_chat_summary_email
-      end
-
-      it "does not send an email if the user has disabled chat emails" do
-        user.user_option.update!(chat_email_frequency: UserOption.chat_email_frequencies[:never])
         no_chat_summary_email
       end
 
@@ -223,6 +223,34 @@ describe UserNotifications do
       before { create_message(followed_channel, "hello") }
 
       it "does not send a chat summary email" do
+        no_chat_summary_email
+      end
+    end
+
+    describe "group is mentioned" do
+      before do
+        group.update!(mentionable_level: Group::ALIAS_LEVELS[:everyone])
+        create_message(followed_channel, "hello @#{group.name}", Chat::GroupMention)
+      end
+
+      it "sends a chat summary email" do
+        chat_summary_with_subject(:chat_channel_1, channel: followed_channel.name, count: 1)
+      end
+
+      describe "when the group is not mentionable" do
+        before { group.update!(mentionable_level: Group::ALIAS_LEVELS[:nobody]) }
+
+        it "does not send a chat summary email" do
+          no_chat_summary_email
+        end
+      end
+    end
+
+    describe "channel does not allow channel wide mentions" do
+      before { followed_channel.update!(allow_channel_wide_mentions: false) }
+
+      it "does not send a chat summary email" do
+        create_message(followed_channel, "hello @all", Chat::AllMention)
         no_chat_summary_email
       end
     end
@@ -396,6 +424,11 @@ describe UserNotifications do
       chat_summary_with_subject(:chat_dm_1, name: direct_message.title(user), count: 2)
     end
 
+    it "sends an email even if the user has disabled core emails" do
+      user.user_option.update!(email_level: UserOption.email_level_types[:never])
+      chat_summary_with_subject(:chat_dm_1, name: direct_message.title(user), count: 1)
+    end
+
     it "does not send an email if the user has disabled private messages" do
       user.user_option.update!(allow_private_messages: false)
       no_chat_summary_email
@@ -463,6 +496,173 @@ describe UserNotifications do
           name: direct_message.title(user),
         )
       end
+    end
+
+    describe "when another user is mentioned in the channel and user receives a 1:1" do
+      before do
+        create_message(direct_message, "Hello, how are you?")
+        create_message(followed_channel, "Hey @#{another.username}", Chat::UserMention)
+      end
+
+      it "does not show the channel mention in the subject" do
+        chat_summary_with_subject(:chat_dm_1, name: direct_message.title(user), count: 1)
+      end
+
+      it "does not show the channel mention in the body" do
+        html = chat_summary_email.html_part.body.to_s
+
+        expect(html).to include(direct_message.title(user))
+        expect(html).not_to include(followed_channel.title(user))
+      end
+    end
+
+    describe "when mentioning @all in the channel and user receives a 1:1" do
+      before do
+        create_message(direct_message, "Hello, how are you?")
+        create_message(followed_channel, "Hey @all", Chat::AllMention)
+      end
+
+      it "shows both the channel mention and 1:1 in the subject" do
+        chat_summary_with_subject(
+          :chat_channel_and_dm,
+          channel: followed_channel.name,
+          name: direct_message.title(user),
+        )
+      end
+
+      it "shows both the channel mention and 1:1 in the body" do
+        html = chat_summary_email.html_part.body.to_s
+
+        expect(html).to include(direct_message.title(user))
+        expect(html).to include(followed_channel.title(user))
+      end
+    end
+
+    describe "when mentioning a group in the channel and user receives a 1:1" do
+      before do
+        group.update!(mentionable_level: Group::ALIAS_LEVELS[:everyone])
+        create_message(direct_message, "Hello, how are you?")
+        create_message(followed_channel, "Hey @#{group.name}", Chat::GroupMention)
+      end
+
+      it "shows the group mention in the email subject" do
+        chat_summary_with_subject(
+          :chat_channel_and_dm,
+          channel: followed_channel.name,
+          name: direct_message.title(user),
+        )
+      end
+
+      it "shows the group mention in the email body" do
+        html = chat_summary_email.html_part.body.to_s
+
+        expect(html).to include(direct_message.title(user))
+        expect(html).to include(group.name)
+      end
+
+      describe "when the group is not mentionable" do
+        before { group.update!(mentionable_level: Group::ALIAS_LEVELS[:nobody]) }
+
+        it "does not show the group mention in the email subject" do
+          chat_summary_with_subject(:chat_dm_1, name: direct_message.title(user), count: 1)
+        end
+
+        it "does not show the group mention in the email body" do
+          html = chat_summary_email.html_part.body.to_s
+
+          expect(html).to include(direct_message.title(user))
+          expect(html).not_to include(group.name)
+        end
+      end
+
+      describe "when user is removed from group" do
+        before { group.remove(user) }
+
+        it "does not show the group mention in the email subject" do
+          chat_summary_with_subject(:chat_dm_1, name: direct_message.title(user), count: 1)
+        end
+      end
+    end
+  end
+
+  describe "in a direct message channel with threads" do
+    fab!(:message) do
+      Fabricate(:chat_message, chat_channel: direct_message, user: other, created_at: 2.days.ago)
+    end
+    fab!(:thread) { Fabricate(:chat_thread, channel: direct_message, original_message: message) }
+    fab!(:reply) { Fabricate(:chat_message, chat_channel: direct_message, thread:, user: other) }
+    let(:watching) { Chat::NotificationLevels.all[:watching] }
+
+    it "does not send a chat summary email for thread replies" do
+      no_chat_summary_email
+    end
+
+    describe "when the user is watching the thread" do
+      before do
+        Fabricate(:user_chat_thread_membership, user: user, thread:, notification_level: watching)
+      end
+
+      it "sends a chat summary email" do
+        chat_summary_email
+      end
+    end
+
+    describe "when the user has 2 watched threads" do
+      fab!(:message_2) do
+        Fabricate(
+          :chat_message,
+          chat_channel: direct_message_2,
+          user: another,
+          created_at: 2.days.ago,
+        )
+      end
+      fab!(:thread_2) do
+        Fabricate(:chat_thread, channel: direct_message_2, original_message: message_2)
+      end
+      fab!(:thread_2_reply) do
+        Fabricate(:chat_message, chat_channel: direct_message_2, thread: thread_2, user: another)
+      end
+
+      before do
+        Fabricate(:user_chat_thread_membership, user: user, thread:, notification_level: watching)
+        Fabricate(
+          :user_chat_thread_membership,
+          user: user,
+          thread: thread_2,
+          notification_level: watching,
+        )
+      end
+
+      it "sends a chat summary email" do
+        chat_summary_with_subject(:watched_threads, channel: direct_message.title(user), count: 1)
+      end
+    end
+
+    describe "when another user is watching a thread" do
+      before { thread.membership_for(other).update!(notification_level: watching) }
+
+      it "does not send current user a chat summary email" do
+        no_chat_summary_email
+      end
+    end
+  end
+
+  describe "when SiteSetting.simple_email_subject is enabled" do
+    before do
+      SiteSetting.simple_email_subject = true
+      followed_channel.add(user)
+      create_message(followed_channel, "hello @#{user.username}", Chat::UserMention)
+    end
+
+    it "uses the improved chat summary subject" do
+      expect(chat_summary_email.subject).to eq(
+        I18n.t(
+          "user_notifications.chat_summary.subject.chat_channel_1_improved",
+          site_name:,
+          channel: followed_channel.name,
+          count: 1,
+        ),
+      )
     end
   end
 end

@@ -17,8 +17,10 @@ class WebHookEventType < ActiveRecord::Base
   USER_PROMOTED = 16
   TOPIC_VOTING = 17
   CHAT_MESSAGE = 18
+  CALENDAR_EVENT = 19
 
-  enum group: {
+  enum :group,
+       {
          topic: 0,
          post: 1,
          user: 2,
@@ -35,8 +37,10 @@ class WebHookEventType < ActiveRecord::Base
          user_promoted: 13,
          voting: 14,
          chat: 15,
+         custom: 16,
+         calendar: 17,
        },
-       _scopes: false
+       scopes: false
 
   TYPES = {
     topic_created: 101,
@@ -57,6 +61,7 @@ class WebHookEventType < ActiveRecord::Base
     user_destroyed: 307,
     user_suspended: 308,
     user_unsuspended: 309,
+    user_anonymized: 310,
     group_created: 401,
     group_updated: 402,
     group_destroyed: 403,
@@ -85,6 +90,9 @@ class WebHookEventType < ActiveRecord::Base
     chat_message_edited: 1802,
     chat_message_trashed: 1803,
     chat_message_restored: 1804,
+    calendar_event_created: 1901,
+    calendar_event_updated: 1902,
+    calendar_event_destroyed: 1903,
   }
 
   has_and_belongs_to_many :web_hooks
@@ -103,7 +111,7 @@ class WebHookEventType < ActiveRecord::Base
     unless defined?(SiteSetting.assign_enabled) && SiteSetting.assign_enabled
       ids_to_exclude.concat([TYPES[:assign_assigned], TYPES[:assign_unassigned]])
     end
-    unless defined?(SiteSetting.voting_enabled) && SiteSetting.voting_enabled
+    unless defined?(SiteSetting.topic_voting_enabled) && SiteSetting.topic_voting_enabled
       ids_to_exclude.concat([TYPES[:voting_topic_upvote], TYPES[:voting_topic_unvote]])
     end
     unless defined?(SiteSetting.chat_enabled) && SiteSetting.chat_enabled
@@ -113,6 +121,16 @@ class WebHookEventType < ActiveRecord::Base
           TYPES[:chat_message_edited],
           TYPES[:chat_message_trashed],
           TYPES[:chat_message_restored],
+        ],
+      )
+    end
+    unless defined?(SiteSetting.discourse_post_event_enabled) &&
+             SiteSetting.discourse_post_event_enabled
+      ids_to_exclude.concat(
+        [
+          TYPES[:calendar_event_created],
+          TYPES[:calendar_event_updated],
+          TYPES[:calendar_event_destroyed],
         ],
       )
     end

@@ -1,19 +1,22 @@
 # frozen_string_literal: true
 
 class UserSearch
-  MAX_SIZE_PRIORITY_MENTION ||= 500
+  MAX_SIZE_PRIORITY_MENTION = 500
 
   def initialize(term, opts = {})
     @term = term.downcase
     @term_like = @term.gsub("_", "\\_") + "%"
     @topic_id = opts[:topic_id]
     @category_id = opts[:category_id]
+    # prioritized_user_id is only used for ordering within the topic, it will prioritize this user
+    @prioritized_user_id = opts[:prioritized_user_id]
     @topic_allowed_users = opts[:topic_allowed_users]
     @searching_user = opts[:searching_user]
     @include_staged_users = opts[:include_staged_users] || false
     @last_seen_users = opts[:last_seen_users] || false
     @limit = opts[:limit] || 20
     @groups = opts[:groups]
+    @can_review = opts[:can_review] || false
 
     @topic = Topic.find(@topic_id) if @topic_id
     @category = Category.find(@category_id) if @category_id
@@ -32,6 +35,19 @@ class UserSearch
 
     if @groups
       users = users.joins(:group_users).where("group_users.group_id IN (?)", @groups.map(&:id))
+    end
+
+    if @can_review
+      if SiteSetting.enable_category_group_moderation?
+        category_moderator_group_ids = CategoryModerationGroup.distinct.pluck(:group_id)
+        users =
+          users.left_joins(:group_users).where(
+            "users.admin OR users.moderator OR group_users.group_id IN (?)",
+            category_moderator_group_ids,
+          )
+      else
+        users = users.merge(User.staff)
+      end
     end
 
     # Only show users who have access to private topic
@@ -86,7 +102,14 @@ class UserSearch
           Post.types[:regular],
         )
 
-      in_topic = in_topic.where("users.id <> ?", @searching_user.id) if @searching_user.present?
+      in_topic = in_topic.where.not(users: { id: @searching_user.id }) if @searching_user.present?
+
+      if @prioritized_user_id
+        in_topic =
+          in_topic.order(
+            DB.sql_fragment("CASE WHEN users.id = ? THEN 0 ELSE 1 END", @prioritized_user_id),
+          )
+      end
 
       in_topic
         .order("last_seen_at DESC NULLS LAST")
@@ -140,7 +163,7 @@ class UserSearch
           SQL
 
       if @searching_user.present?
-        in_category = in_category.where("users.id <> ?", @searching_user.id)
+        in_category = in_category.where.not(users: { id: @searching_user.id })
       end
 
       in_category
@@ -170,27 +193,6 @@ class UserSearch
         .limit(@limit - users.size)
         .pluck(:id)
         .each { |id| users << id }
-    end
-
-    return users.to_a if users.size >= @limit
-
-    # 6. similar usernames / names
-    if @term.present? && SiteSetting.user_search_similar_results
-      if SiteSetting.enable_names?
-        scoped_users
-          .where("username_lower <-> ? < 1 OR name <-> ? < 1", @term, @term)
-          .order(["LEAST(username_lower <-> ?, name <-> ?) ASC", @term, @term])
-          .limit(@limit - users.size)
-          .pluck(:id)
-          .each { |id| users << id }
-      else
-        scoped_users
-          .where("username_lower <-> ? < 1", @term)
-          .order(["username_lower <-> ? ASC", @term])
-          .limit(@limit - users.size)
-          .pluck(:id)
-          .each { |id| users << id }
-      end
     end
 
     users.to_a

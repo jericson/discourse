@@ -5,8 +5,15 @@
 # https://translate.discourse.org/
 
 ro:
+  admin_js:
+    admin:
+      site_settings:
+        categories:
+          poll: "Sondaj Discourse"
   js:
     poll:
+      dynamic:
+        enabled_hint: "Opțiunile pot fi adăugate sau eliminate."
       voters:
         one: "participant"
         few: "participanți"
@@ -68,8 +75,13 @@ ro:
         votes: "%{count} voturi"
         percentage: "Procent"
         count: "Număr"
+      ranked_choice:
+        none: "Nimeni"
       options:
         label: "Opțiuni"
+        ranked_choice:
+          highest_priority: "(cel mai mare prioritate)"
+          lowest_priority: "(cea mai mică prioritate)"
       error_while_toggling_status: "Ne pare rău, a apărut o eroare la schimbarea stării acestui sondaj."
       error_while_casting_votes: "Ne pare rău, a apărut o eroare la exercitarea voturilor tale."
       error_while_fetching_voters: "Ne pare rău, a apărut o eroare la afișarea votanților."
@@ -97,6 +109,8 @@ ro:
           step: Pas
         poll_public:
           label: Arată cine a votat
+        poll_dynamic:
+          label: Permite adăugarea sau eliminarea opțiunilor după publicare
         poll_title:
           label: Titlu (opţional)
         poll_options:

@@ -4,13 +4,13 @@ class Wizard
   class StepUpdater
     include ActiveModel::Model
 
-    attr_accessor :refresh_required, :fields
+    attr_accessor :fields
 
     def initialize(current_user, step, fields)
       @current_user = current_user
       @step = step
-      @refresh_required = false
       @fields = fields
+      @settings_changed = Set.new
     end
 
     def update
@@ -26,8 +26,8 @@ class Wizard
       @errors.blank?
     end
 
-    def refresh_required?
-      @refresh_required
+    def setting_changed?(id)
+      @settings_changed.include?(id)
     end
 
     def update_setting(id, value)
@@ -37,7 +37,10 @@ class Wizard
         value = Upload.get_from_url(value) || ""
       end
 
-      SiteSetting.set_and_log(id, value, @current_user) if SiteSetting.get(id) != value
+      if SiteSetting.get(id) != value
+        SiteSetting.set_and_log(id, value, @current_user)
+        @settings_changed << id
+      end
     end
 
     def apply_setting(id)

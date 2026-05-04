@@ -1,13 +1,13 @@
 # frozen_string_literal: true
 
-RSpec.describe "Chat channel", type: :system do
-  fab!(:current_user) { Fabricate(:user) }
-  fab!(:channel_1) { Fabricate(:chat_channel) }
+RSpec.describe "Chat channel" do
+  fab!(:current_user, :user)
+  fab!(:channel_1, :chat_channel)
   fab!(:message_1) { Fabricate(:chat_message, use_service: true, chat_channel: channel_1) }
 
   let(:chat_page) { PageObjects::Pages::Chat.new }
   let(:channel_page) { PageObjects::Pages::ChatChannel.new }
-  let(:sidebar_page) { PageObjects::Pages::Sidebar.new }
+  let(:sidebar_page) { PageObjects::Pages::ChatSidebar.new }
   let(:side_panel_page) { PageObjects::Pages::ChatSidePanel.new }
 
   before do
@@ -58,7 +58,7 @@ RSpec.describe "Chat channel", type: :system do
     end
   end
 
-  context "when first batch of messages doesnt fill page" do
+  context "when first batch of messages doesn't fill page" do
     before { Fabricate.times(30, :chat_message, user: current_user, chat_channel: channel_1) }
 
     it "autofills for more messages" do
@@ -94,19 +94,21 @@ RSpec.describe "Chat channel", type: :system do
       it "syncs the messages" do
         Jobs.run_immediately!
 
-        using_session(:tab_1) do
-          sign_in(current_user)
+        sign_in(current_user)
+        chat_page.visit_channel(channel_1)
+
+        original_window = current_window
+        new_tab = open_new_window(:tab)
+
+        within_window new_tab do
           chat_page.visit_channel(channel_1)
         end
 
-        using_session(:tab_2) do
-          sign_in(current_user)
-          chat_page.visit_channel(channel_1)
+        within_window original_window do
+          channel_page.send_message("test_message")
         end
 
-        using_session(:tab_1) { channel_page.send_message("test_message") }
-
-        using_session(:tab_2) do
+        within_window(new_tab) do
           expect(channel_page.messages).to have_message(text: "test_message")
         end
       end
@@ -137,7 +139,7 @@ RSpec.describe "Chat channel", type: :system do
       expect(channel_page).to have_no_loading_skeleton
       expect(page).to have_no_css("[data-id='#{unloaded_message.id}']")
 
-      find(".chat-scroll-to-bottom__button.visible").click
+      find(".chat-channel:not(.loading) .chat-scroll-to-bottom__button.visible").click
 
       expect(channel_page).to have_no_loading_skeleton
       expect(page).to have_css("[data-id='#{unloaded_message.id}']")
@@ -159,24 +161,26 @@ RSpec.describe "Chat channel", type: :system do
   context "when a new message is created" do
     before { Fabricate.times(50, :chat_message, chat_channel: channel_1) }
 
-    it "doesn’t append the message when not at bottom" do
+    it "doesn’t scroll and keeps the scroll-to-bottom arrow when not at bottom" do
       visit("/chat/c/-/#{channel_1.id}/#{message_1.id}")
 
       expect(page).to have_css(".chat-scroll-to-bottom__button.visible")
 
       new_message = Fabricate(:chat_message, chat_channel: channel_1, use_service: true)
 
-      expect(channel_page.messages).to have_no_message(id: new_message.id)
+      expect(channel_page.messages).to have_message(id: new_message.id)
+      expect(page).to have_css(".chat-scroll-to-bottom__button.visible")
     end
   end
 
   context "when a message contains mentions" do
-    fab!(:other_user) { Fabricate(:user) }
+    fab!(:other_user, :user)
     fab!(:message) do
       Fabricate(
         :chat_message,
         chat_channel: channel_1,
-        message: "hello @here @all @#{current_user.username} @#{other_user.username} @unexisting",
+        message:
+          "hello @here @all @#{current_user.username} @#{other_user.username} @unexisting @system",
         user: other_user,
       )
     end
@@ -184,21 +188,19 @@ RSpec.describe "Chat channel", type: :system do
     before do
       SiteSetting.enable_user_status = true
       current_user.set_status!("off to dentist", "tooth")
-      other_user.set_status!("surfing", "surfing_man")
+      other_user.set_status!("surfing", "man_surfing")
       channel_1.add(other_user)
     end
 
     it "highlights the mentions" do
       chat_page.visit_channel(channel_1)
 
-      expect(page).to have_selector(".mention.highlighted.valid-mention", text: "@here")
-      expect(page).to have_selector(".mention.highlighted.valid-mention", text: "@all")
-      expect(page).to have_selector(
-        ".mention.highlighted.valid-mention",
-        text: "@#{current_user.username}",
-      )
+      expect(page).to have_selector(".mention.--wide", text: "@here")
+      expect(page).to have_selector(".mention.--wide", text: "@all")
+      expect(page).to have_selector(".mention", text: "@#{current_user.username}")
       expect(page).to have_selector(".mention", text: "@#{other_user.username}")
       expect(page).to have_selector(".mention", text: "@unexisting")
+      expect(page).to have_selector(".mention.--bot", text: "@system")
     end
 
     it "renders user status on mentions" do
@@ -241,7 +243,7 @@ RSpec.describe "Chat channel", type: :system do
   end
 
   context "when reply is right under" do
-    fab!(:other_user) { Fabricate(:user) }
+    fab!(:other_user, :user)
 
     before do
       Fabricate(:chat_message, in_reply_to: message_1, user: other_user, chat_channel: channel_1)
@@ -256,7 +258,7 @@ RSpec.describe "Chat channel", type: :system do
   end
 
   context "when reply is not directly connected" do
-    fab!(:other_user) { Fabricate(:user) }
+    fab!(:other_user, :user)
 
     before do
       Fabricate(:chat_message, user: other_user, chat_channel: channel_1)
@@ -272,14 +274,14 @@ RSpec.describe "Chat channel", type: :system do
   end
 
   context "when replying to message that has HTML tags" do
-    fab!(:other_user) { Fabricate(:user) }
+    fab!(:other_user, :user)
     fab!(:message_2) do
       Fabricate(
         :chat_message,
         user: other_user,
         chat_channel: channel_1,
         use_service: true,
-        message: "<mark>not marked</mark>",
+        message: "<abbr>not abbr</abbr>",
       )
     end
 
@@ -287,26 +289,63 @@ RSpec.describe "Chat channel", type: :system do
       Fabricate(:chat_message, user: other_user, chat_channel: channel_1)
       Fabricate(:chat_message, in_reply_to: message_2, user: current_user, chat_channel: channel_1)
       channel_1.add(other_user)
+
+      stub_request(:get, "https://foo.com/").with(headers: { "Accept" => "*/*" }).to_return(
+        status: 200,
+        body: "",
+        headers: {
+        },
+      )
+
+      stub_request(:head, "https://foo.com/").with(headers: { "Host" => "foo.com" }).to_return(
+        status: 200,
+        body: "",
+        headers: {
+        },
+      )
     end
 
     it "renders text in the reply-to" do
       chat_page.visit_channel(channel_1)
 
       expect(find(".chat-reply .chat-reply__excerpt")["innerHTML"].strip).to eq(
-        "&lt;mark&gt;not marked&lt;/mark&gt;",
+        "&lt;abbr&gt;not abbr&lt;/abbr&gt;",
       )
+    end
+
+    it "renders escaped HTML when including a #" do
+      update_message!(message_2, user: other_user, text: "#general <abbr>not abbr</abbr>")
+      chat_page.visit_channel(channel_1)
+
+      expect(find(".chat-reply .chat-reply__excerpt")["innerHTML"].strip).to eq(
+        "#general &lt;abbr&gt;not abbr&lt;/abbr&gt;",
+      )
+    end
+
+    it "limits excerpt length" do
+      update_message!(message_2, user: other_user, text: ("a" * 160))
+      chat_page.visit_channel(channel_1)
+
+      expect(find(".chat-reply .chat-reply__excerpt")["innerHTML"].strip).to eq("a" * 150 + "…")
+    end
+
+    it "renders urls correclty in excerpts" do
+      update_message!(message_2, user: other_user, text: "https://foo.com")
+      chat_page.visit_channel(channel_1)
+
+      expect(find(".chat-reply .chat-reply__excerpt")["innerHTML"].strip).to eq("https://foo.com")
     end
 
     it "renders safe HTML like mentions (which are just links) in the reply-to" do
       update_message!(
         message_2,
         user: other_user,
-        text: "@#{other_user.username} <mark>not marked</mark>",
+        text: "@#{other_user.username} <abbr>not abbr</abbr>",
       )
       chat_page.visit_channel(channel_1)
 
       expect(find(".chat-reply .chat-reply__excerpt")["innerHTML"].strip).to eq(
-        "@#{other_user.username} &lt;mark&gt;not marked&lt;/mark&gt;",
+        "@#{other_user.username} &lt;abbr&gt;not abbr&lt;/abbr&gt;",
       )
     end
   end
@@ -372,7 +411,7 @@ RSpec.describe "Chat channel", type: :system do
         ".chat-message-actions-container .secondary-actions .select-kit-body",
       )
 
-      find("#site-logo").hover
+      PageObjects::Components::Logo.new.hover
       expect(page).to have_css(
         ".chat-message-actions-container .secondary-actions .select-kit-body",
       )
@@ -381,6 +420,55 @@ RSpec.describe "Chat channel", type: :system do
       expect(page).to have_no_css(
         ".chat-message-actions-container .secondary-actions .select-kit-body",
       )
+    end
+  end
+
+  it "renders emojis in page title" do
+    channel_1.update!(name: ":dog: Dogs")
+    chat_page.visit_channel(channel_1)
+
+    expect(page).to have_title("#🐕 Dogs - Chat - Discourse")
+  end
+
+  context "when messages are sent with client timestamps" do
+    it "orders messages by client timestamp rather than server timestamp" do
+      first_message =
+        Chat::CreateMessage.call(
+          params: {
+            chat_channel_id: channel_1.id,
+            message: "I was created first but should appear second",
+            client_created_at: 30.seconds.ago.iso8601,
+          },
+          guardian: current_user.guardian,
+        ).message_instance
+
+      second_message =
+        Chat::CreateMessage.call(
+          params: {
+            chat_channel_id: channel_1.id,
+            message: "I was created second but should appear first",
+            client_created_at: 45.seconds.ago.iso8601,
+          },
+          guardian: current_user.guardian,
+        ).message_instance
+
+      chat_page.visit_channel(channel_1)
+
+      expect(page).to have_selector(
+        ".chat-message-container[data-id='#{first_message.id}'] .chat-message-text",
+        text: "I was created first but should appear second",
+      )
+      expect(page).to have_selector(
+        ".chat-message-container[data-id='#{second_message.id}'] .chat-message-text",
+        text: "I was created second but should appear first",
+      )
+
+      messages = page.all(".chat-message-container[data-id]")
+      message_ids = messages.map { |msg| msg["data-id"].to_i }
+      second_message_index = message_ids.index(second_message.id)
+      first_message_index = message_ids.index(first_message.id)
+
+      expect(second_message_index).to be < first_message_index
     end
   end
 end

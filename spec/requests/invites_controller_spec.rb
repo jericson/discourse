@@ -33,16 +33,21 @@ RSpec.describe InvitesController do
       end
     end
 
-    context "when email data is present in authentication data" do
-      let(:store) { ActionDispatch::Session::CookieStore.new({}) }
-      let(:session_stub) do
-        ActionDispatch::Request::Session.create(store, ActionDispatch::TestRequest.create, {})
-      end
+    it "includes unobfuscated email when email_token present" do
+      get "/invites/#{invite.invite_key}?t=#{invite.email_token}"
+      expect(response.status).to eq(200)
+      expect(response.body).to include(invite.email)
 
-      before do
-        session_stub[:authentication] = { email: invite.email }
-        ActionDispatch::Request.any_instance.stubs(:session).returns(session_stub)
+      expect(response.body).to have_tag("div#data-preloaded") do |element|
+        json = JSON.parse(element.current_scope.attribute("data-preloaded").value)
+        invite_info = JSON.parse(json["invite_info"])
+        expect(invite_info["username"]).to eq("") # Default is that we don't use emails to suggest usernames
+        expect(invite_info["email"]).to eq(invite.email)
       end
+    end
+
+    context "when email data is present in authentication data" do
+      before { server_session[:authentication] = { email: invite.email } }
 
       it "shows unobfuscated email" do
         get "/invites/#{invite.invite_key}"
@@ -53,13 +58,62 @@ RSpec.describe InvitesController do
       end
     end
 
-    it "shows default user fields" do
+    it "does not expose staged user fields without email verification" do
       user_field = Fabricate(:user_field)
       staged_user = Fabricate(:user, staged: true, email: invite.email)
       staged_user.set_user_field(user_field.id, "some value")
       staged_user.save_custom_fields
 
       get "/invites/#{invite.invite_key}"
+      expect(response.body).to have_tag("div#data-preloaded") do |element|
+        json = JSON.parse(element.current_scope.attribute("data-preloaded").value)
+        invite_info = JSON.parse(json["invite_info"])
+        expect(invite_info["username"]).not_to eq(staged_user.username)
+        expect(invite_info["user_fields"]).to be_nil
+      end
+    end
+
+    it "does not expose staged user fields when authentication email is unverified" do
+      user_field = Fabricate(:user_field)
+      staged_user = Fabricate(:user, staged: true, email: invite.email)
+      staged_user.set_user_field(user_field.id, "some value")
+      staged_user.save_custom_fields
+
+      server_session[:authentication] = { email: invite.email, email_valid: false }
+
+      get "/invites/#{invite.invite_key}"
+      expect(response.body).to have_tag("div#data-preloaded") do |element|
+        json = JSON.parse(element.current_scope.attribute("data-preloaded").value)
+        invite_info = JSON.parse(json["invite_info"])
+        expect(invite_info["email"]).to eq(invite.email)
+        expect(invite_info["user_fields"]).to be_nil
+      end
+    end
+
+    it "shows staged user fields when authentication email is verified" do
+      user_field = Fabricate(:user_field)
+      staged_user = Fabricate(:user, staged: true, email: invite.email)
+      staged_user.set_user_field(user_field.id, "some value")
+      staged_user.save_custom_fields
+
+      server_session[:authentication] = { email: invite.email, email_valid: true }
+
+      get "/invites/#{invite.invite_key}"
+      expect(response.body).to have_tag("div#data-preloaded") do |element|
+        json = JSON.parse(element.current_scope.attribute("data-preloaded").value)
+        invite_info = JSON.parse(json["invite_info"])
+        expect(invite_info["username"]).to eq(staged_user.username)
+        expect(invite_info["user_fields"][user_field.id.to_s]).to eq("some value")
+      end
+    end
+
+    it "shows staged user fields when email is verified by link token" do
+      user_field = Fabricate(:user_field)
+      staged_user = Fabricate(:user, staged: true, email: invite.email)
+      staged_user.set_user_field(user_field.id, "some value")
+      staged_user.save_custom_fields
+
+      get "/invites/#{invite.invite_key}?t=#{invite.email_token}"
       expect(response.body).to have_tag("div#data-preloaded") do |element|
         json = JSON.parse(element.current_scope.attribute("data-preloaded").value)
         invite_info = JSON.parse(json["invite_info"])
@@ -88,6 +142,62 @@ RSpec.describe InvitesController do
       fab!(:group)
 
       before { sign_in(user) }
+
+      it "automatically redirects to the topic if the user can access it" do
+        invite.update!(topics: [Fabricate(:topic)])
+
+        get "/invites/#{invite.invite_key}"
+        expect(response.status).to eq(302)
+        expect(response.location).to eq(invite.topics.first.url)
+      end
+
+      it "doesn't automatically redirect to the topic if the user can't access it" do
+        secret_group = Fabricate(:group)
+        invite.update!(
+          topics: [Fabricate(:topic, category: Fabricate(:private_category, group: secret_group))],
+        )
+
+        get "/invites/#{invite.invite_key}"
+        expect(response.status).to eq(200)
+      end
+
+      it "doesn't automatically redirect to the topic if the invite has expired" do
+        invite.update!(topics: [Fabricate(:topic)])
+        invite.update!(expires_at: 1.day.ago)
+
+        get "/invites/#{invite.invite_key}"
+        expect(response.status).to eq(200)
+
+        expect(response.body).to have_tag(:body, with: { class: "no-ember" })
+        expect(response.body).to include(I18n.t("invite.expired", base_url: Discourse.base_url))
+      end
+
+      it "shows the accept invite page when the user can access the topic, but the invite would also add them to a group" do
+        invite.update!(topics: [Fabricate(:topic)])
+        InvitedGroup.create!(invite: invite, group: group)
+
+        get "/invites/#{invite.invite_key}"
+        expect(response.status).to eq(200)
+        expect(response.body).not_to have_tag(:body, with: { class: "no-ember" })
+        expect(response.body).not_to include(
+          I18n.t(
+            "invite.not_found_template",
+            site_name: SiteSetting.title,
+            base_url: Discourse.base_url,
+          ),
+        )
+      end
+
+      it "automatically redirects to the topic if the user can access it, and they're already a member of the invite group" do
+        invite.update!(topics: [Fabricate(:topic)])
+
+        group.add(user)
+        InvitedGroup.create!(invite: invite, group: group)
+
+        get "/invites/#{invite.invite_key}"
+        expect(response.status).to eq(302)
+        expect(response.location).to eq(invite.topics.first.url)
+      end
 
       it "shows the accept invite page when user's email matches the invite email" do
         invite.update_columns(email: user.email)
@@ -219,11 +329,10 @@ RSpec.describe InvitesController do
       expect(response.body).to include(I18n.t("invite.expired", base_url: Discourse.base_url))
     end
 
-    it "stores the invite key in the secure session if invite exists" do
+    it "stores the invite key in the server session if invite exists" do
       get "/invites/#{invite.invite_key}"
       expect(response.status).to eq(200)
-      invite_key = read_secure_session["invite-key"]
-      expect(invite_key).to eq(invite.invite_key)
+      expect(server_session["invite-key"]).to eq(invite.invite_key)
     end
 
     it "returns error if invite has already been redeemed" do
@@ -423,6 +532,16 @@ RSpec.describe InvitesController do
         end
       end
 
+      context "when allow_email_invites is disabled" do
+        before { SiteSetting.allow_email_invites = false }
+
+        it "does not send invite email even without skip_email param" do
+          create_invite
+          expect(response).to have_http_status :ok
+          expect(Jobs::InviteEmail.jobs.size).to eq(0)
+        end
+      end
+
       context "when validations fail" do
         let(:email) { "test@mailinator.com" }
 
@@ -441,7 +560,7 @@ RSpec.describe InvitesController do
           expect(response).to have_http_status :unprocessable_entity
           expect(response.parsed_body["errors"]).to be_present
           error_message = response.parsed_body["errors"].first
-          expect(error_message).to eq("Email is too long (maximum is 500 characters)")
+          expect(error_message).to eq("#{email} isn't a valid email address.")
         end
       end
 
@@ -558,6 +677,15 @@ RSpec.describe InvitesController do
   end
 
   describe "#create-multiple" do
+    it "requires to be logged in" do
+      post "/invites/create-multiple.json",
+           params: {
+             email: %w[test@example.com test1@example.com],
+           }
+      expect(response.status).to eq(403)
+      expect(response.parsed_body["error_type"]).to eq("not_logged_in")
+    end
+
     it "fails if you are not admin" do
       sign_in(Fabricate(:user))
       post "/invites/create-multiple.json",
@@ -579,14 +707,16 @@ RSpec.describe InvitesController do
       expect(json["successful_invitations"].length).to eq(2)
     end
 
-    it "creates many invite codes with one request" do #change to
+    it "creates many invite codes with one request" do
       sign_in(admin)
-      num_emails = 5 # increase manually for load testing
+
+      num_emails = 5
+
       post "/invites/create-multiple.json",
            params: {
              email: 1.upto(num_emails).map { |i| "test#{i}@example.com" },
-             #email: %w[test+1@example.com test1@example.com]
            }
+
       expect(response.status).to eq(200)
       json = JSON(response.body)
       expect(json["failed_invitations"].length).to eq(0)
@@ -681,6 +811,16 @@ RSpec.describe InvitesController do
           expect(Jobs::InviteEmail.jobs.size).to eq(0)
         end
       end
+
+      context "when allow_email_invites is disabled" do
+        before { SiteSetting.allow_email_invites = false }
+
+        it "does not send invite emails even without skip_email param" do
+          create_multiple_invites
+          expect(response).to have_http_status :ok
+          expect(Jobs::InviteEmail.jobs.size).to eq(0)
+        end
+      end
     end
 
     it "fails if asked to generate too many invites at once" do
@@ -735,8 +875,9 @@ RSpec.describe InvitesController do
     fab!(:invite) { Fabricate(:invite, invited_by: admin, email: "test@example.com") }
 
     it "requires to be logged in" do
-      put "/invites/#{invite.id}", params: { email: "test2@example.com" }
-      expect(response.status).to eq(400)
+      put "/invites/#{invite.id}.json", params: { email: "test2@example.com" }
+      expect(response.status).to eq(403)
+      expect(response.parsed_body["error_type"]).to eq("not_logged_in")
     end
 
     context "while logged in" do
@@ -755,9 +896,14 @@ RSpec.describe InvitesController do
       end
 
       it "does not resend invite email when updating other fields" do
-        put "/invites/#{invite.id}", params: { custom_message: "new message" }
+        put "/invites/#{invite.id}",
+            params: {
+              custom_message: "new message",
+              description: "new description",
+            }
         expect(response.status).to eq(200)
         expect(invite.reload.custom_message).to eq("new message")
+        expect(invite.reload.description).to eq("new description")
         expect(Jobs::InviteEmail.jobs.size).to eq(0)
       end
 
@@ -771,8 +917,6 @@ RSpec.describe InvitesController do
       describe "rate limiting" do
         before { RateLimiter.enable }
 
-        use_redis_snapshotting
-
         it "can send invite email" do
           sign_in(user)
 
@@ -783,6 +927,16 @@ RSpec.describe InvitesController do
           }.by(-1)
           expect(response.status).to eq(200)
           expect(Jobs::InviteEmail.jobs.size).to eq(1)
+        end
+      end
+
+      context "when allow_email_invites is disabled" do
+        before { SiteSetting.allow_email_invites = false }
+
+        it "returns an error when trying to send email" do
+          put "/invites/#{invite.id}", params: { send_email: true }
+          expect(response.status).to eq(422)
+          expect(response.parsed_body["errors"]).to include(I18n.t("invite.email_invites_disabled"))
         end
       end
 
@@ -809,6 +963,20 @@ RSpec.describe InvitesController do
             expect(response).to have_http_status :unprocessable_entity
             expect(body).to match(/There was a problem with your request./)
           end
+        end
+      end
+
+      context "when invite is linked to a PM topic the user no longer has access to" do
+        it "returns an error when updating the email without providing topic_id" do
+          sign_in(user)
+          pm_topic = Fabricate(:private_message_topic, user: user)
+          invite = Fabricate(:invite, invited_by: user, email: "original@example.com")
+          TopicInvite.create!(invite: invite, topic: pm_topic)
+
+          pm_topic.topic_allowed_users.where(user_id: user.id).destroy_all
+
+          put "/invites/#{invite.id}.json", params: { email: "new-target@example.com" }
+          expect(response.status).to eq(403)
         end
       end
     end
@@ -839,7 +1007,22 @@ RSpec.describe InvitesController do
         another_invite = Fabricate(:invite, email: "test2@example.com")
 
         delete "/invites.json", params: { id: another_invite.id }
-        expect(response.status).to eq(400)
+        expect(response.status).to eq(403)
+        expect(invite.reload.trashed?).to be_falsey
+        expect(another_invite.reload.trashed?).to be_falsey
+      end
+
+      it "allows an admin to delete any invite" do
+        user.update!(admin: true)
+        another_invite = Fabricate(:invite, email: "test2@example.com")
+
+        delete "/invites.json", params: { id: another_invite.id }
+        expect(response.status).to eq(200)
+        expect(another_invite.reload.trashed?).to be_truthy
+
+        delete "/invites.json", params: { id: invite.id }
+        expect(response.status).to eq(200)
+        expect(invite.reload.trashed?).to be_truthy
       end
 
       it "destroys the invite" do
@@ -963,6 +1146,14 @@ RSpec.describe InvitesController do
 
       it "fails when local login is disabled and no external auth is configured" do
         SiteSetting.enable_local_logins = false
+
+        put "/invites/show/#{invite.invite_key}.json"
+        expect(response.status).to eq(404)
+      end
+
+      it "fails when discourse connect is enabled" do
+        SiteSetting.discourse_connect_url = "https://example.com/sso"
+        SiteSetting.enable_discourse_connect = true
 
         put "/invites/show/#{invite.invite_key}.json"
         expect(response.status).to eq(404)
@@ -1537,22 +1728,49 @@ RSpec.describe InvitesController do
   end
 
   describe "#destroy_all_expired" do
+    fab!(:admin)
+    fab!(:user)
+    fab!(:invite_1) { Fabricate(:invite, invited_by: user) }
+    fab!(:invite_2) { Fabricate(:invite, invited_by: user) }
+    fab!(:expired_invite) { Fabricate(:invite, invited_by: user, expires_at: 2.days.ago) }
+
+    before { SiteSetting.invite_expiry_days = 1 }
+
     it "removes all expired invites sent by a user" do
-      SiteSetting.invite_expiry_days = 1
-
-      user = Fabricate(:admin)
-      invite_1 = Fabricate(:invite, invited_by: user)
-      invite_2 = Fabricate(:invite, invited_by: user)
-      expired_invite = Fabricate(:invite, invited_by: user)
-      expired_invite.update!(expires_at: 2.days.ago)
-
-      sign_in(user)
-      post "/invites/destroy-all-expired"
+      sign_in(admin)
+      post "/invites/destroy-all-expired", params: { username: user.username }
 
       expect(response.status).to eq(200)
       expect(invite_1.reload.deleted_at).to eq(nil)
       expect(invite_2.reload.deleted_at).to eq(nil)
       expect(expired_invite.reload.deleted_at).to be_present
+    end
+
+    it "returns 403 for non-staff user" do
+      sign_in(user)
+      post "/invites/destroy-all-expired", params: { username: user.username }
+
+      expect(response.status).to eq(403)
+      expect(expired_invite.reload.deleted_at).to eq(nil)
+    end
+
+    it "does not allow a moderator to delete another user's expired invites" do
+      moderator = Fabricate(:moderator)
+      sign_in(moderator)
+      post "/invites/destroy-all-expired", params: { username: user.username }
+
+      expect(response.status).to eq(403)
+      expect(expired_invite.reload.deleted_at).to eq(nil)
+    end
+
+    it "allows a moderator to delete their own expired invites" do
+      moderator = Fabricate(:moderator)
+      mod_expired_invite = Fabricate(:invite, invited_by: moderator, expires_at: 2.days.ago)
+      sign_in(moderator)
+      post "/invites/destroy-all-expired", params: { username: moderator.username }
+
+      expect(response.status).to eq(200)
+      expect(mod_expired_invite.reload.deleted_at).to be_present
     end
   end
 
@@ -1587,6 +1805,13 @@ RSpec.describe InvitesController do
         expect(response.status).to eq(200)
         expect(Jobs::InviteEmail.jobs.size).to eq(1)
       end
+
+      it "returns an error when allow_email_invites is disabled" do
+        SiteSetting.allow_email_invites = false
+        post "/invites/reinvite.json", params: { email: invite.email }
+        expect(response.status).to eq(422)
+        expect(response.parsed_body["errors"]).to include(I18n.t("invite.email_invites_disabled"))
+      end
     end
   end
 
@@ -1597,8 +1822,6 @@ RSpec.describe InvitesController do
       SiteSetting.invite_expiry_days = 30
       RateLimiter.enable
     end
-
-    use_redis_snapshotting
 
     it "resends all non-redeemed invites by a user" do
       freeze_time
@@ -1631,6 +1854,14 @@ RSpec.describe InvitesController do
       post "/invites/reinvite-all"
       expect(response.parsed_body["errors"][0]).to eq(I18n.t("rate_limiter.slow_down"))
     end
+
+    it "returns an error when allow_email_invites is disabled" do
+      SiteSetting.allow_email_invites = false
+      sign_in(admin)
+      post "/invites/reinvite-all"
+      expect(response.status).to eq(422)
+      expect(response.parsed_body["errors"]).to include(I18n.t("invite.email_invites_disabled"))
+    end
   end
 
   describe "#upload_csv" do
@@ -1651,6 +1882,18 @@ RSpec.describe InvitesController do
         File.new("#{Rails.root}/spec/fixtures/csv/invites_with_locales.csv")
       end
       let(:file_with_locales) { Rack::Test::UploadedFile.new(File.open(csv_file_with_locales)) }
+      let(:csv_file_with_malicious_headers) do
+        File.new("#{Rails.root}/spec/fixtures/csv/invite_malicious_headers.csv")
+      end
+      let(:file_with_malicious_headers) do
+        Rack::Test::UploadedFile.new(File.open(csv_file_with_malicious_headers))
+      end
+      let(:csv_file_with_valid_and_invalid_headers) do
+        File.new("#{Rails.root}/spec/fixtures/csv/invite_valid_and_invalid_headers.csv")
+      end
+      let(:file_with_valid_and_invalid_headers) do
+        Rack::Test::UploadedFile.new(File.open(csv_file_with_valid_and_invalid_headers))
+      end
 
       it "fails if you cannot bulk invite to the forum" do
         sign_in(Fabricate(:user))
@@ -1725,6 +1968,65 @@ RSpec.describe InvitesController do
 
         user2 = User.where(staged: true).find_by_email("test2@example.com")
         expect(user2.locale).to eq("pl")
+      end
+
+      it "strips arbitrary CSV header columns that are not allowed" do
+        sign_in(admin)
+
+        post "/invites/upload_csv.json",
+             params: {
+               file: file_with_malicious_headers,
+               name: "malicious.csv",
+             }
+
+        expect(response.status).to eq(200)
+        expect(Jobs::BulkInvite.jobs.size).to eq(1)
+
+        job_args = Jobs::BulkInvite.jobs.first["args"].first
+        invites = job_args["invites"]
+
+        invites.each do |invite|
+          expect(invite.keys).not_to include("admin", "moderator", "trust_level")
+        end
+
+        expect(invites.first).to eq({ "email" => "test@example.com", "groups" => "discourse" })
+        expect(invites.second).to eq({ "email" => "test2@example.com" })
+      end
+
+      it "allows valid user field names in CSV headers while stripping others" do
+        Fabricate(:user_field, name: "location")
+        sign_in(admin)
+
+        post "/invites/upload_csv.json",
+             params: {
+               file: file_with_valid_and_invalid_headers,
+               name: "test.csv",
+             }
+
+        expect(response.status).to eq(200)
+
+        job_args = Jobs::BulkInvite.jobs.first["args"].first
+        invites = job_args["invites"]
+
+        expect(invites.first).to eq({ "email" => "test@example.com", "location" => "usa" })
+      end
+
+      describe "invite_bulk_csv_custom_error modifier" do
+        let!(:plugin) { Plugin::Instance.new }
+        let!(:modifier) { :invite_bulk_csv_custom_error }
+        let!(:block) { Proc.new { "Custom error message" } }
+
+        before { DiscoursePluginRegistry.register_modifier(plugin, modifier, &block) }
+        after { DiscoursePluginRegistry.unregister_modifier(plugin, modifier, &block) }
+
+        it "applies custom errors" do
+          sign_in(admin)
+
+          post "/invites/upload_csv.json", params: { file: file, name: "discourse.csv" }
+
+          expect(response.status).to eq(422)
+          expect(response.parsed_body["errors"]).to include("Custom error message")
+        end
       end
     end
   end

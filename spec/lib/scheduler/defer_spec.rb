@@ -22,13 +22,19 @@ RSpec.describe Scheduler::Defer do
     Discourse.reset_catch_job_exceptions!
   end
 
+  it "can finish work properly without crashing" do
+    @defer.later {}
+    sleep 0.005
+    @defer.stop!(finish_work: true)
+  end
+
   it "supports basic instrumentation" do
     @defer.later("first") {}
     @defer.later("first") {}
     @defer.later("second") {}
     @defer.later("bad") { raise "boom" }
 
-    wait_for(200) { @defer.length == 0 }
+    @defer.stop!(finish_work: true)
 
     stats = Hash[@defer.stats]
 
@@ -84,7 +90,7 @@ RSpec.describe Scheduler::Defer do
 
     @defer.later { x = 3 }
 
-    wait_for(1000) { x == 3 }
+    wait_for(2000) { x == 3 }
 
     expect(x).to eq(3)
   end
@@ -105,11 +111,8 @@ RSpec.describe Scheduler::Defer do
 
   it "can queue jobs properly" do
     s = nil
-
     @defer.later { s = "good" }
-
-    wait_for(1000) { s == "good" }
-
+    @defer.stop!(finish_work: true)
     expect(s).to eq("good")
   end
 

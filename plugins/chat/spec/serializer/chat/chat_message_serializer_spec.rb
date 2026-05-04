@@ -3,8 +3,8 @@
 describe Chat::MessageSerializer do
   subject(:serializer) { described_class.new(message_1, scope: guardian, root: nil) }
 
-  fab!(:chat_channel) { Fabricate(:category_channel) }
-  fab!(:message_poster) { Fabricate(:user) }
+  fab!(:chat_channel, :category_channel)
+  fab!(:message_poster, :user)
   fab!(:message_1) { Fabricate(:chat_message, user: message_poster, chat_channel: chat_channel) }
   fab!(:guardian_user) { Fabricate(:user, refresh_auto_groups: true) }
 
@@ -248,7 +248,7 @@ describe Chat::MessageSerializer do
     end
 
     context "with user status" do
-      fab!(:user_status) { Fabricate(:user_status) }
+      fab!(:user_status)
       fab!(:mentioned_user) { Fabricate(:user, user_status: user_status) }
       fab!(:message) do
         Fabricate(

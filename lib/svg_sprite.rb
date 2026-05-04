@@ -1,44 +1,48 @@
 # frozen_string_literal: true
-
 module SvgSprite
-  SVG_ICONS ||=
+  SVG_ICONS =
     Set.new(
       %w[
-        adjust
+        a
         address-book
+        address-card
         align-left
-        ambulance
         anchor
-        angle-double-down
-        angle-double-up
-        angle-double-right
-        angle-double-left
         angle-down
+        angle-left
         angle-right
         angle-up
-        archive
+        angles-down
+        angles-left
+        angles-right
+        angles-up
         arrow-down
         arrow-left
         arrow-right
+        arrow-rotate-left
+        arrow-rotate-right
         arrow-up
-        arrows-alt-h
-        arrows-alt-v
-        at
+        arrows-rotate
         asterisk
+        at
         backward
+        backward-fast
+        backward-step
         ban
         bars
+        bars-staggered
         bed
         bell
         bell-slash
         bold
         book
-        book-reader
+        book-open-reader
         bookmark
         bookmark-delete
+        box-archive
         briefcase
         bullseye
-        calendar-alt
+        calendar-days
         caret-down
         caret-left
         caret-right
@@ -47,213 +51,245 @@ module SvgSprite
         chart-bar
         chart-pie
         check
-        check-circle
-        check-square
-        chevron-circle-down
         chevron-down
         chevron-left
         chevron-right
         chevron-up
         circle
-        cloud-upload-alt
+        circle-check
+        circle-chevron-down
+        circle-exclamation
+        circle-half-stroke
+        circle-info
+        circle-minus
+        circle-plus
+        circle-question
+        circle-user
+        circle-xmark
+        clock
+        clock-rotate-left
+        cloud-arrow-down
+        cloud-arrow-up
         code
-        cog
-        columns
+        code-branch
         comment
+        comments
         compress
         copy
         crosshairs
         cube
+        cubes
         desktop
+        diagram-project
         discourse-amazon
         discourse-bell-exclamation
         discourse-bell-one
         discourse-bell-slash
         discourse-bookmark-clock
+        discourse-chevron-collapse
+        discourse-chevron-expand
         discourse-compress
         discourse-dnd
         discourse-emojis
         discourse-expand
+        discourse-flask-check
         discourse-other-tab
-        discourse-sparkles
-        discourse-threads
         discourse-sidebar
-        discourse-chevron-collapse
-        discourse-chevron-expand
+        discourse-sparkles
+        discourse-table
+        discourse-text
+        discourse-threads
+        discourse-chat-search
+        discourse-add-translation
         download
-        ellipsis-h
-        ellipsis-v
+        discourse-h1
+        discourse-h2
+        discourse-h3
+        discourse-h4
+        discourse-h5
+        earth-americas
+        ellipsis
+        ellipsis-vertical
         envelope
-        envelope-square
-        exchange-alt
-        exclamation-circle
-        exclamation-triangle
-        external-link-alt
+        expand
         eye
+        eye-dropper
+        eye-slash
         fab-android
         fab-apple
         fab-chrome
         fab-discord
         fab-discourse
-        fab-facebook-square
         fab-facebook
+        fab-facebook-square
         fab-github
+        fab-google
         fab-instagram
         fab-linkedin-in
         fab-linux
+        fab-microsoft
+        fab-markdown
         fab-threads
         fab-threads-square
         fab-twitter
         fab-twitter-square
+        fab-x-twitter
         fab-wikipedia-w
         fab-windows
         far-bell
         far-bell-slash
+        far-bookmark
         far-calendar-plus
         far-chart-bar
-        far-check-square
         far-circle
+        far-circle-dot
         far-clipboard
         far-clock
         far-comment
         far-comments
         far-copyright
-        far-dot-circle
-        far-edit
         far-envelope
         far-eye
         far-eye-slash
-        far-file-alt
-        far-frown
+        far-face-frown
+        far-face-meh
+        far-face-smile
+        far-file-lines
         far-heart
         far-image
-        far-list-alt
-        far-meh
         far-moon
-        far-smile
+        far-pen-to-square
+        far-rectangle-list
         far-square
+        far-square-check
         far-star
         far-sun
         far-thumbs-down
         far-thumbs-up
-        far-trash-alt
-        fast-backward
-        fast-forward
+        far-trash-can
         file
-        file-alt
+        file-lines
         filter
         flag
+        flask
         folder
         folder-open
+        font
         forward
+        forward-fast
+        forward-step
         gavel
+        gear
         gift
         globe
-        globe-americas
         grip-lines
         hand-point-right
-        hands-helping
+        handshake-angle
+        hashtag
         heart
-        history
-        home
         hourglass-start
+        house
         id-card
         image
         images
         inbox
-        info-circle
         italic
         key
         keyboard
         language
         layer-group
+        left-right
         link
+        link-slash
         list
+        list-check
         list-ol
         list-ul
+        location-dot
         lock
-        magic
-        map-marker-alt
+        magnifying-glass
+        magnifying-glass-minus
+        magnifying-glass-plus
         microphone-slash
         minus
-        minus-circle
-        mobile-alt
+        mobile-screen-button
         moon
-        paint-brush
+        nested-circle-minus
+        nested-circle-plus
+        nested-thread
+        paintbrush
         palette
         paper-plane
         pause
-        pencil-alt
+        pen
+        pencil
         play
         plug
         plus
-        plus-circle
-        plus-square
         power-off
-        project-diagram
         puzzle-piece
         question
-        question-circle
         quote-left
         quote-right
-        random
-        redo
         reply
+        right-from-bracket
+        right-left
+        right-to-bracket
         robot
         rocket
-        search
-        search-plus
-        search-minus
+        rotate
+        screwdriver-wrench
+        scroll
         share
-        shield-alt
-        sign-in-alt
-        sign-out-alt
+        shield-halved
+        shuffle
         signal
-        sliders-h
+        sign-hanging
+        sliders
+        spinner
+        square-check
+        square-envelope
         square-full
+        square-plus
         star
-        step-backward
-        step-forward
-        stream
-        sync-alt
-        sync
+        sun
         table
+        table-cells
+        table-cells-minus
+        table-cells-plus
+        table-columns
         tag
         tags
-        tasks
-        th
-        thermometer-three-quarters
+        temperature-three-quarters
         thumbs-down
         thumbs-up
         thumbtack
-        times
-        times-circle
+        tippy-rounded-arrow
         toggle-off
         toggle-on
-        trash-alt
-        undo
-        unlink
+        trash-can
+        triangle-exclamation
+        truck-medical
         unlock
-        unlock-alt
+        unlock-keyhole
+        up-down
+        up-right-from-square
         upload
         user
-        user-cog
-        user-edit
-        user-friends
+        user-check
+        user-gear
+        user-group
+        user-pen
         user-plus
         user-secret
         user-shield
-        user-times
+        user-xmark
         users
+        wand-magic
         wrench
-        spinner
-        tippy-rounded-arrow
+        xmark
       ],
     )
-
-  FA_ICON_MAP = { "far fa-" => "far-", "fab fa-" => "fab-", "fas fa-" => "", "fa-" => "" }
-
-  CORE_SVG_SPRITES = Dir.glob("#{Rails.root}/vendor/assets/svg-icons/**/*.svg")
 
   THEME_SPRITE_VAR_NAME = "icons-sprite"
 
@@ -282,9 +318,13 @@ module SvgSprite
       .to_h
   end
 
+  def self.core_svgs_files
+    @svg_files ||= Dir.glob("#{Rails.root}/vendor/assets/svg-icons/**/*.svg")
+  end
+
   def self.core_svgs
     @core_svgs ||=
-      CORE_SVG_SPRITES.reduce({}) do |symbols, path|
+      core_svgs_files.reduce({}) do |symbols, path|
         symbols.merge!(symbols_for(File.basename(path, ".svg"), File.read(path), strict: true))
       end
   end
@@ -316,7 +356,7 @@ module SvgSprite
       cache
         .defer_get_set_bulk(
           Theme.transform_ids(theme_id),
-          lambda { |theme_id| "theme_svg_sprites_#{theme_id}" },
+          lambda { |_theme_id| "theme_svg_sprites_#{_theme_id}" },
         ) do |theme_ids|
           theme_field_uploads =
             ThemeField.where(
@@ -336,12 +376,15 @@ module SvgSprite
           end
 
           theme_sprites
-            .map do |(theme_id, upload_id, sprite)|
+            .map do |(_theme_id, upload_id, sprite)|
               begin
-                [theme_id, symbols_for("theme_#{theme_id}_#{upload_id}.svg", sprite, strict: false)]
+                [
+                  _theme_id,
+                  symbols_for("theme_#{_theme_id}_#{upload_id}.svg", sprite, strict: false),
+                ]
               rescue => e
                 Rails.logger.warn(
-                  "Bad XML in custom sprite in theme with ID=#{theme_id}. Error info: #{e.inspect}",
+                  "Bad XML in custom sprite in theme with ID=#{_theme_id}. Error info: #{e.inspect}",
                 )
               end
             end
@@ -372,7 +415,7 @@ module SvgSprite
         .merge(theme_icons(theme_id))
         .merge(custom_icons(theme_id))
         .delete_if { |i| i.blank? || i.include?("/") }
-        .map! { |i| process(i.dup) }
+        .map!(&:strip)
         .merge(SVG_ICONS)
         .sort
     end
@@ -418,18 +461,14 @@ License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL
   end
 
   def self.search(searched_icon)
-    searched_icon = process(searched_icon.dup)
-
-    svgs_for(SiteSetting.default_theme_id)[searched_icon] || false
+    svgs_for(SiteSetting.default_theme_id)[searched_icon.strip] || false
   end
 
   def self.icon_picker_search(keyword, only_available = false)
-    icons = all_icons(SiteSetting.default_theme_id) if only_available
-
     symbols = svgs_for(SiteSetting.default_theme_id)
-    symbols.slice!(*icons) if only_available
-    symbols.reject! { |icon_id, sym| !icon_id.include?(keyword) } unless keyword.empty?
-    symbols.sort_by(&:first).map { |icon_id, symbol| { id: icon_id, symbol: symbol } }
+    symbols.slice!(*all_icons(SiteSetting.default_theme_id)) if only_available
+    symbols.reject! { |icon_id, _sym| !icon_id.include?(keyword) } if keyword.present?
+    symbols.sort_by(&:first).map { |id, symbol| { id:, symbol: } }
   end
 
   # For use in no_ember .html.erb layouts
@@ -467,7 +506,7 @@ License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL
       # includes svg_icon_subset and any settings containing _icon (incl. plugin settings)
       site_setting_icons = []
 
-      SiteSetting.settings_hash.select do |key, value|
+      SiteSetting.settings_hash.each do |key, value|
         site_setting_icons |= value.split("|") if key.to_s.include?("_icon") && String === value
       end
 
@@ -513,12 +552,6 @@ License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL
   def self.custom_icons(theme_id)
     # Automatically register icons in sprites added via themes or plugins
     custom_svgs(theme_id).keys
-  end
-
-  def self.process(icon_name)
-    icon_name = icon_name.strip
-    FA_ICON_MAP.each { |k, v| icon_name = icon_name.sub(k, v) }
-    icon_name
   end
 
   def self.get_set_cache(key, &block)

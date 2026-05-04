@@ -6,7 +6,7 @@ module Stylesheet
   class Importer
     include GlobalPath
 
-    THEME_TARGETS ||= %w[embedded_theme mobile_theme desktop_theme]
+    THEME_TARGETS = %w[embedded_theme common_theme mobile_theme desktop_theme]
 
     def self.plugin_assets
       @plugin_assets ||= {}
@@ -27,9 +27,12 @@ module Stylesheet
               end
             )
 
-          plugin_assets[asset_name] = stylesheets[
-            plugin_directory_name
-          ] if plugin_directory_name.present?
+          if plugin_directory_name.present?
+            plugin_assets[asset_name] = {
+              plugin_path: plugin.path,
+              stylesheets: stylesheets[plugin_directory_name],
+            }
+          end
         end
       end
     end
@@ -42,22 +45,48 @@ module Stylesheet
       contents = +""
 
       contents << <<~CSS if body_font.present?
+          // Body font definition
           #{font_css(body_font)}
-
+          #{render_font_special_properties(body_font, "body")}
           :root {
             --font-family: #{body_font[:stack]};
           }
+
         CSS
 
       contents << <<~CSS if heading_font.present?
+          // Heading font definition
           #{font_css(heading_font)}
-
+          #{render_font_special_properties(heading_font, "heading")}
           :root {
             --heading-font-family: #{heading_font[:stack]};
           }
+
         CSS
 
+      if SiteSetting.rich_editor
+        contents << <<~CSS
+          #{font_css(jetbrains_mono)}
+          #{render_font_special_properties(jetbrains_mono, "body")}
+          :root {
+            --d-font-family--monospace: #{jetbrains_mono[:stack]};
+          }
+
+        CSS
+      else
+        contents << <<~CSS
+          :root {
+            --d-font-family--monospace: ui-monospace, "Cascadia Mono", "Segoe UI Mono", "Liberation Mono", menlo, monaco, consolas, monospace;
+          }
+
+        CSS
+      end
+
       contents
+    end
+
+    def jetbrains_mono
+      @@jetbrains_mono ||= DiscourseFonts.fonts.find { |f| f[:key] == "jet_brains_mono" }
     end
 
     def wizard_fonts
@@ -86,10 +115,11 @@ module Stylesheet
           .body-font-#{font[:key].tr("_", "-")} {
             font-family: #{font[:stack]};
           }
-          .heading-font-#{font[:key].tr("_", "-")} h2 {
+          .heading-font-#{font[:key].tr("_", "-")} {
             font-family: #{font[:stack]};
           }
         CSS
+        contents << render_wizard_font_special_properties(font)
       end
 
       contents
@@ -107,18 +137,11 @@ module Stylesheet
       resolved_ids = Theme.transform_ids(theme_id)
 
       if resolved_ids
-        theme = Theme.find_by_id(theme_id)
-        contents << theme&.scss_variables.to_s
         Theme
           .list_baked_fields(resolved_ids, :common, :color_definitions)
           .each do |field|
             contents << "\n\n// Color definitions from #{field.theme.name}\n\n"
-
-            if field.theme_id == theme.id
-              contents << field.value
-            else
-              contents << field.compiled_css(prepended_scss)
-            end
+            contents << field.compiled_css(prepended_scss)
             contents << "\n\n"
           end
       end
@@ -180,23 +203,20 @@ module Stylesheet
     def theme_import(target)
       return "" if !@theme_id
 
-      attr = target == :embedded_theme ? :embedded_scss : :scss
+      name = :scss
+
+      if target == :embedded_theme
+        name = :embedded_scss
+        target = :common
+      end
+
       target = target.to_s.gsub("_theme", "").to_sym
 
       contents = +""
 
-      fields = theme.list_baked_fields(target, attr)
+      fields = theme.list_baked_fields(target, name)
       fields.map do |field|
-        value = field.value
-        if value.present?
-          contents << <<~SCSS
-          // Theme: #{field.theme.name}
-          // Target: #{field.target_name} #{field.name}
-          // Last Edited: #{field.updated_at}
-          SCSS
-
-          contents << value
-        end
+        contents << "@import \"theme-entrypoint/#{field.scss_entrypoint_name}\";\n"
       end
       contents
     end
@@ -220,14 +240,57 @@ module Stylesheet
                 "url(\"#{fonts_dir}/#{variant[:filename]}?v=#{DiscourseFonts::VERSION}\") format(\"#{variant[:format]}\")"
               end
             )
+
           contents << <<~CSS
             @font-face {
-              font-family: #{font[:name]};
+              font-family: '#{font[:name]}';
               src: #{src};
               font-weight: #{variant[:weight]};
             }
           CSS
         end
+      end
+
+      contents
+    end
+
+    def render_font_special_properties(font, font_type)
+      contents = +""
+      root_elements = font_type == "body" ? "html" : "h1, h2, h3, h4, h5, h6"
+      contents << "#{root_elements} {\n"
+      contents << font_special_properties(font)
+      contents << "}\n"
+    end
+
+    def render_wizard_font_special_properties(font)
+      contents = +""
+      contents << ".wizard-container-heading-font-#{font[:key]} {\n"
+      contents << "  h1, h2, h3, h4, h5, h6 {\n"
+      contents << font_special_properties(font, 4)
+      contents << "  }\n"
+      contents << "}\n"
+      contents << ".wizard-container-body-font-#{font[:key]} {\n"
+      contents << font_special_properties(font)
+      contents << "}\n"
+    end
+
+    def font_special_properties(font, indent = 2)
+      contents = +""
+      if font[:font_variation_settings].present?
+        contents << "#{" " * indent}font-variation-settings: #{font[:font_variation_settings]};\n"
+      else
+        contents << "#{" " * indent}font-variation-settings: normal;\n"
+      end
+
+      if font[:font_feature_settings].present?
+        contents << "#{" " * indent}font-feature-settings: #{font[:font_feature_settings]};\n"
+      else
+        contents << "#{" " * indent}font-feature-settings: normal;\n"
+      end
+
+      # avoiding adding normal to the CSS cause it is not needed in this case
+      if font[:font_variant_ligatures].present?
+        contents << "#{" " * indent}font-variant-ligatures: #{font[:font_variant_ligatures]};\n"
       end
 
       contents

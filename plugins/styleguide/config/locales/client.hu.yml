@@ -5,30 +5,46 @@
 # https://translate.discourse.org/
 
 hu:
+  admin_js:
+    admin:
+      site_settings:
+        categories:
+          styleguide: "Discourse Stílussegéd"
   js:
     styleguide:
       title: "Stílus útmutató"
       welcome: "A kezdéshez válasszon egy szakaszt a bal oldali menüből."
       categories:
+        syntax: Szintaxis
         atoms: Atomok
         molecules: Molekulák
         organisms: Szervezetek
       sections:
+        bem:
+          title: "BEM"
         typography:
           title: "Tipográfia"
           example: "Üdvözöljük a Discourse-ban"
           paragraph: "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum."
         date_time_inputs:
           title: "Dátum/idő bemenetek"
+        menus:
+          title: "Menük"
+        multi_select:
+          title: "Több kijelölése"
+        toasts:
+          title: "Köszöntők"
         font_scale:
           title: "Betűtípus rendszer"
         colors:
           title: "Színek"
+        dialog:
+          title: "Párbeszéd"
         icons:
           title: "Ikonok"
           full_list: "A Font Awesome ikonok teljes listájának megtekintése"
-        input_fields:
-          title: "Beviteli mezők"
+        forms:
+          title: "Űrlapok"
         buttons:
           title: "Gombok"
         dropdowns:
@@ -46,7 +62,7 @@ hu:
         categories_list:
           title: "Kategóriák listája"
         topic_link:
-          title: "Téma hivatkozás"
+          title: "Téma linkje és állapota"
         topic_list_item:
           title: "Témalista elem"
         topic_statuses:
@@ -55,8 +71,6 @@ hu:
           title: "Témalista"
         basic_topic_list:
           title: "Alapvető témakörlista"
-        footer_message:
-          title: "Lábléc üzenet"
         signup_cta:
           title: "Regisztrációs felhívás"
         topic_timer_info:
@@ -67,12 +81,18 @@ hu:
           title: "Témaértesítések"
         post:
           title: "Bejegyzés"
+        post_list:
+          title: "Bejegyzés Lista"
+          empty_example: "<PostList /> üres állapot"
+          populated_example: "<PostList /> népszerű"
+        post_oneboxes:
+          title: "Oneboxok közzététele"
         topic_map:
           title: "Téma térkép"
         site_header:
           title: "Webhelyfejléc"
-        suggested_topics:
-          title: "Ajánlott témák"
+        more_topics:
+          title: "További témák"
         post_menu:
           title: "Bejegyzés menü"
         modal:
@@ -85,12 +105,15 @@ hu:
           title: "Fejléc ikonok"
         spinners:
           title: "Forgók"
+        otp:
+          title: "Egyszeri jelszó"
         empty_state:
           title: "Üres állapot"
         tooltips:
+          title: "Eszköztárak"
           description: "Leírás"
           header: "Fejléc"
           hover_to_see: "Vigye az egérmutatót az eszköztipp megtekintéséhez"
         char_counter:
           title: "Karakterszámláló"
-          placeholder: "Írja be a szöveget ide..."
+          placeholder: "Írja be a szöveget ide…"

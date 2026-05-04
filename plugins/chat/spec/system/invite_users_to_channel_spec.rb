@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
-RSpec.describe "Invite users to channel", type: :system do
-  fab!(:user_1) { Fabricate(:user) }
-  fab!(:channel_1) { Fabricate(:category_channel) }
+RSpec.describe "Invite users to channel" do
+  fab!(:user_1, :user)
+  fab!(:channel_1, :category_channel)
 
   let(:user_menu) { PageObjects::Components::UserMenu.new }
   let(:chat_drawer_page) { PageObjects::Pages::ChatDrawer.new }
@@ -17,9 +17,11 @@ RSpec.describe "Invite users to channel", type: :system do
     context "when the invitation is linking to a channel" do
       before do
         Chat::InviteUsersToChannel.call(
-          channel_id: channel_1.id,
-          user_ids: [user_1.id],
           guardian: Guardian.new(Fabricate(:admin)),
+          params: {
+            channel_id: channel_1.id,
+            user_ids: [user_1.id],
+          },
         )
       end
 
@@ -37,10 +39,12 @@ RSpec.describe "Invite users to channel", type: :system do
 
       before do
         Chat::InviteUsersToChannel.call(
-          channel_id: channel_1.id,
-          user_ids: [user_1.id],
           guardian: Guardian.new(Fabricate(:admin)),
-          message_id: message_1.id,
+          params: {
+            channel_id: channel_1.id,
+            user_ids: [user_1.id],
+            message_id: message_1.id,
+          },
         )
       end
 

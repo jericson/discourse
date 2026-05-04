@@ -2,14 +2,14 @@
 
 RSpec.describe Chat::SearchChatable do
   describe ".call" do
-    subject(:result) { described_class.call(params) }
+    subject(:result) { described_class.call(params:, **dependencies) }
 
     fab!(:current_user) { Fabricate(:user, username: "bob-user") }
     fab!(:sam) { Fabricate(:user, username: "sam-user") }
     fab!(:charlie) { Fabricate(:user, username: "charlie-user") }
     fab!(:alain) { Fabricate(:user, username: "alain-user") }
     fab!(:group_1) { Fabricate(:group, name: "awesome-group") }
-    fab!(:group_2) { Fabricate(:group) }
+    fab!(:group_2, :group)
     fab!(:channel_1) { Fabricate(:chat_channel, name: "bob-channel") }
     fab!(:channel_2) { Fabricate(:direct_message_channel, users: [current_user, sam]) }
     fab!(:channel_3) { Fabricate(:direct_message_channel, users: [current_user, sam, charlie]) }
@@ -25,15 +25,15 @@ RSpec.describe Chat::SearchChatable do
     let(:excluded_memberships_channel_id) { nil }
     let(:params) do
       {
-        guardian: guardian,
-        term: term,
-        include_users: include_users,
-        include_groups: include_groups,
-        include_category_channels: include_category_channels,
-        include_direct_message_channels: include_direct_message_channels,
-        excluded_memberships_channel_id: excluded_memberships_channel_id,
+        term:,
+        include_users:,
+        include_groups:,
+        include_category_channels:,
+        include_direct_message_channels:,
+        excluded_memberships_channel_id:,
       }
     end
+    let(:dependencies) { { guardian: } }
 
     before do
       SiteSetting.direct_message_enabled_groups = Group::AUTO_GROUPS[:everyone]
@@ -43,16 +43,14 @@ RSpec.describe Chat::SearchChatable do
     end
 
     context "when all steps pass" do
-      it "sets the service result as successful" do
-        expect(result).to be_a_success
-      end
+      it { is_expected.to run_successfully }
 
       it "cleans the term" do
         params[:term] = "#bob"
-        expect(result.term).to eq("bob")
+        expect(result.params.term).to eq("bob")
 
         params[:term] = "@bob"
-        expect(result.term).to eq("bob")
+        expect(result.params.term).to eq("bob")
       end
 
       it "fetches user memberships" do
@@ -75,6 +73,28 @@ RSpec.describe Chat::SearchChatable do
           params[:term] = "sam"
 
           expect(result.users).to contain_exactly(sam)
+        end
+
+        context "with match_quality" do
+          fab!(:david) { Fabricate(:user, username: "david") }
+          fab!(:davidb) { Fabricate(:user, username: "davidb") }
+
+          before { params[:term] = "david" }
+
+          it "assigns correct match quality values" do
+            users = result.users
+            expect(users.find { |u| u.username == "david" }.match_quality).to eq(
+              Chat::ChannelFetcher::MATCH_QUALITY_EXACT,
+            )
+            expect(users.find { |u| u.username == "davidb" }.match_quality).to eq(
+              Chat::ChannelFetcher::MATCH_QUALITY_PREFIX,
+            )
+          end
+
+          it "orders users by match quality" do
+            users = result.users.select { |u| u.username.start_with?("david") }
+            expect(users.map(&:username)).to eq(%w[david davidb])
+          end
         end
 
         it "can filter users with a membership to a specific channel" do
@@ -114,10 +134,30 @@ RSpec.describe Chat::SearchChatable do
       end
 
       context "when including groups" do
+        fab!(:hidden_group) do
+          Fabricate(
+            :group,
+            name: "hidden-group-1",
+            visibility_level: Group.visibility_levels[:members],
+          )
+        end
+
+        fab!(:hidden_members_group) do
+          Fabricate(
+            :group,
+            name: "hidden-group-2",
+            members_visibility_level: Group.visibility_levels[:members],
+          )
+        end
+
         let(:include_groups) { true }
 
         it "fetches groups" do
           expect(result.groups).to include(group_1, group_2)
+        end
+
+        it "does not preload group users" do
+          expect(result.groups.first.association(:users).loaded?).to eq(false)
         end
 
         it "can filter groups by name" do
@@ -128,6 +168,44 @@ RSpec.describe Chat::SearchChatable do
         it "excludes groups not matching the search term" do
           params[:term] = "nonexistent"
           expect(result.groups).to be_empty
+        end
+
+        it "excludes groups that user cannot see by default" do
+          expect(result.groups).to_not include(hidden_group)
+          expect(result.groups).to_not include(hidden_members_group)
+        end
+
+        it "excludes groups that user cannot see when searching" do
+          params[:term] = "hidden-group"
+
+          expect(result.groups).to_not include(hidden_group)
+          expect(result.groups).to_not include(hidden_members_group)
+        end
+
+        context "with match_quality" do
+          fab!(:dev_group) { Fabricate(:group, name: "dev") }
+          fab!(:devops_group) { Fabricate(:group, name: "devops") }
+          fab!(:mydev_group) { Fabricate(:group, name: "mydev") }
+
+          before { params[:term] = "dev" }
+
+          it "assigns correct match quality values" do
+            groups = result.groups
+            expect(groups.find { |g| g.name == "dev" }.match_quality).to eq(
+              Chat::ChannelFetcher::MATCH_QUALITY_EXACT,
+            )
+            expect(groups.find { |g| g.name == "devops" }.match_quality).to eq(
+              Chat::ChannelFetcher::MATCH_QUALITY_PREFIX,
+            )
+            expect(groups.find { |g| g.name == "mydev" }.match_quality).to eq(
+              Chat::ChannelFetcher::MATCH_QUALITY_PARTIAL,
+            )
+          end
+
+          it "orders groups by match quality then name" do
+            groups = result.groups.select { |g| g.name.include?("dev") }
+            expect(groups.map(&:name)).to eq(%w[dev devops mydev])
+          end
         end
       end
 
@@ -182,7 +260,7 @@ RSpec.describe Chat::SearchChatable do
           expect(result.direct_message_channels).to contain_exactly(channel_2, channel_3, channel_5)
         end
 
-        it "doesn’t fetches inaccessible direct message channels" do
+        it "doesn't fetch inaccessible direct message channels" do
           expect(result.direct_message_channels).to_not include(channel_4)
         end
 

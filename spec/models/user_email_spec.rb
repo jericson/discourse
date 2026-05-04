@@ -48,6 +48,30 @@ RSpec.describe UserEmail do
       expect(user_email.normalized_email).to eq("ab@example.com")
       expect(user_email).to be_valid
     end
+
+    it "allows updating an email to a variant with the same normalized value" do
+      SiteSetting.normalize_emails = true
+
+      user_email = user.user_emails.create!(email: "a.b+c@example.com", primary: false)
+      expect(user_email.normalized_email).to eq("ab@example.com")
+
+      user_email.email = "a.b@example.com"
+      expect(user_email).to be_valid
+      expect(user_email.save).to eq(true)
+      expect(user_email.reload.email).to eq("a.b@example.com")
+    end
+
+    it "blocks updating to an email that normalizes to another user's email" do
+      SiteSetting.normalize_emails = true
+
+      other_user = Fabricate(:user)
+      other_user.user_emails.create!(email: "taken+alias@example.com", primary: false)
+
+      user_email = user.user_emails.create!(email: "available@example.com", primary: false)
+      user_email.email = "taken@example.com"
+      expect(user_email).not_to be_valid
+      expect(user_email.errors[:email]).to include(I18n.t("errors.messages.taken"))
+    end
   end
 
   describe "Indexes" do
@@ -61,6 +85,28 @@ RSpec.describe UserEmail do
       Fabricate.build(:secondary_email, user: user, primary: false).save(validate: false)
       Fabricate.build(:secondary_email, user: user, primary: false).save(validate: false)
       expect(user.user_emails.count).to eq 3
+    end
+  end
+
+  describe ".ensure_consistency!" do
+    context "when some users have no primary emails" do
+      it "creates primary emails for the users without a primary email" do
+        user_with_primary_email = Fabricate(:user)
+        user_without_primary_email = Fabricate(:user)
+        user_without_any_email = Fabricate(:user)
+
+        user_without_primary_email.primary_email.update_column(:primary, false)
+        user_without_any_email.user_emails.delete_all
+        original_email_of_user_with_primary_email = user_with_primary_email.primary_email.email
+
+        described_class.ensure_consistency!
+
+        expect(user_without_primary_email.reload.primary_email).to be_present
+        expect(user_without_any_email.reload.primary_email).to be_present
+        expect(
+          user_with_primary_email.reload.primary_email.email,
+        ).to eq original_email_of_user_with_primary_email
+      end
     end
   end
 end

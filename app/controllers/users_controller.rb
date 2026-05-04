@@ -30,6 +30,7 @@ class UsersController < ApplicationController
                    register_passkey
                    rename_passkey
                    delete_passkey
+                   update_security_key
                    feature_topic
                    clear_featured_topic
                    bookmarks
@@ -40,6 +41,12 @@ class UsersController < ApplicationController
                    reset_recent_searches
                    user_menu_bookmarks
                    user_menu_messages
+                   update_primary_email
+                   destroy_email
+                   badge_title
+                   remove_password
+                   private_message_topic_tracking_state
+                   toggle_anon
                  ]
 
   skip_before_action :check_xhr,
@@ -77,8 +84,8 @@ class UsersController < ApplicationController
                   create_second_factor_security_key
                   register_passkey
                   delete_passkey
+                  update_security_key
                 ]
-
   before_action :respond_to_suspicious_request, only: [:create]
 
   # we need to allow account creation with bad CSRF tokens, if people are caching, the CSRF token on the
@@ -86,6 +93,7 @@ class UsersController < ApplicationController
   #  once that happens you can't log in with social
   skip_before_action :verify_authenticity_token, only: [:create]
   skip_before_action :redirect_to_login_if_required,
+                     :redirect_to_profile_if_required,
                      only: %i[
                        check_username
                        check_email
@@ -102,11 +110,12 @@ class UsersController < ApplicationController
                        admin_login
                        confirm_admin
                      ]
+  skip_before_action :redirect_to_profile_if_required, only: %i[show staff_info update]
 
-  after_action :add_noindex_header, only: %i[show my_redirect]
+  before_action :add_noindex_header, only: %i[show my_redirect]
 
-  allow_in_staff_writes_only_mode :admin_login
-  allow_in_staff_writes_only_mode :email_login
+  allow_in_readonly_mode :admin_login
+  allow_in_staff_writes_only_mode :email_login, :password_reset_update
 
   MAX_RECENT_SEARCHES = 5
 
@@ -124,18 +133,14 @@ class UsersController < ApplicationController
     user_serializer = nil
     if !current_user&.staff? && !@user.active?
       user_serializer = InactiveUserSerializer.new(@user, scope: guardian, root: "user")
+      assign_topic_post_count(user_serializer) if for_card
     elsif !guardian.can_see_profile?(@user)
       user_serializer = HiddenProfileSerializer.new(@user, scope: guardian, root: "user")
+      assign_topic_post_count(user_serializer) if for_card
     else
       serializer_class = for_card ? UserCardSerializer : UserSerializer
       user_serializer = serializer_class.new(@user, scope: guardian, root: "user")
-
-      topic_id = params[:include_post_count_for].to_i
-      if topic_id != 0 && guardian.can_see?(Topic.find_by_id(topic_id))
-        user_serializer.topic_post_count = {
-          topic_id => Post.secured(guardian).where(topic_id: topic_id, user_id: @user.id).count,
-        }
-      end
+      assign_topic_post_count(user_serializer)
     end
 
     track_visit_to_user_profile if !params[:skip_track_visit] && (@user != current_user)
@@ -218,7 +223,12 @@ class UsersController < ApplicationController
         value = nil if value === "false"
         value = value[0...UserField.max_length] if value
 
-        if value.blank? && field.required?
+        if value.blank? &&
+             (
+               field.for_all_users? ||
+                 field.on_signup? &&
+                   user.custom_fields["#{User::USER_FIELD_PREFIX}#{field_id}"].present?
+             )
           return render_json_error(I18n.t("login.missing_user_field"))
         end
         attributes[:custom_fields]["#{User::USER_FIELD_PREFIX}#{field.id}"] = value
@@ -262,8 +272,13 @@ class UsersController < ApplicationController
   def username
     params.require(:new_username)
 
+    # Fast fail for usernames exceeding hardcoded max length
+    if params[:new_username].length > UsernameValidator::MAX_CHARS * 3
+      return render_json_error(I18n.t("user.username.long", count: SiteSetting.max_username_length))
+    end
+
     if clashing_with_existing_route?(params[:new_username]) ||
-         User.reserved_username?(params[:new_username])
+         (User.reserved_username?(params[:new_username]) && !current_user.admin?)
       return render_json_error(I18n.t("login.reserved_username"))
     end
 
@@ -281,7 +296,7 @@ class UsersController < ApplicationController
     if current_user&.staff?
       render_json_error(I18n.t("errors.messages.auth_overrides_username"))
     else
-      render json: failed_json, status: 403
+      render json: failed_json, status: :forbidden
     end
   end
 
@@ -303,7 +318,7 @@ class UsersController < ApplicationController
              associated_accounts: user.associated_accounts,
            }
   rescue Discourse::InvalidAccess
-    render json: failed_json, status: 403
+    render json: failed_json, status: :forbidden
   end
 
   def check_sso_email
@@ -319,7 +334,7 @@ class UsersController < ApplicationController
 
     render json: { email: email }
   rescue Discourse::InvalidAccess
-    render json: failed_json, status: 403
+    render json: failed_json, status: :forbidden
   end
 
   def check_sso_payload
@@ -335,11 +350,11 @@ class UsersController < ApplicationController
 
     render json: { payload: payload }
   rescue Discourse::InvalidAccess
-    render json: failed_json, status: 403
+    render json: failed_json, status: :forbidden
   end
 
   def update_primary_email
-    return render json: failed_json, status: 410 if !SiteSetting.enable_secondary_emails
+    return render json: failed_json, status: :gone if !SiteSetting.enable_secondary_emails
 
     params.require(:email)
 
@@ -352,7 +367,8 @@ class UsersController < ApplicationController
     new_primary = user.user_emails.find_by(email: params[:email])
     if new_primary.blank?
       return(
-        render json: failed_json.merge(errors: [I18n.t("change_email.doesnt_exist")]), status: 428
+        render json: failed_json.merge(errors: [I18n.t("change_email.doesnt_exist")]),
+               status: :precondition_required
       )
     end
 
@@ -372,7 +388,7 @@ class UsersController < ApplicationController
   end
 
   def destroy_email
-    return render json: failed_json, status: 410 if !SiteSetting.enable_secondary_emails
+    return render json: failed_json, status: :gone if !SiteSetting.enable_secondary_emails
 
     params.require(:email)
 
@@ -385,7 +401,7 @@ class UsersController < ApplicationController
       elsif user.user_emails.where(email: params[:email], primary: false).destroy_all.present?
         DiscourseEvent.trigger(:user_updated, user)
       else
-        return render json: failed_json, status: 428
+        return render json: failed_json, status: :precondition_required
       end
 
       if current_user.staff? && current_user != user
@@ -477,7 +493,7 @@ class UsersController < ApplicationController
   end
 
   def my_redirect
-    raise Discourse::NotFound if params[:path] !~ %r{\A[a-z_\-/]+\z}
+    raise Discourse::NotFound if params[:path] !~ %r{\A[a-zA-Z0-9_\-/]+\z}
 
     if current_user.blank?
       cookies[:destination_url] = path("/my/#{params[:path]}")
@@ -608,7 +624,7 @@ class UsersController < ApplicationController
     # The special case where someone is changing the case of their own username
     return render_available_true if changing_case_of_own_username(target_user, username)
 
-    checker = UsernameCheckerService.new
+    checker = UsernameCheckerService.new(allow_reserved_username: current_user&.admin?)
     email = params[:email] || target_user.try(:email)
     render json: checker.check_username(username, email)
   end
@@ -658,6 +674,9 @@ class UsersController < ApplicationController
     params.permit(:user_fields)
     params.permit(:external_ids)
 
+    if SiteSetting.enable_discourse_connect && !is_api?
+      return fail_with("login.new_registrations_disabled_discourse_connect")
+    end
     return fail_with("login.new_registrations_disabled") unless SiteSetting.allow_new_registrations
 
     if params[:password] && params[:password].length > User.max_password_length
@@ -730,7 +749,7 @@ class UsersController < ApplicationController
       end
     end
 
-    authentication = UserAuthenticator.new(user, session)
+    authentication = UserAuthenticator.new(user, server_session)
 
     if !authentication.has_authenticator? && !SiteSetting.enable_local_logins &&
          !(current_user&.admin? && is_api?)
@@ -744,13 +763,8 @@ class UsersController < ApplicationController
       return fail_with("login.incorrect_username_email_or_password")
     end
 
-    activation = UserActivator.new(user, request, session, cookies)
+    activation = UserActivator.new(user, request, server_session, cookies)
     activation.start
-
-    # just assign a password if we have an authenticator and no password
-    # this is the case for Twitter
-    user.password = SecureRandom.hex if user.password.blank? &&
-      (authentication.has_authenticator? || associations.present?)
 
     if user.save
       authentication.finish
@@ -758,11 +772,11 @@ class UsersController < ApplicationController
       associations.each { |a| a.update!(user: user) }
       user.update_timezone_if_missing(params[:timezone])
 
-      secure_session[HONEYPOT_KEY] = nil
-      secure_session[CHALLENGE_KEY] = nil
+      server_session.delete(HONEYPOT_KEY)
+      server_session.delete(CHALLENGE_KEY)
 
       # save user email in session, to show on account-created page
-      session["user_created_message"] = activation.message
+      server_session["user_created_message"] = activation.message
       session[SessionController::ACTIVATE_USER_KEY] = user.id
 
       # If the user was created as active this will
@@ -775,7 +789,7 @@ class UsersController < ApplicationController
              )
     elsif SiteSetting.hide_email_address_taken &&
           user.errors[:primary_email]&.include?(I18n.t("errors.messages.taken"))
-      session["user_created_message"] = activation.success_message
+      server_session["user_created_message"] = activation.success_message
 
       existing_user = User.find_by_email(user.primary_email&.email)
       if !existing_user && SiteSetting.normalize_emails
@@ -828,11 +842,11 @@ class UsersController < ApplicationController
       format.html do
         return render "password_reset", layout: "no_ember" if @error
 
-        DiscourseWebauthn.stage_challenge(@user, secure_session)
+        DiscourseWebauthn.stage_challenge(@user, server_session)
         store_preloaded(
           "password_reset",
           MultiJson.dump(
-            security_params.merge(DiscourseWebauthn.allowed_credentials(@user, secure_session)),
+            security_params.merge(DiscourseWebauthn.allowed_credentials(@user, server_session)),
           ),
         )
 
@@ -842,26 +856,43 @@ class UsersController < ApplicationController
       format.json do
         return render json: { message: @error } if @error
 
-        DiscourseWebauthn.stage_challenge(@user, secure_session)
+        DiscourseWebauthn.stage_challenge(@user, server_session)
         render json:
-                 security_params.merge(DiscourseWebauthn.allowed_credentials(@user, secure_session))
+                 security_params.merge(DiscourseWebauthn.allowed_credentials(@user, server_session))
       end
     end
   end
 
+  def remove_password
+    RateLimiter.new(nil, "remove-password-hr-#{request.remote_ip}", 6, 1.hour).performed!
+    RateLimiter.new(nil, "remove-password-min-#{request.remote_ip}", 3, 1.hour).performed!
+
+    user = fetch_user_from_params
+    guardian.ensure_can_edit!(user)
+    RateLimiter.new(nil, "remove-password-hr-#{user.username}", 6, 1.hour).performed!
+
+    raise Discourse::NotFound if !user || !user.user_password
+    raise Discourse::InvalidAccess if !session_is_trusted?
+
+    user.remove_password
+
+    render json: success_json
+  end
+
   def password_reset_update
     expires_now
-    token = params[:token]
-    password_reset_find_user(token, committing_change: true)
 
+    token = params[:token]
+
+    password_reset_find_user(token, committing_change: true)
     rate_limit_second_factor!(@user)
 
-    # no point doing anything else if we can't even find
-    # a user from the token
+    raise Discourse::ReadOnly if @staff_writes_only_mode && !@user&.staff?
+
     if @user
-      if !secure_session["second-factor-#{token}"]
+      if !server_session["second-factor-#{token}"]
         second_factor_authentication_result =
-          @user.authenticate_second_factor(params, secure_session)
+          @user.authenticate_second_factor(params, server_session)
         if !second_factor_authentication_result.ok
           user_error_key =
             (
@@ -877,7 +908,7 @@ class UsersController < ApplicationController
           # this must be set because the first call we authenticate e.g. TOTP, and we do
           # not want to re-authenticate on the second call to change the password as this
           # will cause a TOTP error saying the code has already been used
-          secure_session["second-factor-#{token}"] = true
+          server_session["second-factor-#{token}"] = true
         end
       end
 
@@ -896,8 +927,12 @@ class UsersController < ApplicationController
 
         if @user.save
           Invite.invalidate_for_email(@user.email) # invite link can't be used to log in anymore
-          secure_session["password-#{token}"] = nil
-          secure_session["second-factor-#{token}"] = nil
+          server_session.delete("password-#{token}")
+          server_session.delete("second-factor-#{token}")
+
+          if SiteSetting.delete_associated_accounts_on_password_reset
+            @user.user_associated_accounts.destroy_all
+          end
 
           UserHistory.create!(
             target_user: @user,
@@ -914,7 +949,7 @@ class UsersController < ApplicationController
       format.html do
         return render "password_reset", layout: "no_ember" if @error
 
-        DiscourseWebauthn.stage_challenge(@user, secure_session)
+        DiscourseWebauthn.stage_challenge(@user, server_session)
 
         security_params = {
           is_developer: UsernameCheckerService.is_developer?(@user.email),
@@ -923,7 +958,7 @@ class UsersController < ApplicationController
           security_key_required: @user.security_keys_enabled?,
           backup_enabled: @user.backup_codes_enabled?,
           multiple_second_factor_methods: @user.has_multiple_second_factor_methods?,
-        }.merge(DiscourseWebauthn.allowed_credentials(@user, secure_session))
+        }.merge(DiscourseWebauthn.allowed_credentials(@user, server_session))
 
         store_preloaded("password_reset", MultiJson.dump(security_params))
 
@@ -981,21 +1016,17 @@ class UsersController < ApplicationController
       RateLimiter.new(nil, "admin-login-hr-#{request.remote_ip}", 6, 1.hour).performed!
       RateLimiter.new(nil, "admin-login-min-#{request.remote_ip}", 3, 1.minute).performed!
 
-      if user = User.with_email(params[:email]).admins.human_users.first
+      if user = User.real.admins.with_email(params[:email]).first
         email_token =
-          user.email_tokens.create!(email: user.email, scope: EmailToken.scopes[:email_login])
-        token_string = email_token.token
-        token_string += "?safe_mode=no_plugins,no_themes" if params["use_safe_mode"]
-        Jobs.enqueue(
-          :critical_user_email,
-          type: "admin_login",
-          user_id: user.id,
-          email_token: token_string,
-        )
-        @message = I18n.t("admin_login.success")
-      else
-        @message = I18n.t("admin_login.errors.unknown_email_address")
+          user.email_tokens.create!(email: user.email, scope: EmailToken.scopes[:email_login]).token
+        email_token += "?safe_mode=no_plugins,no_themes" if params["use_safe_mode"]
+        Jobs.enqueue(:critical_user_email, type: "admin_login", user_id: user.id, email_token:)
       end
+
+      # NOTE: we don't check for `readonly` mode here because it might leak information about whether
+      # an email address is a registered admin account.
+
+      @message = I18n.t("admin_login.acknowledgement", email: params[:email])
     end
 
     render layout: "no_ember"
@@ -1013,12 +1044,14 @@ class UsersController < ApplicationController
 
     RateLimiter.new(nil, "email-login-hour-#{request.remote_ip}", 6, 1.hour).performed!
     RateLimiter.new(nil, "email-login-min-#{request.remote_ip}", 3, 1.minute).performed!
-    user = User.human_users.find_by_username_or_email(params[:login])
+    user = User.real.find_by_username_or_email(params[:login])
     user_presence = user.present? && !user.staged
 
     if user
       RateLimiter.new(nil, "email-login-hour-#{user.id}", 6, 1.hour).performed!
       RateLimiter.new(nil, "email-login-min-#{user.id}", 3, 1.minute).performed!
+
+      raise Discourse::ReadOnly if @staff_writes_only_mode && !user.staff?
 
       if user_presence
         DiscourseEvent.trigger(:before_email_login, user)
@@ -1051,7 +1084,7 @@ class UsersController < ApplicationController
       log_on_user(user)
       render json: success_json
     else
-      render json: failed_json, status: 403
+      render json: failed_json, status: :forbidden
     end
   end
 
@@ -1067,7 +1100,7 @@ class UsersController < ApplicationController
     end
 
     @custom_body_class = "static-account-created"
-    @message = session["user_created_message"] || I18n.t("activation.missing_session")
+    @message = server_session["user_created_message"] || I18n.t("activation.missing_session")
     @account_created = { message: @message, show_controls: false }
 
     if session_user_id = session[SessionController::ACTIVATE_USER_KEY]
@@ -1089,11 +1122,18 @@ class UsersController < ApplicationController
 
   def activate_account
     expires_now
-    render layout: "no_ember"
+
+    raise Discourse::NotFound if current_user.present?
+
+    respond_to do |format|
+      format.html { render "default/empty" }
+      format.json { render json: success_json }
+    end
   end
 
   def perform_account_activation
     raise Discourse::InvalidAccess.new if honeypot_or_challenge_fails?(params)
+    raise Discourse::NotFound if current_user.present?
 
     if @user = EmailToken.confirm(params[:token], scope: EmailToken.scopes[:signup])
       # Log in the user unless they need to be approved
@@ -1119,21 +1159,22 @@ class UsersController < ApplicationController
         end
 
         if Wizard.user_requires_completion?(@user)
-          return redirect_to(wizard_path)
+          @redirect_to = wizard_path
         elsif destination_url.present?
-          return redirect_to(destination_url, allow_other_host: true)
+          @redirect_to = destination_url
         elsif SiteSetting.enable_discourse_connect_provider &&
               payload = cookies.delete(:sso_payload)
-          return redirect_to(session_sso_provider_url + "?" + payload)
+          @redirect_to = session_sso_provider_url + "?" + payload
         end
       else
         @needs_approval = true
       end
     else
-      flash.now[:error] = I18n.t("activation.already_done")
+      return render_json_error(I18n.t("activation.already_done"))
     end
 
-    render layout: "no_ember"
+    render json:
+             success_json.merge(redirect_to: @redirect_to, needs_approval: @needs_approval || false)
   end
 
   def update_activation_email
@@ -1212,6 +1253,7 @@ class UsersController < ApplicationController
 
     topic_id = params[:topic_id].to_i if params[:topic_id].present?
     category_id = params[:category_id].to_i if params[:category_id].present?
+    prioritized_user_id = params[:prioritized_user_id].to_i if params[:prioritized_user_id].present?
 
     topic_allowed_users = params[:topic_allowed_users] || false
 
@@ -1229,6 +1271,7 @@ class UsersController < ApplicationController
       params[:include_staged_users],
     )
     options[:last_seen_users] = !!ActiveModel::Type::Boolean.new.cast(params[:last_seen_users])
+    options[:can_review] = !!ActiveModel::Type::Boolean.new.cast(params[:can_review])
 
     if limit = fetch_limit_from_params(default: nil, max: SEARCH_USERS_LIMIT)
       options[:limit] = limit
@@ -1236,6 +1279,7 @@ class UsersController < ApplicationController
 
     options[:topic_id] = topic_id if topic_id
     options[:category_id] = category_id if category_id
+    options[:prioritized_user_id] = prioritized_user_id if prioritized_user_id
 
     results =
       if usernames.blank?
@@ -1283,24 +1327,30 @@ class UsersController < ApplicationController
     render json: to_render
   end
 
-  AVATAR_TYPES_WITH_UPLOAD ||= %w[uploaded custom gravatar]
+  AVATAR_TYPES_WITH_UPLOAD = %w[uploaded custom gravatar]
 
   def pick_avatar
     user = fetch_user_from_params
     guardian.ensure_can_edit!(user)
 
-    return render json: failed_json, status: 422 if SiteSetting.discourse_connect_overrides_avatar
+    if SiteSetting.discourse_connect_overrides_avatar || SiteSetting.auth_overrides_avatar
+      return render json: failed_json, status: :unprocessable_entity
+    end
 
     type = params[:type]
 
+    if type == "gravatar" && !SiteSetting.gravatar_enabled?
+      return render json: failed_json, status: :unprocessable_entity
+    end
+
     invalid_type = type.present? && !AVATAR_TYPES_WITH_UPLOAD.include?(type) && type != "system"
-    return render json: failed_json, status: 422 if invalid_type
+    return render json: failed_json, status: :unprocessable_entity if invalid_type
 
     if type.blank? || type == "system"
       upload_id = nil
     elsif !user.in_any_groups?(SiteSetting.uploaded_avatars_allowed_groups_map) &&
           !user.is_system_user?
-      return render json: failed_json, status: 422
+      return render json: failed_json, status: :unprocessable_entity
     else
       upload_id = params[:upload_id]
       upload = Upload.find_by(id: upload_id)
@@ -1334,19 +1384,23 @@ class UsersController < ApplicationController
 
     url = params[:url]
 
-    return render json: failed_json, status: 422 if url.blank?
+    return render json: failed_json, status: :unprocessable_entity if url.blank?
 
     if SiteSetting.selectable_avatars_mode == "disabled"
-      return render json: failed_json, status: 422
+      return render json: failed_json, status: :unprocessable_entity
     end
 
-    return render json: failed_json, status: 422 if SiteSetting.selectable_avatars.blank?
+    if SiteSetting.selectable_avatars.blank?
+      return render json: failed_json, status: :unprocessable_entity
+    end
 
     unless upload = Upload.get_from_url(url)
-      return render json: failed_json, status: 422
+      return render json: failed_json, status: :unprocessable_entity
     end
 
-    return render json: failed_json, status: 422 if SiteSetting.selectable_avatars.exclude?(upload)
+    if SiteSetting.selectable_avatars.exclude?(upload)
+      return render json: failed_json, status: :unprocessable_entity
+    end
 
     user.uploaded_avatar_id = upload.id
 
@@ -1454,7 +1508,7 @@ class UsersController < ApplicationController
     if !SiteSetting.log_search_queries
       return(
         render json: failed_json.merge(error: I18n.t("user_activity.no_log_search_queries")),
-               status: 403
+               status: :forbidden
       )
     end
 
@@ -1483,12 +1537,14 @@ class UsersController < ApplicationController
 
     %W[
       number_of_deleted_posts
-      number_of_flagged_posts
+      number_of_flags
       number_of_flags_given
+      number_of_silencings
       number_of_suspensions
       warnings_received_count
       number_of_rejected_posts
-    ].each { |info| result[info] = @user.public_send(info) }
+      can_remove_password?
+    ].each { |info| result[info.delete_suffix("?")] = @user.public_send(info) }
 
     render json: result
   end
@@ -1517,7 +1573,7 @@ class UsersController < ApplicationController
       raise Discourse::NotFound
     end
 
-    if confirm_secure_session
+    if confirm_server_session
       render json: success_json
     else
       render json: failed_json.merge(error: I18n.t("login.incorrect_password_or_passkey"))
@@ -1527,7 +1583,7 @@ class UsersController < ApplicationController
   end
 
   def trusted_session
-    render json: secure_session_confirmed? || user_just_created ? success_json : failed_json
+    render json: session_is_trusted? ? success_json : failed_json
   end
 
   def list_second_factors
@@ -1535,19 +1591,21 @@ class UsersController < ApplicationController
       raise Discourse::NotFound
     end
 
-    if secure_session_confirmed?
+    if session_is_trusted?
       totp_second_factors =
         current_user
           .totps
           .select(:id, :name, :last_used, :created_at, :method)
           .where(enabled: true)
           .order(:created_at)
+          .as_json(only: %i[id name method last_used])
 
       security_keys =
         current_user
           .security_keys
           .where(factor_type: UserSecurityKey.factor_types[:second_factor])
           .order(:created_at)
+          .as_json(only: %i[id user_id credential_id public_key factor_type enabled name last_used])
 
       render json: success_json.merge(totps: totp_second_factors, security_keys: security_keys)
     else
@@ -1564,7 +1622,7 @@ class UsersController < ApplicationController
   def create_second_factor_totp
     require "rotp" if !defined?(ROTP)
     totp_data = ROTP::Base32.random
-    secure_session["staged-totp-#{current_user.id}"] = totp_data
+    server_session["staged-totp-#{current_user.id}"] = totp_data
     qrcode_png =
       RQRCode::QRCode.new(current_user.totp_provisioning_uri(totp_data)).as_png(
         border_modules: 1,
@@ -1581,7 +1639,7 @@ class UsersController < ApplicationController
       return
     end
 
-    challenge_session = DiscourseWebauthn.stage_challenge(current_user, secure_session)
+    challenge_session = DiscourseWebauthn.stage_challenge(current_user, server_session)
     render json:
              success_json.merge(
                challenge: challenge_session.challenge,
@@ -1602,7 +1660,7 @@ class UsersController < ApplicationController
     ::DiscourseWebauthn::RegistrationService.new(
       current_user,
       params,
-      session: secure_session,
+      session: server_session,
       factor_type: UserSecurityKey.factor_types[:second_factor],
     ).register_security_key
     render json: success_json
@@ -1613,7 +1671,7 @@ class UsersController < ApplicationController
   def create_passkey
     raise Discourse::NotFound unless SiteSetting.enable_passkeys
 
-    challenge_session = DiscourseWebauthn.stage_challenge(current_user, secure_session)
+    challenge_session = DiscourseWebauthn.stage_challenge(current_user, server_session)
     render json:
              success_json.merge(
                challenge: challenge_session.challenge,
@@ -1636,7 +1694,7 @@ class UsersController < ApplicationController
       ::DiscourseWebauthn::RegistrationService.new(
         current_user,
         params,
-        session: secure_session,
+        session: server_session,
         factor_type: UserSecurityKey.factor_types[:first_factor],
       ).register_security_key
 
@@ -1648,7 +1706,15 @@ class UsersController < ApplicationController
   def delete_passkey
     raise Discourse::NotFound unless SiteSetting.enable_passkeys
 
-    current_user.security_keys.find_by(id: params[:id].to_i)&.destroy!
+    security_key = current_user.security_keys.find_by(id: params[:id].to_i)
+
+    if security_key&.first_factor? && current_user.passkey_credential_ids.length == 1
+      if !current_user.has_password? && current_user.associated_accounts.blank?
+        return render json: { success: false, message: I18n.t("user.cannot_remove_all_auth") }
+      end
+    end
+
+    security_key&.destroy!
 
     render json: success_json
   end
@@ -1670,7 +1736,7 @@ class UsersController < ApplicationController
     user_security_key = current_user.security_keys.find_by(id: params[:id].to_i)
     raise Discourse::InvalidParameters unless user_security_key
 
-    user_security_key.update!(name: params[:name]) if params[:name] && !params[:name].blank?
+    user_security_key.update!(name: params[:name]) if params[:name] && params[:name].present?
     user_security_key.update!(enabled: false) if params[:disable] == "true"
 
     render json: success_json
@@ -1685,13 +1751,13 @@ class UsersController < ApplicationController
     end
     auth_token = params[:second_factor_token]
 
-    totp_data = secure_session["staged-totp-#{current_user.id}"]
+    totp_data = server_session["staged-totp-#{current_user.id}"]
     totp_object = current_user.get_totp_object(totp_data)
 
     rate_limit_second_factor!(current_user)
 
     authenticated =
-      !auth_token.blank? &&
+      auth_token.present? &&
         totp_object.verify(
           auth_token,
           drift_ahead: SecondFactorManager::TOTP_ALLOWED_DRIFT_SECONDS,
@@ -1732,7 +1798,7 @@ class UsersController < ApplicationController
 
     raise Discourse::InvalidParameters unless user_second_factor
 
-    user_second_factor.update!(name: params[:name]) if params[:name] && !params[:name].blank?
+    user_second_factor.update!(name: params[:name]) if params[:name] && params[:name].present?
     if params[:disable] == "true"
       # Disabling backup codes deletes *all* backup codes
       if update_second_factor_method == UserSecondFactor.methods[:backup_codes]
@@ -1758,7 +1824,7 @@ class UsersController < ApplicationController
     end
 
     raise Discourse::InvalidAccess.new if !current_user
-    raise Discourse::InvalidAccess.new unless user_just_created || secure_session_confirmed?
+    raise Discourse::InvalidAccess.new unless session_is_trusted?
   end
 
   def revoke_account
@@ -1770,6 +1836,12 @@ class UsersController < ApplicationController
     # revoke permissions even if the admin has temporarily disabled that type of login
     authenticator = Discourse.authenticators.find { |a| a.name == provider_name }
     raise Discourse::NotFound if authenticator.nil? || !authenticator.can_revoke?
+
+    if user.associated_accounts&.length == 1
+      if !user.has_password? && user.passkey_credential_ids.blank?
+        return render json: { success: false, message: I18n.t("user.cannot_remove_all_auth") }
+      end
+    end
 
     skip_remote = params.permit(:skip_remote)
 
@@ -1862,10 +1934,17 @@ class UsersController < ApplicationController
         end
       end
       format.ics do
+        @calendar_name =
+          I18n.t("calendar_subscriptions.bookmarks_feed_name", site_title: SiteSetting.title)
+
+        bookmark_query = Bookmark.with_reminders.where(user_id: user.id)
+
+        after_param = params[:after].presence || 3.months.ago.iso8601
+        after_date = after_param == "now" ? Time.current : after_param.to_datetime
+        bookmark_query = bookmark_query.where("reminder_at >= ?", after_date)
+
         @bookmark_reminders =
-          Bookmark
-            .with_reminders
-            .where(user_id: user.id)
+          bookmark_query
             .order(:reminder_at)
             .map do |bookmark|
               bookmark.registered_bookmarkable.serializer.new(
@@ -1898,16 +1977,12 @@ class UsersController < ApplicationController
         )
 
       bookmark_list.load do |query|
-        if exclude_bookmark_ids.present?
-          query.where("bookmarks.id NOT IN (?)", exclude_bookmark_ids)
-        end
+        query.where.not(id: exclude_bookmark_ids) if exclude_bookmark_ids.present?
       end
     end
 
     if reminder_notifications.present?
-      if SiteSetting.show_user_menu_avatars
-        Notification.populate_acting_user(reminder_notifications)
-      end
+      Notification.populate_acting_user(reminder_notifications)
       serialized_notifications =
         ActiveModel::ArraySerializer.new(
           reminder_notifications,
@@ -1964,7 +2039,7 @@ class UsersController < ApplicationController
             groups_messages_notification_level: :watching,
           ) do |query|
             if exclude_topic_ids.present?
-              query.where("topics.id NOT IN (?)", exclude_topic_ids)
+              query.where.not(id: exclude_topic_ids)
             else
               query
             end
@@ -1978,7 +2053,7 @@ class UsersController < ApplicationController
     end
 
     if unread_notifications.present?
-      Notification.populate_acting_user(unread_notifications) if SiteSetting.show_user_menu_avatars
+      Notification.populate_acting_user(unread_notifications)
       serialized_unread_notifications =
         ActiveModel::ArraySerializer.new(
           unread_notifications,
@@ -1991,7 +2066,7 @@ class UsersController < ApplicationController
       serialized_messages =
         serialize_data(messages_list, TopicListSerializer, scope: guardian, root: false)[:topics]
       serialized_users =
-        if SiteSetting.show_user_menu_avatars
+        if SiteSetting.show_user_menu_avatars || !SiteSetting.prioritize_username_in_ux
           users = messages_list.topics.map { |t| t.posters.last.user }.flatten.compact.uniq(&:id)
           serialize_data(users, BasicUserSerializer, scope: guardian, root: false)
         else
@@ -2000,7 +2075,7 @@ class UsersController < ApplicationController
     end
 
     if read_notifications.present?
-      Notification.populate_acting_user(read_notifications) if SiteSetting.show_user_menu_avatars
+      Notification.populate_acting_user(read_notifications)
       serialized_read_notifications =
         ActiveModel::ArraySerializer.new(
           read_notifications,
@@ -2018,6 +2093,15 @@ class UsersController < ApplicationController
   end
 
   private
+
+  def assign_topic_post_count(user_serializer)
+    topic_id = params[:include_post_count_for].to_i
+    if topic_id != 0 && guardian.can_see?(Topic.find_by_id(topic_id))
+      user_serializer.topic_post_count = {
+        topic_id => Post.secured(guardian).where(topic_id: topic_id, user_id: @user.id).count,
+      }
+    end
+  end
 
   def clean_custom_field_values(field)
     field_values = params[:user_fields][field.id.to_s]
@@ -2044,9 +2128,9 @@ class UsersController < ApplicationController
       end
 
     if @user
-      secure_session["password-#{token}"] = @user.id
+      server_session["password-#{token}"] = @user.id
     else
-      user_id = secure_session["password-#{token}"].to_i
+      user_id = server_session["password-#{token}"].to_i
       @user = User.find(user_id) if user_id > 0
     end
 
@@ -2171,7 +2255,7 @@ class UsersController < ApplicationController
     end
   end
 
-  def confirm_secure_session
+  def confirm_server_session
     RateLimiter.new(
       nil,
       "login-hr-#{request.remote_ip}",
@@ -2198,22 +2282,26 @@ class UsersController < ApplicationController
         ::DiscourseWebauthn::AuthenticationService.new(
           current_user,
           params[:publicKeyCredential],
-          session: secure_session,
+          session: server_session,
           factor_type: UserSecurityKey.factor_types[:first_factor],
         ).authenticate_security_key
 
       return false if !passkey
     end
 
-    secure_session["confirmed-session-#{current_user.id}"] = "true"
+    server_session["confirmed-session-#{current_user.id}"] = "true"
   end
 
-  def secure_session_confirmed?
-    secure_session["confirmed-session-#{current_user.id}"] == "true"
+  def server_session_confirmed?
+    server_session["confirmed-session-#{current_user.id}"] == "true"
+  end
+
+  def session_is_trusted?
+    server_session_confirmed? || user_just_created
   end
 
   def summary_cache_key(user)
-    "user_summary:#{user.id}:#{current_user ? current_user.id : 0}"
+    "user_summary:#{user.id}:#{current_user ? current_user.id : 0}:#{I18n.locale}"
   end
 
   def render_invite_error(message)

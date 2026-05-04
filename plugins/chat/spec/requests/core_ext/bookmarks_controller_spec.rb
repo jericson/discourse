@@ -1,14 +1,14 @@
 # frozen_string_literal: true
 
 RSpec.describe BookmarksController do
-  fab!(:chatters) { Fabricate(:group) }
+  fab!(:chatters, :group)
   let(:current_user) { Fabricate(:user, group_ids: [chatters.id]) }
   let(:bookmark_message) { Fabricate(:chat_message) }
   let(:bookmark_user) { current_user }
 
   before do
     register_test_bookmarkable(Chat::MessageBookmarkable)
-    SiteSetting.chat_allowed_groups = [chatters]
+    SiteSetting.chat_allowed_groups = chatters
     sign_in(current_user)
   end
 
@@ -21,7 +21,7 @@ RSpec.describe BookmarksController do
              params: {
                bookmarkable_id: bookmark_message.id,
                bookmarkable_type: "Chat::Message",
-               reminder_at: (Time.zone.now + 1.day).iso8601,
+               reminder_at: 1.day.from_now.iso8601,
              }
 
         expect(response.status).to eq(200)

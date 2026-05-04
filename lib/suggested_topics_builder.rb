@@ -15,7 +15,7 @@ class SuggestedTopicsBuilder
     return unless results
 
     # Only add results if we don't have those topic ids already
-    results = results.where("topics.id NOT IN (?)", @excluded_topic_ids).where(visible: true)
+    results = results.where.not(topics: { id: @excluded_topic_ids }).where(visible: true)
 
     # If limit suggested to category is enabled, restrict to that category
     if @category_id && SiteSetting.limit_suggested_to_category?
@@ -36,6 +36,7 @@ class SuggestedTopicsBuilder
         end
       end
 
+      results = DiscoursePluginRegistry.apply_modifier(:suggested_topics_add_results, results)
       splice_results(results, priority)
     end
   end

@@ -6,11 +6,11 @@ module Jobs
   class ExportUserArchive < ::Jobs::Base
     sidekiq_options retry: false
 
-    attr_accessor :current_user
+    attr_accessor :archive_for_user
     # note: contents provided entirely by user
     attr_accessor :extra
 
-    COMPONENTS ||= %w[
+    COMPONENTS = %w[
       user_archive
       preferences
       auth_tokens
@@ -25,8 +25,8 @@ module Jobs
       visits
     ]
 
-    HEADER_ATTRS_FOR ||=
-      HashWithIndifferentAccess.new(
+    HEADER_ATTRS_FOR =
+      ActiveSupport::HashWithIndifferentAccess.new(
         user_archive: %w[
           topic_title
           categories
@@ -36,6 +36,7 @@ module Jobs
           like_count
           reply_count
           url
+          post_id
           created_at
         ],
         user_archive_profile: %w[location website bio views],
@@ -117,8 +118,20 @@ module Jobs
       )
 
     def execute(args)
-      @current_user = User.find_by(id: args[:user_id])
-      @extra = HashWithIndifferentAccess.new(args[:args]) if args[:args]
+      @archive_for_user = User.find_by(id: args[:user_id])
+
+      if args[:requesting_user_id].present?
+        @requesting_user = User.find_by(id: args[:requesting_user_id])
+        if !@requesting_user&.admin?
+          raise Discourse::InvalidParameters.new(
+                  "requesting_user_id: can only be admins when specified",
+                )
+        end
+      else
+        @requesting_user = @archive_for_user
+      end
+
+      @extra = ActiveSupport::HashWithIndifferentAccess.new(args[:args]) if args[:args]
       @timestamp ||= Time.now.strftime("%y%m%d-%H%M%S")
 
       components = []
@@ -136,8 +149,8 @@ module Jobs
       end
 
       export_title = "user_archive".titleize
-      filename = "user_archive-#{@current_user.username}-#{@timestamp}"
-      user_export = UserExport.create(file_name: filename, user_id: @current_user.id)
+      filename = "user_archive-#{@archive_for_user.username}-#{@timestamp}"
+      user_export = UserExport.create(file_name: filename, user_id: @archive_for_user.id)
 
       filename = "#{filename}-#{user_export.id}"
       dirname = "#{UserExport.base_directory}/#{filename}"
@@ -170,37 +183,20 @@ module Jobs
         FileUtils.rm_rf(dirname)
       end
 
-      # create upload
-      upload = nil
+      provide_results(user_export, zip_filename, export_title, args)
+    end
 
-      if File.exist?(zip_filename)
-        File.open(zip_filename) do |file|
-          upload =
-            UploadCreator.new(
-              file,
-              File.basename(zip_filename),
-              type: "csv_export",
-              for_export: "true",
-            ).create_for(@current_user.id)
+    def provide_results(user_export, zip_filename, export_title, args)
+      begin
+        create_upload_for_user(user_export, zip_filename)
+      ensure
+        post = notify_user(user_export, export_title)
 
-          if upload.persisted?
-            user_export.update_columns(upload_id: upload.id)
-          else
-            Rails.logger.warn(
-              "Failed to upload the file #{zip_filename}: #{upload.errors.full_messages}",
-            )
-          end
+        if user_export.present? && post.present?
+          topic = post.topic
+          user_export.update_columns(topic_id: topic.id)
+          topic.update_status("closed", true, Discourse.system_user)
         end
-
-        File.delete(zip_filename)
-      end
-    ensure
-      post = notify_user(upload, export_title)
-
-      if user_export.present? && post.present?
-        topic = post.topic
-        user_export.update_columns(topic_id: topic.id)
-        topic.update_status("closed", true, Discourse.system_user)
       end
     end
 
@@ -209,8 +205,8 @@ module Jobs
 
       Post
         .includes(topic: :category)
-        .where(user_id: @current_user.id)
-        .select(:topic_id, :post_number, :raw, :cooked, :like_count, :reply_count, :created_at)
+        .where(user_id: @archive_for_user.id)
+        .select(:id, :topic_id, :post_number, :raw, :cooked, :like_count, :reply_count, :created_at)
         .order(:created_at)
         .with_deleted
         .each { |user_archive| yield get_user_archive_fields(user_archive) }
@@ -220,13 +216,13 @@ module Jobs
       return enum_for(:user_archive_profile_export) unless block_given?
 
       UserProfile
-        .where(user_id: @current_user.id)
+        .where(user_id: @archive_for_user.id)
         .select(:location, :website, :bio_raw, :views)
         .each { |user_profile| yield get_user_archive_profile_fields(user_profile) }
     end
 
     def preferences_export
-      UserSerializer.new(@current_user, scope: guardian)
+      UserSerializer.new(@archive_for_user, scope: guardian)
     end
 
     def preferences_filetype
@@ -237,7 +233,7 @@ module Jobs
       return enum_for(:auth_tokens) unless block_given?
 
       UserAuthToken
-        .where(user_id: @current_user.id)
+        .where(user_id: @archive_for_user.id)
         .each do |token|
           yield(
             [
@@ -258,14 +254,14 @@ module Jobs
 
     def include_auth_token_logs?
       # SiteSetting.verbose_auth_token_logging
-      UserAuthTokenLog.where(user_id: @current_user.id).exists?
+      UserAuthTokenLog.where(user_id: @archive_for_user.id).exists?
     end
 
     def auth_token_logs_export
       return enum_for(:auth_token_logs) unless block_given?
 
       UserAuthTokenLog
-        .where(user_id: @current_user.id)
+        .where(user_id: @archive_for_user.id)
         .each do |log|
           yield(
             [
@@ -286,7 +282,7 @@ module Jobs
       return enum_for(:badges_export) unless block_given?
 
       UserBadge
-        .where(user_id: @current_user.id)
+        .where(user_id: @archive_for_user.id)
         .joins(:badge)
         .select(
           :badge_id,
@@ -318,7 +314,7 @@ module Jobs
     def bookmarks_export
       return enum_for(:bookmarks_export) unless block_given?
 
-      @current_user
+      @archive_for_user
         .bookmarks
         .where.not(bookmarkable_type: nil)
         .order(:id)
@@ -353,7 +349,7 @@ module Jobs
       return enum_for(:category_preferences_export) unless block_given?
 
       CategoryUser
-        .where(user_id: @current_user.id)
+        .where(user_id: @archive_for_user.id)
         .includes(:category)
         .merge(Category.secured(guardian))
         .each do |cu|
@@ -368,20 +364,24 @@ module Jobs
         end
     end
 
+    def post_action_type_view
+      @post_action_type_view ||= PostActionTypeView.new
+    end
+
     def flags_export
       return enum_for(:flags_export) unless block_given?
 
       PostAction
         .with_deleted
-        .where(user_id: @current_user.id)
-        .where(post_action_type_id: PostActionType.flag_types.values)
+        .where(user_id: @archive_for_user.id)
+        .where(post_action_type_id: post_action_type_view.flag_types.values)
         .order(:created_at)
         .each do |pa|
           yield(
             [
               pa.id,
               pa.post_id,
-              PostActionType.flag_types[pa.post_action_type_id],
+              post_action_type_view.flag_types[pa.post_action_type_id],
               pa.created_at,
               pa.updated_at,
               pa.deleted_at,
@@ -397,34 +397,44 @@ module Jobs
 
     def likes_export
       return enum_for(:likes_export) unless block_given?
+
       PostAction
         .with_deleted
-        .where(user_id: @current_user.id)
-        .where(post_action_type_id: PostActionType.types[:like])
-        .order(:created_at)
-        .each do |pa|
-          post = Post.with_deleted.find_by(id: pa.post_id)
-          yield(
-            [
-              pa.id,
-              pa.post_id,
-              post&.topic_id,
-              post&.post_number,
-              pa.created_at,
-              pa.updated_at,
-              pa.deleted_at,
-              self_or_other(pa.deleted_by_id),
-            ]
-          )
+        .where(user_id: @archive_for_user.id)
+        .where(post_action_type_id: post_action_type_view.types[:like])
+        .in_batches(of: 1000) do |batch|
+          posts_by_id =
+            Post
+              .with_deleted
+              .where(id: batch.select(:post_id))
+              .select(:id, :topic_id, :post_number)
+              .index_by(&:id)
+
+          batch.each do |pa|
+            post = posts_by_id[pa.post_id]
+            yield(
+              [
+                pa.id,
+                pa.post_id,
+                post&.topic_id,
+                post&.post_number,
+                pa.created_at,
+                pa.updated_at,
+                pa.deleted_at,
+                self_or_other(pa.deleted_by_id),
+              ]
+            )
+          end
         end
     end
 
     def include_post_actions?
       # Most forums should not have post_action records other than flags and likes, but they are possible in historical oddities.
       PostAction
-        .where(user_id: @current_user.id)
+        .where(user_id: @archive_for_user.id)
         .where.not(
-          post_action_type_id: PostActionType.flag_types.values + [PostActionType.types[:like]],
+          post_action_type_id:
+            post_action_type_view.flag_types.values + [post_action_type_view.types[:like]],
         )
         .exists?
     end
@@ -433,9 +443,10 @@ module Jobs
       return enum_for(:likes_export) unless block_given?
       PostAction
         .with_deleted
-        .where(user_id: @current_user.id)
+        .where(user_id: @archive_for_user.id)
         .where.not(
-          post_action_type_id: PostActionType.flag_types.values + [PostActionType.types[:like]],
+          post_action_type_id:
+            post_action_type_view.flag_types.values + [post_action_type_view.types[:like]],
         )
         .order(:created_at)
         .each do |pa|
@@ -443,7 +454,7 @@ module Jobs
             [
               pa.id,
               pa.post_id,
-              PostActionType.types[pa.post_action_type] || pa.post_action_type,
+              post_action_type_view.types[pa.post_action_type] || pa.post_action_type,
               pa.created_at,
               pa.updated_at,
               pa.deleted_at,
@@ -459,7 +470,7 @@ module Jobs
 
       # Most Reviewable fields staff-private, but post content needs to be exported.
       ReviewableQueuedPost
-        .where(target_created_by_id: @current_user.id)
+        .where(target_created_by_id: @archive_for_user.id)
         .order(:created_at)
         .each do |rev|
           yield(
@@ -479,7 +490,7 @@ module Jobs
       return enum_for(:visits_export) unless block_given?
 
       UserVisit
-        .where(user_id: @current_user.id)
+        .where(user_id: @archive_for_user.id)
         .order(visited_at: :asc)
         .each { |uv| yield [uv.visited_at, uv.posts_read, uv.mobile, uv.time_read] }
     end
@@ -506,8 +517,34 @@ module Jobs
 
     private
 
+    def create_upload_for_user(user_export, zip_filename)
+      upload = nil
+      if File.exist?(zip_filename)
+        File.open(zip_filename) do |file|
+          upload =
+            UploadCreator.new(
+              file,
+              File.basename(zip_filename),
+              type: "csv_export",
+              for_export: "true",
+            ).create_for(@requesting_user.id)
+
+          if upload.persisted?
+            user_export.update_columns(upload_id: upload.id)
+          else
+            Rails.logger.warn(
+              "Failed to upload the file #{zip_filename}: #{upload.errors.full_messages}",
+            )
+          end
+        end
+
+        File.delete(zip_filename)
+      end
+      upload
+    end
+
     def guardian
-      @guardian ||= Guardian.new(@current_user)
+      @guardian ||= Guardian.new(@archive_for_user)
     end
 
     def piped_category_name(category_id, category)
@@ -523,7 +560,7 @@ module Jobs
     def self_or_other(user_id)
       if user_id.nil?
         nil
-      elsif user_id == @current_user.id
+      elsif user_id == @archive_for_user.id
         "self"
       else
         "other"
@@ -533,7 +570,10 @@ module Jobs
     def get_user_archive_fields(user_archive)
       user_archive_array = []
       topic_data = user_archive.topic
-      user_archive = user_archive.as_json
+      user_archive =
+        user_archive.as_json(
+          only: %i[topic_id post_number raw cooked like_count reply_count created_at id],
+        )
       topic_data =
         Topic
           .with_deleted
@@ -560,6 +600,7 @@ module Jobs
         "categories" => categories,
         "is_pm" => is_pm,
         "url" => url,
+        "post_id" => user_archive["id"],
       }
 
       user_archive.merge!(topic_hash)
@@ -596,20 +637,35 @@ module Jobs
       %w[composer_open_duration_msecs is_poll reply_to_post_number tags title typing_duration_msecs]
     end
 
-    def notify_user(upload, export_title)
+    def notify_user(export, export_title)
       post = nil
 
-      if @current_user
+      if @requesting_user
         post =
-          if upload.persisted?
+          if export.upload&.persisted?
+            ::MessageBus.publish(
+              "/user-export-progress",
+              {
+                user_export_id: @archive_for_user.id,
+                export_data: UserExportSerializer.new(export, scope: guardian).as_json,
+              },
+              user_ids: [@requesting_user.id],
+            )
+
             SystemMessage.create_from_system_user(
-              @current_user,
+              @requesting_user,
               :csv_export_succeeded,
-              download_link: UploadMarkdown.new(upload).attachment_markdown,
+              download_link: UploadMarkdown.new(export.upload).attachment_markdown,
               export_title: export_title,
             )
           else
-            SystemMessage.create_from_system_user(@current_user, :csv_export_failed)
+            ::MessageBus.publish(
+              "/user-export-progress",
+              { user_export_id: @archive_for_user.id, failed: true },
+              user_ids: [@requesting_user.id],
+            )
+
+            SystemMessage.create_from_system_user(@requesting_user, :csv_export_failed)
           end
       end
 

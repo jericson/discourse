@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-RSpec.describe "Viewing User Menu", system: true do
+RSpec.describe "Viewing User Menu" do
   fab!(:user)
 
   let(:user_menu) { PageObjects::Components::UserMenu.new }
@@ -21,6 +21,44 @@ RSpec.describe "Viewing User Menu", system: true do
       user_menu.open
 
       expect(user_menu).to have_notification_count_of(2)
+    end
+  end
+
+  describe "when clicking a notification in the bookmarks tab" do
+    fab!(:post)
+    fab!(:bookmark) { Fabricate(:bookmark, user: user, bookmarkable: post) }
+    fab!(:bookmark_reminder) do
+      Fabricate(
+        :notification,
+        user: user,
+        topic: post.topic,
+        post_number: post.post_number,
+        notification_type: Notification.types[:bookmark_reminder],
+        data: {
+          bookmark_id: bookmark.id,
+          bookmarkable_type: bookmark.bookmarkable_type,
+          bookmarkable_id: bookmark.bookmarkable_id,
+          title: post.topic.title,
+          bookmark_name: "reminder",
+        }.to_json,
+      )
+    end
+
+    it "does not raise a JS error on click" do
+      sign_in(user)
+      visit("/latest")
+
+      page_errors = []
+      page.driver.with_playwright_page do |pw_page|
+        pw_page.on("pageerror", ->(error) { page_errors << error.message })
+      end
+
+      user_menu.open
+      user_menu.click_bookmarks_tab
+      find("#quick-access-bookmarks li.bookmark-reminder a").click
+
+      expect(page).to have_current_path(%r{/t/})
+      expect(page_errors).to be_empty
     end
   end
 
@@ -47,6 +85,101 @@ RSpec.describe "Viewing User Menu", system: true do
       user_menu.click_replies_notifications_tab
 
       expect(user_menu).to have_group_mentioned_notification(topic, user, mentionable_group)
+    end
+
+    context "with SiteSetting.prioritize_full_name_in_ux=true" do
+      before { SiteSetting.prioritize_full_name_in_ux = true }
+
+      it "should display user full name in mention notifications" do
+        Jobs.run_immediately!
+
+        user = Fabricate(:user)
+        user2 = Fabricate(:user, name: "John Doe")
+        PostCreator.create!(user, topic_id: topic.id, raw: "Hello @#{user2.username}")
+
+        sign_in(user2)
+
+        visit("/latest")
+
+        user_menu.open
+
+        expect(user_menu).to have_right_replies_button_count(1)
+
+        user_menu.click_replies_notifications_tab
+
+        expect(user_menu).to have_user_full_name_mentioned_notification(topic, user)
+      end
+
+      it "should display user full name in message notification" do
+        Jobs.run_immediately!
+
+        user = Fabricate(:moderator)
+        user2 = Fabricate(:user, name: "John Doe")
+        post =
+          PostCreator.create!(
+            user,
+            title: "message",
+            raw: "private message",
+            archetype: Archetype.private_message,
+            target_usernames: [user2.username],
+          )
+
+        sign_in(user2)
+
+        visit("/latest")
+        user_menu.open
+
+        expect(user_menu).to have_user_full_name_messaged_notification(post, user)
+      end
+
+      it "should display user full name in bookmark notification" do
+        Jobs.run_immediately!
+
+        user = Fabricate(:moderator)
+        user2 = Fabricate(:user, name: "John Doe")
+        post =
+          PostCreator.create!(
+            user,
+            title: "message in a bottle",
+            raw: "private message",
+            archetype: Archetype.private_message,
+            target_usernames: [user2.username],
+          )
+        Bookmark.create!(bookmarkable: post, user: user2)
+        sign_in(user2)
+
+        visit("/latest")
+        user_menu.open
+        user_menu.click_bookmarks_tab
+        expect(user_menu).to have_user_full_name_bookmarked_notification(post, user)
+      end
+    end
+
+    context "with SiteSetting.prioritize_full_name_in_ux=false" do
+      before { SiteSetting.prioritize_full_name_in_ux = false }
+
+      it "should display only username in mention notifications" do
+        Jobs.run_immediately!
+
+        SiteSetting.prioritize_username_in_ux = true
+
+        user = Fabricate(:user)
+        user2 = Fabricate(:user, name: "John Doe")
+
+        PostCreator.create!(user, topic_id: topic.id, raw: "Hello @#{user2.username}")
+
+        sign_in(user2)
+
+        visit("/latest")
+
+        user_menu.open
+
+        expect(user_menu).to have_right_replies_button_count(1)
+
+        user_menu.click_replies_notifications_tab
+
+        expect(user_menu).to have_user_username_mentioned_notification(topic, user)
+      end
     end
   end
 end

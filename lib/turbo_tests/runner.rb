@@ -12,8 +12,6 @@ module TurboTests
       use_runtime_info = opts.fetch(:use_runtime_info, false)
       retry_and_log_flaky_tests = opts.fetch(:retry_and_log_flaky_tests, false)
 
-      STDOUT.puts "VERBOSE" if verbose
-
       reporter =
         Reporter.from_config(
           formatters,
@@ -40,14 +38,6 @@ module TurboTests
         profile: opts[:profile],
         retry_and_log_flaky_tests: retry_and_log_flaky_tests,
       ).run
-    end
-
-    def self.default_spec_folders
-      # We do not want to include system specs by default, they are quite slow.
-      Dir
-        .entries("#{Rails.root}/spec")
-        .reject { |entry| !File.directory?("spec/#{entry}") || %w[.. . system].include?(entry) }
-        .map { |entry| "spec/#{entry}" }
     end
 
     def initialize(opts)
@@ -115,25 +105,11 @@ module TurboTests
     protected
 
     def check_for_migrations
-      config =
-        ActiveRecord::Base
-          .configurations
-          .find_db_config("test")
-          .configuration_hash
-          .merge("database" => "discourse_test_1")
-
       ActiveRecord::Tasks::DatabaseTasks.migrations_paths = %w[db/migrate db/post_migrate]
-
-      conn = ActiveRecord::Base.establish_connection(config).connection
-
-      begin
-        ActiveRecord::Migration.check_pending!(conn)
-      rescue ActiveRecord::PendingMigrationError
-        puts "There are pending migrations, run rake parallel:migrate"
-        exit 1
-      ensure
-        conn.close
-      end
+      ActiveRecord::Migration.check_all_pending!
+    rescue ActiveRecord::PendingMigrationError
+      STDERR.puts "There are pending migrations, run rake parallel:migrate"
+      exit 1
     end
 
     def setup_tmp_dir
@@ -175,8 +151,14 @@ module TurboTests
     end
 
     def start_subprocess(env, extra_args, tests, process_id, record_runtime:)
+      exit_message = {
+        type: "exit",
+        process_id:,
+        start_time: Process.clock_gettime(Process::CLOCK_MONOTONIC),
+      }
+
       if tests.empty?
-        @messages << { type: "exit", process_id: process_id }
+        @messages << exit_message
       else
         tmp_filename = "tmp/test-pipes/subprocess-#{process_id}"
 
@@ -233,7 +215,7 @@ module TurboTests
             end
           end
 
-          @messages << { type: "exit", process_id: process_id }
+          @messages << exit_message
         end
 
         @threads << start_copy_thread(stdout, STDOUT)
@@ -308,7 +290,11 @@ module TurboTests
             exited += 1
 
             if @reporter.formatters.any? { |f| f.is_a?(DocumentationFormatter) }
-              @reporter.message("[#{message[:process_id]}] DONE (#{exited}/#{@num_processes + 1})")
+              duration = Process.clock_gettime(Process::CLOCK_MONOTONIC) - message[:start_time]
+
+              @reporter.message(
+                "[#{message[:process_id]}] DONE (#{exited}/#{@num_processes + 1}) #{duration.round(2)}s",
+              )
             end
 
             break if exited == @num_processes + 1

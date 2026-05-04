@@ -4,14 +4,25 @@ RSpec.describe UserMerger do
   fab!(:target_user) { Fabricate(:user, username: "galahad", email: "galahad@knights.com") }
   fab!(:source_user) { Fabricate(:user, username: "lancelot", email: "lancelot@knights.com") }
 
-  fab!(:poll_regular) { Fabricate(:poll) }
+  fab!(:poll_regular, :poll)
   fab!(:poll_regular_option1) { Fabricate(:poll_option, poll: poll_regular, html: "Option 1") }
   fab!(:poll_regular_option2) { Fabricate(:poll_option, poll: poll_regular, html: "Option 2") }
 
-  fab!(:poll_multiple) { Fabricate(:poll) }
+  fab!(:poll_multiple, :poll)
   fab!(:poll_multiple_optionA) { Fabricate(:poll_option, poll: poll_multiple, html: "Option A") }
   fab!(:poll_multiple_optionB) { Fabricate(:poll_option, poll: poll_multiple, html: "Option B") }
   fab!(:poll_multiple_optionC) { Fabricate(:poll_option, poll: poll_multiple, html: "Option C") }
+
+  fab!(:poll_ranked_choice, :poll)
+  fab!(:poll_ranked_choice_optionA) do
+    Fabricate(:poll_option, poll: poll_ranked_choice, html: "Option A")
+  end
+  fab!(:poll_ranked_choice_optionB) do
+    Fabricate(:poll_option, poll: poll_ranked_choice, html: "Option B")
+  end
+  fab!(:poll_ranked_choice_optionC) do
+    Fabricate(:poll_option, poll: poll_ranked_choice, html: "Option C")
+  end
 
   it "will end up with no votes from source user" do
     Fabricate(:poll_vote, poll: poll_regular, user: source_user, poll_option: poll_regular_option2)
@@ -55,6 +66,22 @@ RSpec.describe UserMerger do
     expect(PollVote.where(user: target_user).pluck(:poll_option_id)).to contain_exactly(
       poll_multiple_optionA.id,
       poll_regular_option1.id,
+    )
+  end
+
+  it "will use source user's vote if poll was the ranked choice type" do
+    Fabricate(
+      :poll_vote,
+      poll: poll_ranked_choice,
+      user: source_user,
+      poll_option: poll_ranked_choice_optionA,
+      rank: 2,
+    )
+
+    DiscourseEvent.trigger(:merging_users, source_user, target_user)
+
+    expect(PollVote.where(user: target_user).pluck(:poll_option_id)).to contain_exactly(
+      poll_ranked_choice_optionA.id,
     )
   end
 

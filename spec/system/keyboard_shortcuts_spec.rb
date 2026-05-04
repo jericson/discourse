@@ -1,6 +1,55 @@
 # frozen_string_literal: true
 
-RSpec.describe "Keyboard shortcuts", type: :system do
+RSpec.describe "Keyboard shortcuts" do
+  it "can have default keyboard shortcuts disabled by the Plugin API" do
+    sign_in Fabricate(:admin)
+
+    t = Fabricate(:theme, name: "Theme With Tests")
+    t.set_field(
+      target: :extra_js,
+      type: :js,
+      name: "discourse/lib/pre-initializers/testing.js",
+      value: <<~JS,
+        import { withPluginApi } from "discourse/lib/plugin-api";
+        export default {
+          name: "disable-default-keyboard-shortcuts",
+          initialize() {
+            withPluginApi("1.6.0", (api) => {
+              // disable open shortcut modal
+              api.disableDefaultKeyboardShortcuts(["?"])
+            })
+          },
+        };
+      JS
+    )
+    t.save!
+    SiteSetting.default_theme_id = t.id
+
+    visit "/"
+    page.send_keys("?")
+    expect(page).to have_no_css(".keyboard-shortcuts-modal")
+  end
+
+  describe "<d>" do
+    fab!(:post)
+
+    let(:current_user) { Fabricate(:user) }
+    let(:topic_page) { PageObjects::Pages::Topic.new }
+    let(:dialog) { PageObjects::Components::Dialog.new }
+
+    before { sign_in(current_user) }
+
+    context "when user can't delete the post" do
+      it "doesn’t show the confirmation modal" do
+        topic_page.visit_topic(post.topic)
+
+        send_keys("j d")
+
+        expect(dialog).to be_closed
+      end
+    end
+  end
+
   describe "<a>" do
     let(:current_user) { topic.user }
     let(:topic_page) { PageObjects::Pages::Topic.new }
@@ -8,7 +57,7 @@ RSpec.describe "Keyboard shortcuts", type: :system do
     before { sign_in(current_user) }
 
     context "when on a private message page" do
-      fab!(:topic) { Fabricate(:private_message_topic) }
+      fab!(:topic, :private_message_topic)
 
       context "when the message is not archived" do
         it "archives the message" do

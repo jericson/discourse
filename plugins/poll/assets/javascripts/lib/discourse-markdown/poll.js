@@ -1,5 +1,5 @@
 /*eslint no-bitwise:0 */
-import I18n from "discourse-i18n";
+import { i18n } from "discourse-i18n";
 
 const DATA_PREFIX = "data-poll-";
 const DEFAULT_POLL = { name: "poll", status: "open" };
@@ -16,6 +16,7 @@ const ALLOWED_ATTRIBUTES = [
   "status",
   "step",
   "type",
+  "dynamic",
 ];
 
 function addNumberListItems(state, pollTokens, min, max, step) {
@@ -97,7 +98,7 @@ function addPollInfo(state) {
   token.block = false;
 
   token = state.push("text", "", 0);
-  token.content = I18n.t("poll.voters", { count: 0 });
+  token.content = i18n("poll.voters", { count: 0 });
 
   state.push("poll_info_label_close", "span", -1);
   state.push("poll_info_counts_count_close", "div", -1);
@@ -339,9 +340,9 @@ function md51(s) {
   s = s.substring(i - 64);
   let tail = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
   for (i = 0; i < s.length; i++) {
-    tail[i >> 2] |= s.charCodeAt(i) << (i % 4 << 3);
+    tail[i >> 2] |= s.charCodeAt(i) << ((i % 4) << 3);
   }
-  tail[i >> 2] |= 0x80 << (i % 4 << 3);
+  tail[i >> 2] |= 0x80 << ((i % 4) << 3);
   if (i > 55) {
     md5cycle(state, tail);
     for (i = 0; i < 16; i++) {

@@ -7,13 +7,12 @@
 # url: https://github.com/discourse/discourse/tree/main/plugins/discourse-narrative-bot
 
 enabled_site_setting :discourse_narrative_bot_enabled
-hide_plugin
 
 require_relative "lib/discourse_narrative_bot/welcome_post_type_site_setting"
 register_asset "stylesheets/discourse-narrative-bot.scss"
 
 module ::DiscourseNarrativeBot
-  PLUGIN_NAME = "discourse-narrative-bot".freeze
+  PLUGIN_NAME = "discourse-narrative-bot"
   BOT_USER_ID = -2
 end
 
@@ -39,7 +38,7 @@ after_initialize do
   RailsMultisite::ConnectionManagement.safe_each_connection do
     if SiteSetting.discourse_narrative_bot_enabled
       # Disable welcome message because that is what the bot is supposed to replace.
-      SiteSetting.send_welcome_message = false
+      SiteSetting.send_welcome_message = false if SiteSetting.send_welcome_message
 
       certificate_path = "#{Discourse.base_url}/discobot/certificate.svg"
       if !SiteSetting.allowed_iframes.include?(certificate_path)
@@ -62,10 +61,6 @@ after_initialize do
   end
 
   self.on(:user_unstaged) { |user| user.enqueue_bot_welcome_post }
-
-  self.add_model_callback(UserOption, :after_save) do
-    user.delete_bot_welcome_post if saved_change_to_skip_new_user_tips? && self.skip_new_user_tips
-  end
 
   self.add_to_class(:user, :enqueue_bot_welcome_post) do
     return if SiteSetting.disable_discourse_narrative_bot_welcome_post
@@ -92,34 +87,7 @@ after_initialize do
   self.add_to_class(:user, :enqueue_narrative_bot_job?) do
     SiteSetting.discourse_narrative_bot_enabled && self.human? && !self.anonymous? &&
       !self.staged &&
-      !SiteSetting
-        .discourse_narrative_bot_ignored_usernames
-        .split("|".freeze)
-        .include?(self.username)
-  end
-
-  self.add_to_class(:user, :delete_bot_welcome_post) do
-    data = DiscourseNarrativeBot::Store.get(self.id) || {}
-    topic_id = data[:topic_id]
-    return if topic_id.blank? || data[:track] != DiscourseNarrativeBot::NewUserNarrative.to_s
-
-    topic_user = topic_users.find_by(topic_id: topic_id)
-    return if topic_user.present? && topic_user.last_read_post_number.present?
-
-    topic = Topic.find_by(id: topic_id)
-    return if topic.blank?
-
-    first_post = topic.ordered_posts.first
-
-    notification = Notification.where(topic_id: topic.id, post_number: first_post.post_number).first
-    if notification.present?
-      Notification.read(self, notification.id)
-      self.reload
-      self.publish_notifications_state
-    end
-
-    PostDestroyer.new(Discourse.system_user, first_post, skip_staff_log: true).destroy
-    DiscourseNarrativeBot::Store.remove(self.id)
+      !SiteSetting.discourse_narrative_bot_ignored_usernames.split("|").include?(self.username)
   end
 
   self.on(:post_created) do |post, options|
@@ -214,13 +182,13 @@ after_initialize do
       raw =
         I18n.t(
           "discourse_narrative_bot.tl2_promotion_message.text_body_template",
-          discobot_username: ::DiscourseNarrativeBot::Base.new.discobot_username,
+          discobot_username: DiscourseNarrativeBot::Base.new.discobot_username,
           reset_trigger:
-            "#{::DiscourseNarrativeBot::TrackSelector.reset_trigger} #{::DiscourseNarrativeBot::AdvancedUserNarrative.reset_trigger}",
+            "#{DiscourseNarrativeBot::TrackSelector.reset_trigger} #{DiscourseNarrativeBot::AdvancedUserNarrative.reset_trigger}",
         )
 
       PostCreator.create!(
-        ::DiscourseNarrativeBot::Base.new.discobot_user,
+        DiscourseNarrativeBot::Base.new.discobot_user,
         title: I18n.t("discourse_narrative_bot.tl2_promotion_message.subject_template"),
         raw: raw,
         skip_validations: true,

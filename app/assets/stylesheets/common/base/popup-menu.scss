@@ -1,10 +1,9 @@
 // LEGACY STYLES
 // some plugins rely on these (discourse-topic-voting is one)
-
 .popup-menu {
   background-color: var(--secondary);
   width: 14em;
-  border: 1px solid var(--primary-low);
+  border: 1px solid var(--content-border-color);
   z-index: z("dropdown");
   box-shadow: var(--shadow-card);
 
@@ -13,7 +12,7 @@
     list-style: none;
 
     li {
-      border-bottom: 1px solid rgba(var(--primary-low-rgb), 0.5);
+      border-bottom: 1px solid rgb(var(--primary-low-rgb), 0.5);
 
       &:last-child {
         border: none;
@@ -58,11 +57,12 @@
 
       &:focus,
       &:hover {
+        background: var(--danger-low);
+
         .d-icon,
         .d-button-label {
           color: var(--danger);
         }
-        background: var(--danger-low);
       }
     }
   }

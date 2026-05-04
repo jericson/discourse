@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 class TagGroupsController < ApplicationController
+  MAX_TAG_GROUPS_SEARCH_RESULTS = 1000 # matches the max limit for max_tag_search_results setting
+
   requires_login except: [:search]
   before_action :ensure_staff, except: [:search]
 
@@ -51,6 +53,10 @@ class TagGroupsController < ApplicationController
     guardian.ensure_can_admin_tag_groups!
     @tag_group = TagGroup.new(tag_groups_params)
     if @tag_group.save
+      StaffActionLogger.new(current_user).log_tag_group_create(
+        @tag_group.name,
+        TagGroupSerializer.new(@tag_group).to_json(root: false),
+      )
       render_serialized(@tag_group, TagGroupSerializer)
     else
       render_json_error(@tag_group)
@@ -59,13 +65,26 @@ class TagGroupsController < ApplicationController
 
   def update
     guardian.ensure_can_admin_tag_groups!
+    old_data = TagGroupSerializer.new(@tag_group).to_json(root: false)
     json_result(@tag_group, serializer: TagGroupSerializer) do |tag_group|
-      @tag_group.update(tag_groups_params)
+      if @tag_group.update(tag_groups_params)
+        new_data = TagGroupSerializer.new(@tag_group).to_json(root: false)
+        StaffActionLogger.new(current_user).log_tag_group_change(
+          @tag_group.name,
+          old_data,
+          new_data,
+        )
+        true
+      end
     end
   end
 
   def destroy
     guardian.ensure_can_admin_tag_groups!
+    StaffActionLogger.new(current_user).log_tag_group_destroy(
+      @tag_group.name,
+      TagGroupSerializer.new(@tag_group).to_json(root: false),
+    )
     @tag_group.destroy
     render json: success_json
   end
@@ -81,12 +100,25 @@ class TagGroupsController < ApplicationController
 
     matches =
       matches.order("name").limit(
-        fetch_limit_from_params(default: 5, max: SiteSetting.max_tag_search_results),
+        fetch_limit_from_params(
+          default: SiteSetting.max_tag_search_results,
+          max: MAX_TAG_GROUPS_SEARCH_RESULTS,
+        ),
       )
 
     render json: {
              results:
-               matches.map { |x| { name: x.name, tag_names: x.tags.base_tags.pluck(:name).sort } },
+               matches.map do |x|
+                 {
+                   name: x.name,
+                   tags:
+                     x
+                       .tags
+                       .base_tags
+                       .pluck(:id, :name, :slug)
+                       .map { |id, name, slug| { id:, name:, slug: } },
+                 }
+               end,
            }
   end
 
@@ -101,10 +133,67 @@ class TagGroupsController < ApplicationController
     params.merge!(tag_group.permit!) if tag_group
 
     result =
-      params.permit(:id, :name, :one_per_topic, tag_names: [], parent_tag_name: [], permissions: {})
+      params.permit(
+        :id,
+        :name,
+        :one_per_topic,
+        tags: %i[id name slug],
+        tag_names: [],
+        parent_tag: %i[id name slug],
+        parent_tag_name: [],
+        permissions: {
+        },
+      )
 
-    result[:tag_names] ||= []
-    result[:parent_tag_name] ||= []
+    if result[:tags].present?
+      result[:tag_ids] = result[:tags].filter_map { |t| t["id"] }
+
+      new_tag_names = result[:tags].filter_map { |t| t["name"] if t["id"].blank? }
+
+      if new_tag_names.present?
+        result[:tag_ids].concat(
+          DiscourseTagging.find_or_create_tags!(
+            new_tag_names,
+            Guardian.new(Discourse.system_user),
+          ).map(&:id),
+        )
+      end
+    elsif result[:tag_names].present?
+      Discourse.deprecate(
+        "the tag_names param is deprecated, use tags instead",
+        since: "2026.01",
+        drop_from: "2026.07",
+      )
+    else
+      result[:tag_names] = []
+    end
+    result.delete(:tags)
+
+    if result[:parent_tag].present?
+      parent = result[:parent_tag].first
+
+      if parent&.dig("id").present?
+        result[:parent_tag_id] = parent["id"]
+      elsif parent&.dig("name").present?
+        tag =
+          DiscourseTagging.find_or_create_tags!(
+            [parent["name"]],
+            Guardian.new(Discourse.system_user),
+          ).first
+
+        result[:parent_tag_id] = tag.id if tag
+      end
+    elsif result[:parent_tag_name].present?
+      Discourse.deprecate(
+        "the parent_tag_name param is deprecated, use parent_tag instead",
+        since: "2026.01",
+        drop_from: "2026.07",
+      )
+    else
+      result[:parent_tag_name] = []
+    end
+    result.delete(:parent_tag)
+
     result[:one_per_topic] = params[:one_per_topic].in?([true, "true"])
 
     result

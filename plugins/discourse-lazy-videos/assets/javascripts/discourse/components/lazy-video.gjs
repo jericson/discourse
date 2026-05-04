@@ -3,8 +3,9 @@ import { tracked } from "@glimmer/tracking";
 import { concat } from "@ember/helper";
 import { on } from "@ember/modifier";
 import { action } from "@ember/object";
-import { htmlSafe } from "@ember/template";
+import { trustHTML } from "@ember/template";
 import concatClass from "discourse/helpers/concat-class";
+import { i18n } from "discourse-i18n";
 import LazyIframe from "./lazy-iframe";
 
 export default class LazyVideo extends Component {
@@ -13,7 +14,7 @@ export default class LazyVideo extends Component {
   get thumbnailStyle() {
     const color = this.args.videoAttributes.dominantColor;
     if (color?.match(/^[0-9A-Fa-f]+$/)) {
-      return htmlSafe(`background-color: #${color};`);
+      return trustHTML(`background-color: #${color};`);
     }
   }
 
@@ -27,7 +28,7 @@ export default class LazyVideo extends Component {
 
   @action
   onKeyPress(event) {
-    if (event.key === "Enter") {
+    if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       this.loadEmbed();
     }
@@ -55,8 +56,13 @@ export default class LazyVideo extends Component {
       {{else}}
         <div
           {{on "click" this.loadEmbed}}
-          {{on "keypress" this.loadEmbed}}
+          {{on "keypress" this.onKeyPress}}
+          role="button"
           tabindex="0"
+          aria-label={{i18n
+            "lazy_videos.play_video"
+            title=@videoAttributes.title
+          }}
           style={{this.thumbnailStyle}}
           class={{concatClass "video-thumbnail" @videoAttributes.providerName}}
         >

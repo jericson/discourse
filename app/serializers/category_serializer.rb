@@ -1,14 +1,24 @@
 # frozen_string_literal: true
 
 class CategorySerializer < SiteCategorySerializer
+  include BasicCategoryAttributes
+
   class CategorySettingSerializer < ApplicationSerializer
     attributes :auto_bump_cooldown_days,
                :num_auto_bump_daily,
                :require_reply_approval,
-               :require_topic_approval
+               :require_topic_approval,
+               :nested_replies_default,
+               :topic_posting_review_mode,
+               :reply_posting_review_mode
   end
 
-  attributes :read_restricted,
+  class CategoryLocalizationSerializer < ApplicationSerializer
+    attributes :id, :locale, :name, :description
+  end
+
+  attributes :locale,
+             :read_restricted,
              :available_groups,
              :auto_close_hours,
              :auto_close_based_on_last_post,
@@ -26,17 +36,21 @@ class CategorySerializer < SiteCategorySerializer
              :custom_fields,
              :topic_featured_link_allowed,
              :search_priority,
-             :reviewable_by_group_name,
-             :default_slow_mode_seconds
+             :moderating_group_ids,
+             :topic_posting_review_group_ids,
+             :reply_posting_review_group_ids,
+             :default_slow_mode_seconds,
+             :style_type,
+             :emoji,
+             :icon,
+             :category_types,
+             :available_category_types
 
   has_one :category_setting, serializer: CategorySettingSerializer, embed: :objects
+  has_many :category_localizations, serializer: CategoryLocalizationSerializer, embed: :objects
 
-  def reviewable_by_group_name
-    object.reviewable_by_group.name
-  end
-
-  def include_reviewable_by_group_name?
-    SiteSetting.enable_category_group_moderation? && object.reviewable_by_group_id.present?
+  def include_moderating_group_ids?
+    SiteSetting.enable_category_group_moderation?
   end
 
   def include_category_setting?
@@ -52,12 +66,19 @@ class CategorySerializer < SiteCategorySerializer
             .joins(:group)
             .includes(:group)
             .merge(Group.visible_groups(scope&.user, "groups.name ASC", include_everyone: true))
-            .map { |cg| { permission_type: cg.permission_type, group_name: cg.group.name } }
+            .map do |cg|
+              {
+                permission_type: cg.permission_type,
+                group_name: cg.group.name,
+                group_id: cg.group_id,
+              }
+            end
 
         if perms.length == 0 && !object.read_restricted
           perms << {
             permission_type: CategoryGroup.permission_types[:full],
             group_name: Group[:everyone]&.name.presence || :everyone,
+            group_id: Group::AUTO_GROUPS[:everyone],
           }
         end
 
@@ -126,5 +147,23 @@ class CategorySerializer < SiteCategorySerializer
 
   def include_custom_fields?
     true
+  end
+
+  def name
+    category_name
+  end
+
+  def description
+    category_description
+  end
+
+  def category_types
+    return {} if !SiteSetting.enable_simplified_category_creation
+    object.category_types
+  end
+
+  def available_category_types
+    return [] if !SiteSetting.enable_simplified_category_creation
+    Categories::TypeRegistry.all.values.map(&:metadata)
   end
 end

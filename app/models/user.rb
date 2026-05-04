@@ -9,10 +9,7 @@ class User < ActiveRecord::Base
   include HasDeprecatedColumns
 
   DEFAULT_FEATURED_BADGE_COUNT = 3
-
-  PASSWORD_SALT_LENGTH = 16
-  TARGET_PASSWORD_ALGORITHM =
-    "$pbkdf2-#{Rails.configuration.pbkdf2_algorithm}$i=#{Rails.configuration.pbkdf2_iterations},l=32$"
+  MAX_SIMILAR_USERS = 10
 
   deprecate_column :flag_level, drop_from: "3.2"
 
@@ -69,7 +66,10 @@ class User < ActiveRecord::Base
   has_one :user_stat, dependent: :destroy
   has_one :user_profile, dependent: :destroy, inverse_of: :user
   has_one :single_sign_on_record, dependent: :destroy
-  has_one :anonymous_user_master, class_name: "AnonymousUser", dependent: :destroy
+  has_one :anonymous_user_master,
+          class_name: "AnonymousUser",
+          dependent: :destroy,
+          strict_loading: false
   has_one :anonymous_user_shadow,
           ->(record) { where(active: true) },
           foreign_key: :master_user_id,
@@ -77,7 +77,7 @@ class User < ActiveRecord::Base
           dependent: :destroy
   has_one :invited_user, dependent: :destroy
   has_one :user_notification_schedule, dependent: :destroy
-  has_many :passwords, class_name: "UserPassword", dependent: :destroy
+  has_one :user_password, class_name: "UserPassword", dependent: :destroy, autosave: true
 
   # delete all is faster but bypasses callbacks
   has_many :bookmarks, dependent: :delete_all
@@ -90,7 +90,9 @@ class User < ActiveRecord::Base
   has_many :muted_user_records, class_name: "MutedUser", dependent: :delete_all
   has_many :ignored_user_records, class_name: "IgnoredUser", dependent: :delete_all
   has_many :do_not_disturb_timings, dependent: :delete_all
+  has_many :reviewable_histories, foreign_key: :created_by_id, dependent: :delete_all
   has_many :sidebar_sections, dependent: :destroy
+  has_many :user_histories, foreign_key: :target_user_id
   has_one :user_status, dependent: :destroy
 
   # dependent deleting handled via before_destroy (special cases)
@@ -146,7 +148,7 @@ class User < ActiveRecord::Base
 
   delegate :last_sent_email_address, to: :email_logs
 
-  validates_presence_of :username
+  validates :username, presence: true
   validate :username_validator, if: :will_save_change_to_username?
   validate :password_validator
   validate :name_validator, if: :will_save_change_to_name?
@@ -166,6 +168,10 @@ class User < ActiveRecord::Base
 
   before_validation :set_skip_validate_email
 
+  before_save :update_usernames
+  before_save :match_primary_group_changes
+  before_save :check_if_title_is_badged_granted
+  before_save :apply_watched_words, unless: :should_skip_user_fields_validation?
   after_create :create_email_token
   after_create :create_user_stat
   after_create :create_user_option
@@ -175,7 +181,6 @@ class User < ActiveRecord::Base
   after_create :set_default_categories_preferences
   after_create :set_default_tags_preferences
   after_create :set_default_sidebar_section_links
-  after_create :refresh_user_directory, if: Proc.new { SiteSetting.bootstrap_mode_enabled }
   after_update :set_default_sidebar_section_links, if: Proc.new { self.saved_change_to_staged? }
 
   after_update :trigger_user_updated_event,
@@ -184,17 +189,10 @@ class User < ActiveRecord::Base
   after_update :trigger_user_automatic_group_refresh, if: :saved_change_to_staged?
   after_update :change_display_name, if: :saved_change_to_name?
 
-  before_save :update_usernames
-  before_save :ensure_password_is_hashed
-  before_save :match_primary_group_changes
-  before_save :check_if_title_is_badged_granted
-  before_save :apply_watched_words, unless: :should_skip_user_fields_validation?
-
   after_save :expire_tokens_if_password_changed
   after_save :clear_global_notice_if_needed
   after_save :refresh_avatar
   after_save :badge_grant
-  after_save :expire_old_email_tokens
   after_save :index_search
   after_save :check_site_contact_username
 
@@ -253,6 +251,12 @@ class User < ActiveRecord::Base
   # Cache for user custom fields. Currently it is used to display quick search results
   attr_accessor :custom_data
 
+  # Information if user was authenticated with OAuth
+  attr_accessor :authenticated_with_oauth
+
+  # Flag used when admin is impersonating a user
+  attr_accessor :is_impersonating
+
   scope :with_email,
         ->(email) { joins(:user_emails).where("lower(user_emails.email) IN (?)", email) }
 
@@ -294,6 +298,7 @@ class User < ActiveRecord::Base
   scope :not_suspended, -> { where("suspended_till IS NULL OR suspended_till <= ?", Time.zone.now) }
   scope :activated, -> { where(active: true) }
   scope :not_staged, -> { where(staged: false) }
+  scope :approved, -> { where(approved: true) }
 
   scope :filter_by_username,
         ->(filter) do
@@ -355,7 +360,7 @@ class User < ActiveRecord::Base
     LAST_VISIT = -2
   end
 
-  MAX_STAFF_DELETE_POST_COUNT ||= 5
+  MAX_STAFF_DELETE_POST_COUNT = 5
 
   def self.user_tips
     @user_tips ||=
@@ -398,7 +403,7 @@ class User < ActiveRecord::Base
   end
 
   def self.max_password_length
-    200
+    UserPassword::MAX_PASSWORD_LENGTH
   end
 
   def self.username_length
@@ -431,11 +436,9 @@ class User < ActiveRecord::Base
 
     return true if SiteSetting.here_mention == username
 
-    SiteSetting
-      .reserved_usernames
-      .unicode_normalize
-      .split("|")
-      .any? { |reserved| username.match?(/\A#{Regexp.escape(reserved).gsub('\*', ".*")}\z/) }
+    SiteSetting.reserved_usernames_map.any? do |reserved|
+      username.match?(/\A#{Regexp.escape(reserved.unicode_normalize).gsub('\*', ".*")}\z/)
+    end
   end
 
   def self.editable_user_custom_fields(by_staff: false)
@@ -479,7 +482,7 @@ class User < ActiveRecord::Base
   end
 
   def effective_locale
-    if SiteSetting.allow_user_locale && self.locale.present?
+    if SiteSetting.allow_user_locale && self.locale.present? && I18n.locale_available?(self.locale)
       self.locale
     else
       SiteSetting.default_locale
@@ -604,8 +607,20 @@ class User < ActiveRecord::Base
   end
 
   def invited_by
+    # this is unfortunate, but when an invite is redeemed,
+    # any user created by the invite is created *after*
+    # the invite's redeemed_at
+    invite_redemption_delay = 5.seconds
     used_invite =
-      Invite.with_deleted.joins(:invited_users).where("invited_users.user_id = ?", self.id).first
+      Invite
+        .with_deleted
+        .joins(:invited_users)
+        .where(
+          "invited_users.user_id = ? AND invited_users.redeemed_at <= ?",
+          self.id,
+          self.created_at + invite_redemption_delay,
+        )
+        .first
     used_invite.try(:invited_by)
   end
 
@@ -621,7 +636,7 @@ class User < ActiveRecord::Base
     User.email_hash(email)
   end
 
-  def reload
+  def reload(options = nil)
     @unread_notifications = nil
     @all_unread_notifications_count = nil
     @unread_total_notifications = nil
@@ -892,20 +907,74 @@ class User < ActiveRecord::Base
       payload = nil
     end
 
-    MessageBus.publish(
-      "/user-status",
-      { id => payload },
-      group_ids: [Group::AUTO_GROUPS[:trust_level_0]],
-    )
+    # When silenced, only the user themselves and staff should see the status
+    if silenced?
+      MessageBus.publish(
+        "/user-status",
+        { id => payload },
+        user_ids: [id],
+        group_ids: [Group::AUTO_GROUPS[:staff]],
+      )
+    else
+      MessageBus.publish(
+        "/user-status",
+        { id => payload },
+        group_ids: [Group::AUTO_GROUPS[:trust_level_0]],
+      )
+    end
   end
 
-  def password=(password)
+  def password=(pw)
     # special case for passwordless accounts
-    @raw_password = password if password.present?
+    return if pw.blank?
+
+    if user_password
+      user_password.password = pw
+    else
+      build_user_password(password: pw)
+    end
+    @raw_password = pw # still required to maintain compatibility with usage of password-related User interface
+  end
+
+  def can_remove_password?
+    associated_accounts.present? || passkey_credential_ids.present?
+  end
+
+  def remove_password
+    raise Discourse::InvalidAccess if !can_remove_password?
+
+    user_password.destroy if user_password
   end
 
   def password
     "" # so that validator doesn't complain that a password attribute doesn't exist
+  end
+
+  def password_hash
+    Discourse.deprecate(
+      "User#password_hash is deprecated, use UserPassword#password_hash instead.",
+      drop_from: "3.3",
+      raise_error: false,
+    )
+    user_password&.password_hash
+  end
+
+  def password_algorithm
+    Discourse.deprecate(
+      "User#password_algorithm is deprecated, use UserPassword#password_algorithm instead.",
+      drop_from: "3.3",
+      raise_error: false,
+    )
+    user_password&.password_algorithm
+  end
+
+  def salt
+    Discourse.deprecate(
+      "User#password_salt is deprecated, use UserPassword#password_salt instead.",
+      drop_from: "3.3",
+      raise_error: false,
+    )
+    user_password&.password_salt
   end
 
   # Indicate that this is NOT a passwordless account for the purposes of validation
@@ -922,7 +991,7 @@ class User < ActiveRecord::Base
   end
 
   def has_password?
-    password_hash.present?
+    user_password ? true : false
   end
 
   def password_validator
@@ -930,37 +999,23 @@ class User < ActiveRecord::Base
   end
 
   def password_expired?(password)
-    passwords
-      .where("password_expired_at IS NOT NULL AND password_expired_at < ?", Time.zone.now)
-      .any? do |user_password|
-        user_password.password_hash ==
-          hash_password(password, user_password.password_salt, user_password.password_algorithm)
-      end
+    return false if user_password.nil? || user_password.password_expired_at.nil?
+    user_password.password_hash ==
+      hash_password(password, user_password.password_salt, user_password.password_algorithm)
   end
 
   def confirm_password?(password)
-    return false unless password_hash && salt && password_algorithm
-    confirmed = self.password_hash == hash_password(password, salt, password_algorithm)
-
-    if confirmed && persisted? && password_algorithm != TARGET_PASSWORD_ALGORITHM
-      # Regenerate password_hash with new algorithm and persist
-      salt = SecureRandom.hex(PASSWORD_SALT_LENGTH)
-      update_columns(
-        password_algorithm: TARGET_PASSWORD_ALGORITHM,
-        salt: salt,
-        password_hash: hash_password(password, salt, TARGET_PASSWORD_ALGORITHM),
-      )
-    end
-
-    confirmed
+    return false if !user_password
+    user_password.confirm_password?(password)
   end
 
   def new_user_posting_on_first_day?
-    !staff? && trust_level < TrustLevel[2] &&
-      (
-        trust_level == TrustLevel[0] || self.first_post_created_at.nil? ||
-          self.first_post_created_at >= 24.hours.ago
-      )
+    return false if staff?
+    return false if trust_level >= TrustLevel[2]
+    if self.first_post_created_at.present? && self.first_post_created_at <= 24.hours.ago
+      return false
+    end
+    true
   end
 
   def new_user?
@@ -1023,6 +1078,10 @@ class User < ActiveRecord::Base
   end
 
   def self.update_ip_address!(user_id, new_ip:, old_ip:)
+    can_update_ip_address =
+      DiscoursePluginRegistry.apply_modifier(:user_can_update_ip_address, user_id: user_id)
+    return if !can_update_ip_address
+
     unless old_ip == new_ip || new_ip.blank?
       DB.exec(<<~SQL, user_id: user_id, ip_address: new_ip)
         UPDATE users
@@ -1140,7 +1199,7 @@ class User < ActiveRecord::Base
     normalized_username = normalize_username(username)
 
     # TODO it may be worth caching this in a distributed cache, should be benched
-    if SiteSetting.external_system_avatars_enabled
+    if SiteSetting.external_system_avatars_url.present?
       url = SiteSetting.external_system_avatars_url.dup
       url = +"#{Discourse.base_path}#{url}" unless url =~ %r{\Ahttps?://}
       url.gsub! "{color}", letter_avatar_color(normalized_username)
@@ -1210,10 +1269,14 @@ class User < ActiveRecord::Base
     stat.increment!(:post_edits_count)
   end
 
+  def post_action_type_view
+    @post_action_type_view ||= PostActionTypeView.new
+  end
+
   def flags_given_count
     PostAction.where(
       user_id: id,
-      post_action_type_id: PostActionType.flag_types_without_custom.values,
+      post_action_type_id: post_action_type_view.flag_types_without_additional_message.values,
     ).count
   end
 
@@ -1224,7 +1287,10 @@ class User < ActiveRecord::Base
   def flags_received_count
     posts
       .includes(:post_actions)
-      .where("post_actions.post_action_type_id" => PostActionType.flag_types_without_custom.values)
+      .where(
+        "post_actions.post_action_type_id" =>
+          post_action_type_view.flag_types_without_additional_message.values,
+      )
       .count
   end
 
@@ -1249,6 +1315,8 @@ class User < ActiveRecord::Base
   def delete_posts_in_batches(guardian, batch_size = 20)
     raise Discourse::InvalidAccess unless guardian.can_delete_all_posts? self
 
+    reviewable_ids = Reviewable.where(created_by_id: id).select(:id)
+    ReviewableNote.where(reviewable_id: reviewable_ids).delete_all
     Reviewable.where(created_by_id: id).delete_all
 
     posts
@@ -1261,16 +1329,30 @@ class User < ActiveRecord::Base
     !!(suspended_till && suspended_till > Time.zone.now)
   end
 
+  def silenced_till
+    main_user_record[:silenced_till]
+  end
+
   def silenced?
     !!(silenced_till && silenced_till > Time.zone.now)
   end
 
   def silenced_record
-    UserHistory.for(self, :silence_user).order("id DESC").first
+    user_histories.where(action: UserHistory.actions[:silence_user]).order("id DESC").first
+  end
+
+  def full_silence_reason
+    text = silenced_record.try(:details) if silenced?
+    return text if text.blank?
+    PrettyText.cleanup(text.gsub("\n", "<br>"))
   end
 
   def silence_reason
-    silenced_record.try(:details) if silenced?
+    if details = full_silence_reason
+      return details.split("<br>")[0]
+    end
+
+    nil
   end
 
   def silenced_at
@@ -1282,16 +1364,18 @@ class User < ActiveRecord::Base
   end
 
   def suspend_record
-    UserHistory.for(self, :suspend_user).order("id DESC").first
+    user_histories.where(action: UserHistory.actions[:suspend_user]).order("id DESC").first
   end
 
   def full_suspend_reason
-    suspend_record.try(:details) if suspended?
+    text = suspend_record.try(:details) if suspended?
+    return text if text.blank?
+    PrettyText.cleanup(text.gsub("\n", "<br>"))
   end
 
   def suspend_reason
     if details = full_suspend_reason
-      return details.split("\n")[0]
+      return details.split("<br>")[0]
     end
 
     nil
@@ -1437,7 +1521,7 @@ class User < ActiveRecord::Base
 
     disagreed_flag_post_ids =
       PostAction
-        .where(post_action_type_id: PostActionType.types[:spam])
+        .where(post_action_type_id: post_action_type_view.types[:spam])
         .where.not(disagreed_at: nil)
         .pluck(:post_id)
 
@@ -1517,12 +1601,28 @@ class User < ActiveRecord::Base
     result
   end
 
-  USER_FIELD_PREFIX ||= "user_field_"
+  USER_FIELD_PREFIX = "user_field_"
 
   def user_fields(field_ids = nil)
-    field_ids = (@all_user_field_ids ||= UserField.pluck(:id)) if field_ids.nil?
+    fields =
+      if field_ids.nil?
+        @all_user_field_types ||= UserField.pluck(:id, :field_type)
+      else
+        UserField.where(id: field_ids).pluck(:id, :field_type)
+      end
 
-    field_ids.map { |fid| [fid.to_s, custom_fields["#{USER_FIELD_PREFIX}#{fid}"]] }.to_h
+    fields
+      .map do |fid, ftype|
+        value =
+          if ftype == "confirm"
+            !!Helpers::CUSTOM_FIELD_TRUE.include?(custom_fields["#{USER_FIELD_PREFIX}#{fid}"])
+          else
+            custom_fields["#{USER_FIELD_PREFIX}#{fid}"]
+          end
+
+        [fid.to_s, value]
+      end
+      .to_h
   end
 
   def validatable_user_fields_values
@@ -1542,9 +1642,8 @@ class User < ActiveRecord::Base
   end
 
   def validatable_user_fields
-    # ignore multiselect fields since they are admin-set and thus not user generated content
-    @public_user_field_ids ||=
-      UserField.public_fields.where.not(field_type: "multiselect").pluck(:id)
+    # only validate fields that contain text content
+    @public_user_field_ids ||= UserField.public_fields.user_editable_text_fields.pluck(:id)
 
     user_fields(@public_user_field_ids)
   end
@@ -1553,24 +1652,43 @@ class User < ActiveRecord::Base
     Post.with_deleted.where(user_id: self.id).where.not(deleted_at: nil).count
   end
 
-  def number_of_flagged_posts
-    ReviewableFlaggedPost.where(target_created_by: self.id).count
+  def number_of_flags
+    Reviewable.where(target_created_by: self).count
   end
 
   def number_of_rejected_posts
-    ReviewableQueuedPost.rejected.where(target_created_by_id: self.id).count
+    goldiload do |ids|
+      ReviewableQueuedPost
+        .where(status: "rejected", target_created_by_id: ids)
+        .group(:target_created_by_id)
+        .count
+    end || 0
   end
 
   def number_of_flags_given
     PostAction
       .where(user_id: self.id)
       .where(disagreed_at: nil)
-      .where(post_action_type_id: PostActionType.notify_flag_type_ids)
+      .where(post_action_type_id: post_action_type_view.notify_flag_type_ids)
       .count
   end
 
+  def number_of_silencings
+    goldiload do |ids|
+      UserHistory
+        .where(target_user_id: ids, action: UserHistory.actions[:silence_user])
+        .group(:target_user_id)
+        .count
+    end || 0
+  end
+
   def number_of_suspensions
-    UserHistory.for(self, :suspend_user).count
+    goldiload do |ids|
+      UserHistory
+        .where(target_user_id: ids, action: UserHistory.actions[:suspend_user])
+        .group(:target_user_id)
+        .count
+    end || 0
   end
 
   def create_user_profile
@@ -1587,7 +1705,7 @@ class User < ActiveRecord::Base
   end
 
   def anonymous?
-    SiteSetting.allow_anonymous_posting && trust_level >= 1 && !!anonymous_user_master
+    SiteSetting.allow_anonymous_mode && trust_level >= 1 && !!anonymous_user_master
   end
 
   def is_singular_admin?
@@ -1660,7 +1778,7 @@ class User < ActiveRecord::Base
       .pluck(:new_email)
   end
 
-  RECENT_TIME_READ_THRESHOLD ||= 60.days
+  RECENT_TIME_READ_THRESHOLD = 60.days
 
   def self.preload_recent_time_read(users)
     times =
@@ -1835,24 +1953,42 @@ class User < ActiveRecord::Base
     in_any_groups?(SiteSetting.experimental_new_new_view_groups_map)
   end
 
-  def watched_precedence_over_muted
-    if user_option.watched_precedence_over_muted.nil?
-      SiteSetting.watched_precedence_over_muted
-    else
-      user_option.watched_precedence_over_muted
-    end
+  def populated_required_custom_fields?
+    UserField
+      .for_all_users
+      .pluck(:id)
+      .all? { |field_id| custom_fields["#{User::USER_FIELD_PREFIX}#{field_id}"].present? }
+  end
+
+  def needs_required_fields_check?
+    (required_fields_version || 0) < UserRequiredFieldsVersion.current
+  end
+
+  def bump_required_fields_version
+    update(required_fields_version: UserRequiredFieldsVersion.current)
+  end
+
+  def similar_users
+    return User.none if self.ip_address.blank?
+
+    User
+      .real
+      .where.not(id: self.id)
+      .where(ip_address: self.ip_address, admin: false, moderator: false)
+  end
+
+  def upcoming_change_enabled?(upcoming_change)
+    UpcomingChanges.enabled_for_user?(upcoming_change, self)
+  end
+
+  def upcoming_change_stats(acting_guardian)
+    UpcomingChanges.stats_for_user(user: self, acting_guardian: acting_guardian)
   end
 
   protected
 
   def badge_grant
     BadgeGranter.queue_badge_grant(Badge::Trigger::UserChange, user: self)
-  end
-
-  def expire_old_email_tokens
-    if saved_change_to_password_hash? && !saved_change_to_id?
-      email_tokens.where("not expired").update_all(expired: true)
-    end
   end
 
   def index_search
@@ -1863,7 +1999,7 @@ class User < ActiveRecord::Base
   def clear_global_notice_if_needed
     return if id < 0
 
-    if admin && SiteSetting.has_login_hint
+    if admin && active && SiteSetting.has_login_hint
       SiteSetting.has_login_hint = false
       SiteSetting.global_notice = ""
     end
@@ -1885,20 +2021,15 @@ class User < ActiveRecord::Base
     email_tokens.create!(email: email, scope: EmailToken.scopes[:signup])
   end
 
-  def ensure_password_is_hashed
-    if @raw_password
-      self.salt = SecureRandom.hex(PASSWORD_SALT_LENGTH)
-      self.password_algorithm = TARGET_PASSWORD_ALGORITHM
-      self.password_hash = hash_password(@raw_password, salt, password_algorithm)
-    end
-  end
-
   def expire_tokens_if_password_changed
     # NOTE: setting raw password is the only valid way of changing a password
     # the password field in the DB is actually hashed, nobody should be amending direct
     if @raw_password
       # Association in model may be out-of-sync
       UserAuthToken.where(user_id: id).destroy_all
+
+      email_tokens.where("not expired").update_all(expired: true) if !saved_change_to_id?
+
       # We should not carry this around after save
       @raw_password = nil
       @password_required = false
@@ -2022,7 +2153,7 @@ class User < ActiveRecord::Base
         end
     end
 
-    TagUser.insert_all!(values) if values.present?
+    TagUser.insert_all(values) if values.present?
   end
 
   def self.purge_unactivated
@@ -2077,11 +2208,21 @@ class User < ActiveRecord::Base
 
   private
 
+  def main_user_record
+    (anonymous? && master_user) ? master_user : self
+  end
+
   def set_default_sidebar_section_links(update: false)
     return if staged? || bot?
 
     if SiteSetting.default_navigation_menu_categories.present?
       categories_to_update = SiteSetting.default_navigation_menu_categories.split("|")
+      categories_to_update =
+        DiscoursePluginRegistry.apply_modifier(
+          :default_navigation_categories,
+          categories_to_update,
+          user: self,
+        )
 
       SidebarSectionLinksUpdater.update_category_section_links(
         self,
@@ -2175,10 +2316,6 @@ class User < ActiveRecord::Base
   def validate_status!(status)
     UserStatus.new(status).validate!
   end
-
-  def refresh_user_directory
-    DirectoryItem.refresh!
-  end
 end
 
 # == Schema Information
@@ -2190,10 +2327,7 @@ end
 #  created_at                :datetime         not null
 #  updated_at                :datetime         not null
 #  name                      :string
-#  seen_notification_id      :integer          default(0), not null
 #  last_posted_at            :datetime
-#  password_hash             :string(64)
-#  salt                      :string(32)
 #  active                    :boolean          default(FALSE), not null
 #  username_lower            :string(60)       not null
 #  last_seen_at              :datetime
@@ -2224,18 +2358,18 @@ end
 #  secure_identifier         :string
 #  flair_group_id            :integer
 #  last_seen_reviewable_id   :integer
-#  password_algorithm        :string(64)
+#  required_fields_version   :integer
+#  seen_notification_id      :bigint           default(0), not null
 #
 # Indexes
 #
-#  idx_users_admin                     (id) WHERE admin
-#  idx_users_moderator                 (id) WHERE moderator
-#  index_users_on_last_posted_at       (last_posted_at)
-#  index_users_on_last_seen_at         (last_seen_at)
-#  index_users_on_name_trgm            (name) USING gist
-#  index_users_on_secure_identifier    (secure_identifier) UNIQUE
-#  index_users_on_uploaded_avatar_id   (uploaded_avatar_id)
-#  index_users_on_username             (username) UNIQUE
-#  index_users_on_username_lower       (username_lower) UNIQUE
-#  index_users_on_username_lower_trgm  (username_lower) USING gist
+#  idx_users_admin                    (id) WHERE admin
+#  idx_users_ip_address               (ip_address)
+#  idx_users_moderator                (id) WHERE moderator
+#  index_users_on_last_posted_at      (last_posted_at)
+#  index_users_on_last_seen_at        (last_seen_at)
+#  index_users_on_secure_identifier   (secure_identifier) UNIQUE
+#  index_users_on_uploaded_avatar_id  (uploaded_avatar_id)
+#  index_users_on_username            (username) UNIQUE
+#  index_users_on_username_lower      (username_lower) UNIQUE
 #

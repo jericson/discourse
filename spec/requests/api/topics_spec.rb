@@ -4,6 +4,9 @@ require "swagger_helper"
 RSpec.describe "topics" do
   let(:"Api-Key") { Fabricate(:api_key).key }
   let(:"Api-Username") { "system" }
+  let(:user) { Fabricate(:user) }
+
+  before { sign_in(user) }
 
   path "/t/{id}/posts.json" do
     get "Get specific posts from a topic" do
@@ -372,6 +375,62 @@ RSpec.describe "topics" do
     end
   end
 
+  path "/t/{id}/invite-group.json" do
+    post "Invite group to topic" do
+      tags "Topics", "Invites"
+      operationId "inviteGroupToTopic"
+      consumes "application/json"
+      parameter name: "Api-Key", in: :header, type: :string, required: true
+      parameter name: "Api-Username", in: :header, type: :string, required: true
+      parameter name: :id, in: :path, schema: { type: :string }
+
+      parameter name: :request_body,
+                in: :body,
+                schema: {
+                  type: :object,
+                  properties: {
+                    group: {
+                      type: :string,
+                      description: "The name of the group to invite",
+                    },
+                    should_notify: {
+                      type: :boolean,
+                      description: "Whether to notify the group, it defaults to true",
+                    },
+                  },
+                }
+
+      produces "application/json"
+      response "200", "invites to a PM" do
+        schema type: :object,
+               properties: {
+                 group: {
+                   type: :object,
+                   properties: {
+                     id: {
+                       type: :integer,
+                     },
+                     name: {
+                       type: :string,
+                     },
+                   },
+                 },
+               }
+
+        let!(:admins) { Group[:admins] }
+        let(:request_body) { { group: admins.name } }
+        let(:pm) { Fabricate(:private_message_topic) }
+        let(:id) { pm.id }
+
+        run_test! do |response|
+          data = JSON.parse(response.body)
+          expect(data["group"]["name"]).to eq(admins.name)
+          expect(pm.allowed_groups.first.id).to eq(admins.id)
+        end
+      end
+    end
+  end
+
   path "/t/{id}/bookmark.json" do
     put "Bookmark topic" do
       tags "Topics"
@@ -462,6 +521,12 @@ RSpec.describe "topics" do
         in: :query,
         type: :string,
         description: "Defaults to `desc`, add `ascending=true` to sort asc",
+      )
+      parameter(
+        name: :per_page,
+        in: :query,
+        type: :integer,
+        description: "Maximum number of topics returned, between 1-100",
       )
 
       produces "application/json"
@@ -627,7 +692,7 @@ RSpec.describe "topics" do
                                    type: :integer,
                                  },
                                  primary_group_id: {
-                                   type: %i[string null],
+                                   type: %i[integer null],
                                  },
                                },
                              },
@@ -641,6 +706,7 @@ RSpec.describe "topics" do
 
         let(:order) { "default" }
         let(:ascending) { "false" }
+        let(:per_page) { 20 }
 
         run_test!
       end
@@ -659,6 +725,12 @@ RSpec.describe "topics" do
         in: :query,
         type: :string,
         description: "Enum: `all`, `yearly`, `quarterly`, `monthly`, `weekly`, `daily`",
+      )
+      parameter(
+        name: :per_page,
+        in: :query,
+        type: :integer,
+        description: "Maximum number of topics returned, between 1-100",
       )
 
       produces "application/json"
@@ -827,7 +899,7 @@ RSpec.describe "topics" do
                                    type: :integer,
                                  },
                                  primary_group_id: {
-                                   type: %i[string null],
+                                   type: %i[integer null],
                                  },
                                },
                              },
@@ -840,6 +912,7 @@ RSpec.describe "topics" do
                }
 
         let(:period) { "all" }
+        let(:per_page) { 20 }
 
         run_test!
       end
@@ -966,11 +1039,11 @@ RSpec.describe "topics" do
                    type: :boolean,
                  },
                  category_id: {
-                   type: %i[string null],
+                   type: %i[integer null],
                  },
                }
 
-        let(:request_body) { { time: Time.current + 1.day, status_type: "close" } }
+        let(:request_body) { { time: 1.day.from_now, status_type: "close" } }
         let!(:topic_post) { Fabricate(:post) }
         let(:id) { topic_post.topic.id }
 
@@ -992,7 +1065,11 @@ RSpec.describe "topics" do
         expected_response_schema = nil
         schema expected_response_schema
 
-        let(:topic) { Fabricate(:topic, external_id: "external_id_1") }
+        let(:category) { Fabricate(:category) }
+        let(:topic) do
+          Fabricate(:topic, external_id: "external_id_1", user: user, category: category)
+        end
+
         let(:external_id) { topic.external_id }
 
         run_test! { |response| expect(response).to redirect_to(topic.relative_url + ".json") }

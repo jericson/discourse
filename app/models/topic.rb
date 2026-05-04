@@ -11,14 +11,10 @@ class Topic < ActiveRecord::Base
   include Trashable
   include Searchable
   include LimitedEdit
+  include Localizable
   extend Forwardable
 
   EXTERNAL_ID_MAX_LENGTH = 50
-
-  self.ignored_columns = [
-    "avg_time", # TODO: Remove when 20240212034010_drop_deprecated_columns has been promoted to pre-deploy
-    "image_url", # TODO: Remove when 20240212034010_drop_deprecated_columns has been promoted to pre-deploy
-  ]
 
   def_delegator :featured_users, :user_ids, :featured_user_ids
   def_delegator :featured_users, :choose, :feature_topic_users
@@ -54,6 +50,10 @@ class Topic < ActiveRecord::Base
         bulk_action: 5,
         unknown: 99,
       )
+  end
+
+  def shared_draft?
+    SharedDraft.exists?(topic_id: id)
   end
 
   def thumbnail_job_redis_key(sizes)
@@ -272,7 +272,17 @@ class Topic < ActiveRecord::Base
   has_many :tags, through: :topic_tags, dependent: :destroy # dependent destroy applies to the topic_tags records
   has_many :tag_users, through: :tags
 
+  has_many :moved_posts_as_old_topic,
+           class_name: "MovedPost",
+           foreign_key: :old_topic_id,
+           dependent: :destroy
+  has_many :moved_posts_as_new_topic,
+           class_name: "MovedPost",
+           foreign_key: :new_topic_id,
+           dependent: :destroy
+
   has_one :top_topic
+  has_one :topic_hot_score
   has_one :shared_draft, dependent: :destroy
   has_one :published_page
 
@@ -288,7 +298,7 @@ class Topic < ActiveRecord::Base
   has_many :topic_links
   has_many :topic_invites
   has_many :invites, through: :topic_invites, source: :invite
-  has_many :topic_timers, dependent: :destroy
+  has_many :topic_timers, dependent: :destroy, foreign_key: :timerable_id
   has_many :reviewables
   has_many :user_profiles
 
@@ -297,6 +307,7 @@ class Topic < ActiveRecord::Base
   has_one :topic_search_data
   has_one :topic_embed, dependent: :destroy
   has_one :linked_topic, dependent: :destroy
+  has_one :nested_topic, dependent: :destroy
 
   belongs_to :image_upload, class_name: "Upload"
   has_many :topic_thumbnails, through: :image_upload
@@ -340,7 +351,7 @@ class Topic < ActiveRecord::Base
           )
         end
 
-  scope :listable_topics, -> { where("topics.archetype <> ?", Archetype.private_message) }
+  scope :listable_topics, -> { where.not(topics: { archetype: Archetype.private_message }) }
 
   scope :by_newest, -> { order("topics.created_at desc, topics.id desc") }
 
@@ -351,7 +362,7 @@ class Topic < ActiveRecord::Base
   scope :exclude_scheduled_bump_topics, -> { where.not(id: TopicTimer.scheduled_bump_topics) }
 
   scope :secured,
-        lambda { |guardian = nil|
+        lambda { |guardian = nil, include_uncategorized: true|
           ids = guardian.secure_category_ids if guardian
 
           # Query conditions
@@ -362,8 +373,10 @@ class Topic < ActiveRecord::Base
               ["NOT read_restricted"]
             end
 
+          uncategorized_condition = "topics.category_id IS NULL OR" if include_uncategorized
+
           where(
-            "topics.category_id IS NULL OR topics.category_id IN (SELECT id FROM categories WHERE #{condition[0]})",
+            "#{uncategorized_condition} topics.category_id IN (SELECT id FROM categories WHERE #{condition[0]})",
             condition[1],
           )
         }
@@ -393,19 +406,21 @@ class Topic < ActiveRecord::Base
   before_save do
     ensure_topic_has_a_category unless skip_callbacks
 
-    write_attribute(:fancy_title, Topic.fancy_title(title)) if title_changed?
+    self[:fancy_title] = Topic.fancy_title(title) if title_changed?
 
     if category_id_changed? || new_record?
       inherit_auto_close_from_category
       inherit_slow_mode_from_category
     end
+
+    self.locale = nil if locale.blank?
   end
 
   after_save do
     banner = "banner"
 
     if archetype_before_last_save == banner || archetype == banner
-      ApplicationController.banner_json_cache.clear
+      ApplicationLayoutPreloader.banner_json_cache.clear
     end
 
     if tags_changed || saved_change_to_attribute?(:category_id) ||
@@ -436,11 +451,7 @@ class Topic < ActiveRecord::Base
   end
 
   def advance_draft_sequence
-    if self.private_message?
-      DraftSequence.next!(user, Draft::NEW_PRIVATE_MESSAGE)
-    else
-      DraftSequence.next!(user, Draft::NEW_TOPIC)
-    end
+    DraftSequence.next!(user, self.draft_key)
   end
 
   def ensure_topic_has_a_category
@@ -510,6 +521,7 @@ class Topic < ActiveRecord::Base
 
   def limit_private_messages_per_day
     return unless private_message?
+    return if subtype == TopicSubtype.notify_moderators
     apply_per_day_rate_limit_for("pms", :max_personal_messages_per_day)
   end
 
@@ -524,7 +536,7 @@ class Topic < ActiveRecord::Base
 
     unless fancy_title = read_attribute(:fancy_title)
       fancy_title = Topic.fancy_title(title)
-      write_attribute(:fancy_title, fancy_title)
+      self[:fancy_title] = fancy_title
 
       if !new_record? && !Discourse.readonly_mode?
         # make sure data is set in table, this also allows us to change algorithm
@@ -542,7 +554,8 @@ class Topic < ActiveRecord::Base
 
   # Returns hot topics since a date for display in email digest.
   def self.for_digest(user, since, opts = nil)
-    opts = opts || {}
+    opts ||= {}
+
     period = ListController.best_period_for(since)
 
     topics =
@@ -585,30 +598,28 @@ class Topic < ActiveRecord::Base
     # Remove category topics
     topics = topics.where.not(id: Category.select(:topic_id).where.not(topic_id: nil))
 
-    # Remove muted and shared draft categories
-    remove_category_ids =
-      CategoryUser.where(
-        user_id: user.id,
-        notification_level: CategoryUser.notification_levels[:muted],
-      ).pluck(:category_id)
+    # Remove suppressed categories
     if SiteSetting.digest_suppress_categories.present?
       topics =
-        topics.where(
-          "topics.category_id NOT IN (?)",
-          SiteSetting.digest_suppress_categories.split("|").map(&:to_i),
-        )
+        topics.where.not(category_id: SiteSetting.digest_suppress_categories.split("|").map(&:to_i))
     end
+
+    # Remove suppressed tags
     if SiteSetting.digest_suppress_tags.present?
       tag_ids = Tag.where_name(SiteSetting.digest_suppress_tags.split("|")).pluck(:id)
-      if tag_ids.present?
-        topics =
-          topics.joins("LEFT JOIN topic_tags tg ON topics.id = tg.topic_id").where(
-            "tg.tag_id NOT IN (?) OR tg.tag_id IS NULL",
-            tag_ids,
-          )
-      end
+
+      topics =
+        topics.where.not(id: TopicTag.where(tag_id: tag_ids).select(:topic_id)) if tag_ids.present?
     end
+
+    # Remove muted and shared draft categories
+    remove_category_ids =
+      CategoryUser.where(user:, notification_level: CategoryUser.notification_levels[:muted]).pluck(
+        :category_id,
+      )
+
     remove_category_ids << SiteSetting.shared_drafts_category if SiteSetting.shared_drafts_enabled?
+
     if remove_category_ids.present?
       remove_category_ids.uniq!
       topics =
@@ -619,6 +630,11 @@ class Topic < ActiveRecord::Base
         )
     end
 
+    # Remove topics from ignored users
+    ignored_user_ids =
+      IgnoredUser.where(user:).where(expiring_at: Time.zone.now..).pluck(:ignored_user_id)
+    topics = topics.where.not(user_id: ignored_user_ids) if ignored_user_ids.present?
+
     # Remove muted tags
     muted_tag_ids = TagUser.lookup(user, :muted).pluck(:tag_id)
     unless muted_tag_ids.empty?
@@ -626,8 +642,7 @@ class Topic < ActiveRecord::Base
       # and don't forget untagged topics.
       topics =
         topics.where(
-          "EXISTS ( SELECT 1 FROM topic_tags WHERE topic_tags.topic_id = topics.id AND tag_id NOT IN (?) )
-        OR NOT EXISTS (SELECT 1 FROM topic_tags WHERE topic_tags.topic_id = topics.id)",
+          "EXISTS (SELECT 1 FROM topic_tags WHERE topic_tags.topic_id = topics.id AND tag_id NOT IN (?)) OR NOT EXISTS (SELECT 1 FROM topic_tags WHERE topic_tags.topic_id = topics.id)",
           muted_tag_ids,
         )
     end
@@ -693,10 +708,14 @@ class Topic < ActiveRecord::Base
     !self.closed?
   end
 
-  MAX_SIMILAR_BODY_LENGTH ||= 200
+  MAX_SIMILAR_BODY_LENGTH = 200
+  SIMILAR_TOPIC_SEARCH_LIMIT = 10
+  SIMILAR_TOPIC_LIMIT = 3
+  SIMILAR_TOPIC_MAX_BLURB_LENGTH = 500
 
   def self.similar_to(title, raw, user = nil)
     return [] if title.blank?
+
     raw = raw.presence || ""
     search_data = Search.prepare_data(title.strip)
 
@@ -732,20 +751,68 @@ class Topic < ActiveRecord::Base
       #{excluded_category_ids_sql}
       UNION
       #{CategoryUser.muted_category_ids_query(user, include_direct: true).select("categories.id").to_sql}
-      SQL
+    SQL
 
     candidates =
       Topic
         .visible
         .listable_topics
         .secured(guardian)
-        .joins("JOIN topic_search_data s ON topics.id = s.topic_id")
         .joins("LEFT JOIN categories c ON topics.id = c.topic_id")
-        .where("search_data @@ #{tsquery}")
         .where("c.topic_id IS NULL")
         .where("topics.category_id NOT IN (#{excluded_category_ids_sql})")
+
+    plugin_candidate_ids = []
+    plugin_candidate_ids =
+      DiscoursePluginRegistry.apply_modifier(
+        :similar_topic_candidate_ids,
+        plugin_candidate_ids,
+        title:,
+        raw:,
+        guardian:,
+        candidates:,
+      )
+
+    blurb_sql = "LEFT(p.cooked, #{SIMILAR_TOPIC_MAX_BLURB_LENGTH.to_i}) AS blurb"
+    select_fragment = ->(similarity_expr) do
+      DB.sql_fragment(
+        "topics.*, #{similarity_expr} AS similarity, #{blurb_sql}",
+        title: title,
+        raw: raw,
+      )
+    end
+
+    if plugin_candidate_ids.present? && plugin_candidate_ids.length > 0
+      ids = plugin_candidate_ids.map(&:to_i)
+      candidate_ids =
+        candidates
+          .where(id: ids)
+          .order("array_position(ARRAY[#{ids.join(",")}]::int[], topics.id)")
+          .limit(SIMILAR_TOPIC_LIMIT)
+          .pluck(:id)
+
+      if candidate_ids.present? && candidate_ids.length > 0
+        rank_array_sql = "ARRAY[#{candidate_ids.map(&:to_i).join(",")}]"
+        return(
+          Topic
+            .joins("JOIN posts AS p ON p.topic_id = topics.id AND p.post_number = 1")
+            .where(id: candidate_ids)
+            .select(
+              select_fragment.call(
+                "(array_length(#{rank_array_sql}, 1) - array_position(#{rank_array_sql}, topics.id) + 1)",
+              ),
+            )
+            .order("similarity DESC")
+        )
+      end
+    end
+
+    candidates =
+      candidates
+        .joins("JOIN topic_search_data s ON topics.id = s.topic_id")
+        .where("search_data @@ #{tsquery}")
         .order("ts_rank(search_data, #{tsquery}) DESC")
-        .limit(SiteSetting.max_similar_results * 3)
+        .limit(SIMILAR_TOPIC_SEARCH_LIMIT)
 
     candidate_ids = candidates.pluck(:id)
 
@@ -756,27 +823,21 @@ class Topic < ActiveRecord::Base
         .joins("JOIN posts AS p ON p.topic_id = topics.id AND p.post_number = 1")
         .where("topics.id IN (?)", candidate_ids)
         .order("similarity DESC")
-        .limit(SiteSetting.max_similar_results)
+        .limit(SIMILAR_TOPIC_LIMIT)
 
     if raw.present?
       similars.select(
-        DB.sql_fragment(
-          "topics.*, similarity(topics.title, :title) + similarity(p.raw, :raw) AS similarity, p.cooked AS blurb",
-          title: title,
-          raw: raw,
-        ),
+        select_fragment.call("similarity(topics.title, :title) + similarity(p.raw, :raw)"),
       ).where(
         "similarity(topics.title, :title) + similarity(p.raw, :raw) > 0.2",
         title: title,
         raw: raw,
       )
     else
-      similars.select(
-        DB.sql_fragment(
-          "topics.*, similarity(topics.title, :title) AS similarity, p.cooked AS blurb",
-          title: title,
-        ),
-      ).where("similarity(topics.title, :title) > 0.2", title: title)
+      similars.select(select_fragment.call("similarity(topics.title, :title)")).where(
+        "similarity(topics.title, :title) > 0.2",
+        title: title,
+      )
     end
   end
 
@@ -804,14 +865,18 @@ class Topic < ActiveRecord::Base
   def self.next_post_number(topic_id, opts = {})
     highest =
       DB
-        .query_single(
-          "SELECT coalesce(max(post_number),0) AS max FROM posts WHERE topic_id = ?",
-          topic_id,
-        )
+        .query_single("SELECT coalesce(max(post_number),0) FROM posts WHERE topic_id = ?", topic_id)
         .first
         .to_i
 
-    if opts[:whisper]
+    # PM small_action posts only bump highest_staff_post_number, not
+    # highest_post_number, matching the exclusion in reset_highest.
+    staff_only = opts[:post_type] == Post.types[:whisper]
+    staff_only ||=
+      opts[:post_type] == Post.types[:small_action] &&
+        Topic.where(id: topic_id, archetype: Archetype.private_message).exists?
+
+    if staff_only
       result = DB.query_single(<<~SQL, highest, topic_id)
         UPDATE topics
         SET highest_staff_post_number = ? + 1
@@ -824,7 +889,7 @@ class Topic < ActiveRecord::Base
       reply_sql = opts[:reply] ? ", reply_count = reply_count + 1" : ""
       posts_sql = opts[:post] ? ", posts_count = posts_count + 1" : ""
 
-      result = DB.query_single(<<~SQL, highest: highest, topic_id: topic_id)
+      result = DB.query_single(<<~SQL, highest:, topic_id:)
         UPDATE topics
         SET highest_staff_post_number = :highest + 1,
             highest_post_number = :highest + 1
@@ -875,7 +940,8 @@ class Topic < ActiveRecord::Base
       WHERE
         topics.archetype <> 'private_message' AND
         X.topic_id = topics.id AND
-        Y.topic_id = topics.id AND (
+        Y.topic_id = topics.id AND
+        Z.topic_id = topics.id AND (
           topics.highest_staff_post_number <> X.highest_post_number OR
           topics.highest_post_number <> Y.highest_post_number OR
           topics.last_posted_at <> Y.last_posted_at OR
@@ -920,7 +986,8 @@ class Topic < ActiveRecord::Base
       WHERE
         topics.archetype = 'private_message' AND
         X.topic_id = topics.id AND
-        Y.topic_id = topics.id AND (
+        Y.topic_id = topics.id AND
+        Z.topic_id = topics.id AND (
           topics.highest_staff_post_number <> X.highest_post_number OR
           topics.highest_post_number <> Y.highest_post_number OR
           topics.last_posted_at <> Y.last_posted_at OR
@@ -938,7 +1005,7 @@ class Topic < ActiveRecord::Base
     post_type =
       archetype == Archetype.private_message ? " AND post_type <> #{Post.types[:small_action]}" : ""
 
-    result = DB.query_single(<<~SQL, topic_id: topic_id)
+    result = DB.query_single(<<~SQL, topic_id:)
       UPDATE topics
       SET
         highest_staff_post_number = (
@@ -987,22 +1054,21 @@ class Topic < ActiveRecord::Base
       RETURNING highest_post_number
     SQL
 
-    highest_post_number = result.first.to_i
+    highest = result.first.to_i
 
-    # Update the forum topic user records
-    DB.exec(<<~SQL, highest: highest_post_number, topic_id: topic_id)
+    DB.exec(<<~SQL, highest:, topic_id:)
       UPDATE topic_users
-      SET last_read_post_number = CASE
-                                  WHEN last_read_post_number > :highest THEN :highest
-                                  ELSE last_read_post_number
-                                  END
-      WHERE topic_id = :topic_id
+         SET last_read_post_number = :highest
+       WHERE topic_id = :topic_id
+         AND last_read_post_number > :highest
     SQL
+
+    highest
   end
 
   cattr_accessor :update_featured_topics
 
-  def changed_to_category(new_category)
+  def changed_to_category(new_category, silent: nil)
     return true if new_category.blank? || Category.exists?(topic_id: id)
 
     if new_category.id == SiteSetting.uncategorized_category_id &&
@@ -1034,7 +1100,9 @@ class Topic < ActiveRecord::Base
         CategoryUser.auto_watch(category_id: new_category.id, topic_id: self.id)
         CategoryUser.auto_track(category_id: new_category.id, topic_id: self.id)
 
-        if !SiteSetting.disable_category_edit_notifications && (post = self.ordered_posts.first)
+        skip_alert = silent || SiteSetting.disable_category_edit_notifications
+
+        if !skip_alert && (post = self.ordered_posts.first)
           notified_user_ids = [post.user_id, post.last_editor_id].uniq
           DB.after_commit do
             Jobs.enqueue(
@@ -1050,6 +1118,12 @@ class Topic < ActiveRecord::Base
         # category is private. this is only done if the category
         # has actually changed to avoid noise.
         DB.after_commit { Jobs.enqueue(:update_topic_upload_security, topic_id: self.id) }
+
+        # Notify tracking state of category change so users who lost access
+        # have the topic removed from their tracking state
+        if SiteSetting.experimental_topic_category_change_notification
+          DB.after_commit { TopicTrackingState.publish_category_change(self, old_category) }
+        end
       end
 
       Category.where(id: new_category.id).update_all("topic_count = topic_count + 1")
@@ -1091,6 +1165,7 @@ class Topic < ActiveRecord::Base
         topic_id: self.id,
         silent: opts[:silent],
         skip_validations: true,
+        skip_guardian: opts[:skip_guardian],
         custom_fields: opts[:custom_fields],
         import_mode: opts[:import_mode],
       )
@@ -1111,7 +1186,7 @@ class Topic < ActiveRecord::Base
     new_post
   end
 
-  def change_category_to_id(category_id)
+  def change_category_to_id(category_id, silent: nil)
     return false if private_message?
 
     new_category_id = category_id.to_i
@@ -1125,7 +1200,7 @@ class Topic < ActiveRecord::Base
 
     reviewables.update_all(category_id: new_category_id)
 
-    changed_to_category(cat)
+    changed_to_category(cat, silent: silent)
   end
 
   def remove_allowed_group(removed_by, name)
@@ -1134,7 +1209,7 @@ class Topic < ActiveRecord::Base
       if group_user
         group_user.destroy
         allowed_groups.reload
-        add_small_action(removed_by, "removed_group", group.name)
+        add_small_action(removed_by, "removed_group", group.name, skip_guardian: true)
         return true
       end
     end
@@ -1149,13 +1224,15 @@ class Topic < ActiveRecord::Base
       topic_user = topic_allowed_users.find_by(user_id: user.id)
 
       if topic_user
+        topic_user.destroy
+
         if user.id == removed_by&.id
-          add_small_action(removed_by, "user_left", user.username)
+          add_small_action(removed_by, "user_left", user.username, skip_guardian: true)
         else
-          add_small_action(removed_by, "removed_user", user.username)
+          add_small_action(removed_by, "removed_user", user.username, skip_guardian: true)
         end
 
-        topic_user.destroy
+        MessageBus.publish("/topic/#{id}", { type: "remove_allowed_user" }, user_ids: [user.id])
         return true
       end
     end
@@ -1169,16 +1246,19 @@ class Topic < ActiveRecord::Base
       SiteSetting.max_allowed_message_recipients
   end
 
-  def invite_group(user, group)
+  def invite_group(user, group, should_notify: true)
     TopicAllowedGroup.create!(topic_id: self.id, group_id: group.id)
+    group.update_columns(has_messages: true) unless group.has_messages
     self.allowed_groups.reload
 
     last_post =
       self.posts.order("post_number desc").where("not hidden AND posts.deleted_at IS NULL").first
     if last_post
-      Jobs.enqueue(:post_alert, post_id: last_post.id)
       add_small_action(user, "invited_group", group.name)
-      Jobs.enqueue(:group_pm_alert, user_id: user.id, group_id: group.id, post_id: last_post.id)
+      if should_notify
+        Jobs.enqueue(:post_alert, post_id: last_post.id)
+        Jobs.enqueue(:group_pm_alert, user_id: user.id, group_id: group.id, post_id: last_post.id)
+      end
     end
 
     # If the group invited includes the OP of the topic as one of is members,
@@ -1279,6 +1359,9 @@ class Topic < ActiveRecord::Base
         moved_by,
         post_ids,
         move_to_pm: opts[:archetype].present? && opts[:archetype] == "private_message",
+        options: {
+          freeze_original: opts[:freeze_original],
+        },
       )
 
     if opts[:destination_topic_id]
@@ -1292,17 +1375,22 @@ class Topic < ActiveRecord::Base
 
       topic
     elsif opts[:title]
-      post_mover.to_new_topic(opts[:title], opts[:category_id], opts[:tags])
+      post_mover.to_new_topic(
+        opts[:title],
+        opts[:category_id],
+        tag_ids: opts[:tag_ids],
+        tags: opts[:tags],
+      )
     end
   end
 
   # Updates the denormalized statistics of a topic including featured posters. They shouldn't
   # go out of sync unless you do something drastic live move posts from one topic to another.
   # this recalculates everything.
-  def update_statistics
+  def update_statistics!
     feature_topic_users
     update_action_counts
-    Topic.reset_highest(id)
+    self.highest_post_number = Topic.reset_highest(id)
   end
 
   def update_action_counts
@@ -1336,9 +1424,9 @@ class Topic < ActiveRecord::Base
 
     # only one banner at the same time
     previous_banner = Topic.where(archetype: Archetype.banner).first
-    previous_banner.remove_banner!(user) if previous_banner.present?
+    previous_banner.presence&.remove_banner!(user)
 
-    UserProfile.where("dismissed_banner_key IS NOT NULL").update_all(dismissed_banner_key: nil)
+    UserProfile.where.not(dismissed_banner_key: nil).update_all(dismissed_banner_key: nil)
 
     self.archetype = Archetype.banner
     self.bannered_until = bannered_until
@@ -1362,10 +1450,15 @@ class Topic < ActiveRecord::Base
     Jobs.cancel_scheduled_job(:remove_banner, topic_id: self.id)
   end
 
-  def banner
+  def banner(guardian = nil)
     post = self.ordered_posts.first
 
-    { html: post.cooked, key: self.id, url: self.url }
+    html = post.cooked
+    if (guardian && ContentLocalization.show_translated_post?(post, guardian))
+      html = post.get_localization&.cooked.presence || html
+    end
+
+    { html:, key: self.id, url: self.url }
   end
 
   cattr_accessor :slug_computed_callbacks
@@ -1387,7 +1480,7 @@ class Topic < ActiveRecord::Base
       return "" if title.blank?
       slug = slug_for_topic(title)
       if new_record?
-        write_attribute(:slug, slug)
+        self[:slug] = slug
       else
         update_column(:slug, slug)
       end
@@ -1407,8 +1500,8 @@ class Topic < ActiveRecord::Base
 
   def title=(t)
     slug = slug_for_topic(t.to_s)
-    write_attribute(:slug, slug)
-    write_attribute(:fancy_title, nil)
+    self[:slug] = slug
+    self[:fancy_title] = nil
     write_attribute(:title, t)
   end
 
@@ -1419,7 +1512,9 @@ class Topic < ActiveRecord::Base
   end
 
   def self.url(id, slug, post_number = nil)
-    url = +"#{Discourse.base_url}/t/#{slug}/#{id}"
+    url = +"#{Discourse.base_url}/t/"
+    url << "#{slug}/" if slug.present?
+    url << id.to_s
     url << "/#{post_number}" if post_number.to_i > 1
     url
   end
@@ -1573,7 +1668,7 @@ class Topic < ActiveRecord::Base
     time,
     by_user: nil,
     based_on_last_post: false,
-    category_id: SiteSetting.uncategorized_category_id,
+    category_id: nil,
     duration_minutes: nil,
     silent: nil
   )
@@ -1590,7 +1685,7 @@ class Topic < ActiveRecord::Base
     topic_timer.status_type = status_type
 
     time_now = Time.zone.now
-    topic_timer.based_on_last_post = !based_on_last_post.blank?
+    topic_timer.based_on_last_post = based_on_last_post.present?
 
     if status_type == TopicTimer.types[:publish_to_category]
       topic_timer.category = Category.find_by(id: category_id)
@@ -1722,7 +1817,7 @@ class Topic < ActiveRecord::Base
     DB.exec(sql, user_id: user.id, topic_id: id) > 0
   end
 
-  TIME_TO_FIRST_RESPONSE_SQL ||= <<-SQL
+  TIME_TO_FIRST_RESPONSE_SQL = <<-SQL
     SELECT AVG(t.hours)::float AS "hours", t.created_at AS "date"
     FROM (
       SELECT t.id, t.created_at::date AS created_at, EXTRACT(EPOCH FROM MIN(p.created_at) - t.created_at)::float / 3600.0 AS "hours"
@@ -1735,7 +1830,7 @@ class Topic < ActiveRecord::Base
     ORDER BY t.created_at
   SQL
 
-  TIME_TO_FIRST_RESPONSE_TOTAL_SQL ||= <<-SQL
+  TIME_TO_FIRST_RESPONSE_TOTAL_SQL = <<-SQL
     SELECT AVG(t.hours)::float AS "hours"
     FROM (
       SELECT t.id, EXTRACT(EPOCH FROM MIN(p.created_at) - t.created_at)::float / 3600.0 AS "hours"
@@ -1781,7 +1876,7 @@ class Topic < ActiveRecord::Base
     total.first["hours"].to_f.round(2)
   end
 
-  WITH_NO_RESPONSE_SQL ||= <<-SQL
+  WITH_NO_RESPONSE_SQL = <<-SQL
     SELECT COUNT(*) as count, tt.created_at AS "date"
     FROM (
       SELECT t.id, t.created_at::date AS created_at, MIN(p.post_number) first_reply
@@ -1816,7 +1911,7 @@ class Topic < ActiveRecord::Base
     builder.query_hash
   end
 
-  WITH_NO_RESPONSE_TOTAL_SQL ||= <<-SQL
+  WITH_NO_RESPONSE_TOTAL_SQL = <<-SQL
     SELECT COUNT(*) as count
     FROM (
       SELECT t.id, MIN(p.post_number) first_reply
@@ -1852,7 +1947,7 @@ class Topic < ActiveRecord::Base
 
   def update_excerpt(excerpt)
     update_column(:excerpt, excerpt)
-    ApplicationController.banner_json_cache.clear if archetype == "banner"
+    ApplicationLayoutPreloader.banner_json_cache.clear if archetype == "banner"
   end
 
   def pm_with_non_human_user?
@@ -1890,11 +1985,13 @@ class Topic < ActiveRecord::Base
     @is_category_topic ||= Category.exists?(topic_id: self.id.to_i)
   end
 
-  def reset_bumped_at(post_id = nil)
+  def reset_bumped_at(post_or_post_id = nil)
     post =
-      (
-        if post_id
-          Post.find_by(id: post_id)
+      if post_or_post_id.is_a?(Post)
+        post_or_post_id
+      else
+        if post_or_post_id
+          Post.find_by(id: post_or_post_id)
         else
           ordered_posts.where(
             user_deleted: false,
@@ -1902,7 +1999,7 @@ class Topic < ActiveRecord::Base
             post_type: Post.types[:regular],
           ).last || first_post
         end
-      )
+      end
 
     return if !post
 
@@ -2010,29 +2107,25 @@ class Topic < ActiveRecord::Base
       invited_by,
       "topic-invitations-per-day",
       SiteSetting.max_topic_invitations_per_day,
-      1.day.to_i,
+      1.day,
     ).performed!
 
     RateLimiter.new(
       invited_by,
       "topic-invitations-per-minute",
       SiteSetting.max_topic_invitations_per_minute,
-      1.day.to_i,
+      1.minute,
     ).performed!
   end
 
-  def cannot_permanently_delete_reason(user)
-    all_posts_count =
-      Post
-        .with_deleted
-        .where(topic_id: self.id)
-        .where(
-          post_type: [Post.types[:regular], Post.types[:moderator_action], Post.types[:whisper]],
-        )
-        .count
+  def deletable_posts_count
+    Post.with_deleted.where(topic_id: self.id).where.not(post_type: Post.types[:small_action]).count
+  end
 
-    if posts_count > 0 || all_posts_count > 1
-      I18n.t("post.cannot_permanently_delete.many_posts")
+  def cannot_permanently_delete_reason(user)
+    remaining = deletable_posts_count - 1
+    if posts_count > 0 || remaining > 0
+      I18n.t("post.cannot_permanently_delete.many_posts", count: remaining)
     elsif self.deleted_by_id == user&.id && self.deleted_at >= Post::PERMANENT_DELETE_TIMER.ago
       time_left =
         RateLimiter.time_left(
@@ -2115,6 +2208,14 @@ class Topic < ActiveRecord::Base
       unless topic_allowed_users.exists?(user_id: target_user.id)
         topic_allowed_users.create!(user_id: target_user.id)
       end
+
+      # Set the invited user to watch the PM so they receive notifications for new messages
+      # even if they haven’t opened the PM yet.
+      TopicUser.change(
+        target_user,
+        self,
+        notification_level: TopicUser.notification_levels[:watching],
+      )
 
       user_in_allowed_group = (user.group_ids & topic_allowed_groups.map(&:group_id)).present?
       add_small_action(invited_by, "invited_user", target_user.username) if !user_in_allowed_group
@@ -2211,6 +2312,7 @@ end
 #  bannered_until            :datetime
 #  external_id               :string
 #  visibility_reason_id      :integer
+#  locale                    :string(20)
 #
 # Indexes
 #
@@ -2219,6 +2321,7 @@ end
 #  idxtopicslug                            (slug) WHERE ((deleted_at IS NULL) AND (slug IS NOT NULL))
 #  index_topics_on_bannered_until          (bannered_until) WHERE (bannered_until IS NOT NULL)
 #  index_topics_on_bumped_at_public        (bumped_at) WHERE ((deleted_at IS NULL) AND ((archetype)::text <> 'private_message'::text))
+#  index_topics_on_category_id             (category_id) WHERE ((deleted_at IS NULL) AND ((archetype)::text <> 'private_message'::text))
 #  index_topics_on_created_at_and_visible  (created_at,visible) WHERE ((deleted_at IS NULL) AND ((archetype)::text <> 'private_message'::text))
 #  index_topics_on_external_id             (external_id) UNIQUE WHERE (external_id IS NOT NULL)
 #  index_topics_on_id_and_deleted_at       (id,deleted_at)

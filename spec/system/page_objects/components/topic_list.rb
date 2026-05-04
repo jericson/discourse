@@ -30,8 +30,16 @@ module PageObjects
         page.has_no_css?(topic_list_item_class(topic))
       end
 
+      def has_highlighted_topic?(topic)
+        page.has_css?("#{topic_list_item_class(topic)}[data-test-was-highlighted]")
+      end
+
       def has_topic_checkbox?(topic)
         page.has_css?("#{topic_list_item_class(topic)} input#bulk-select-#{topic.id}")
+      end
+
+      def has_no_topic_checkbox?(topic)
+        page.has_no_css?("#{topic_list_item_class(topic)} input#bulk-select-#{topic.id}")
       end
 
       def has_closed_status?(topic)
@@ -58,6 +66,10 @@ module PageObjects
         find("#{topic_list_item_class(topic)} input#bulk-select-#{topic.id}").click
       end
 
+      def click_topic_title(topic)
+        find("#{topic_list_item_class(topic)} .raw-topic-link").click
+      end
+
       def visit_topic_with_title(title)
         find("#{TOPIC_LIST_BODY_SELECTOR} a", text: title).click
       end
@@ -67,22 +79,75 @@ module PageObjects
       end
 
       def visit_topic_last_reply_via_keyboard(topic)
-        find("#{topic_list_item_class(topic)} a.post-activity").native.send_keys(:return)
+        find("#{topic_list_item_class(topic)} a.post-activity").send_keys(:return)
       end
 
       def visit_topic_first_reply_via_keyboard(topic)
-        find("#{topic_list_item_class(topic)} button.posts-map").native.send_keys(:return)
-        find("#topic-entrance button.jump-top").native.send_keys(:return)
+        find("#{topic_list_item_class(topic)} a.badge-posts").send_keys(:return)
+      end
+
+      def send_keys_to_topic(topic, *keys)
+        find("#{topic_list_item_class(topic)} a.raw-topic-link").send_keys(*keys)
       end
 
       def topic_list_item_class(topic)
         "#{TOPIC_LIST_ITEM_SELECTOR}[data-topic-id='#{topic.id}']"
       end
 
+      def topic(topic)
+        find(topic_list_item_class(topic))
+      end
+
+      def has_topic_tag?(topic, tag_name)
+        page.has_css?(
+          "#{topic_list_item_class(topic)} .discourse-tags .discourse-tag",
+          text: tag_name,
+        )
+      end
+
+      def has_no_topic_tag?(topic, tag_name)
+        page.has_no_css?(
+          "#{topic_list_item_class(topic)} .discourse-tags .discourse-tag",
+          text: tag_name,
+        )
+      end
+
+      def has_topic_tags?(topic, tags:)
+        tags.all? { |tag| has_topic_tag?(topic, tag.name) } &&
+          page.has_css?(
+            "#{topic_list_item_class(topic)} .discourse-tags .discourse-tag",
+            count: tags.size,
+          )
+      end
+
+      def has_no_topic_tags?(topic)
+        page.has_no_css?("#{topic_list_item_class(topic)} .discourse-tags .discourse-tag")
+      end
+
+      def click_topic_tag(topic, tag_name)
+        find("#{topic_list_item_class(topic)} .discourse-tags .discourse-tag", text: tag_name).click
+      end
+
+      def had_new_topics_alert?
+        page.has_css?(".show-more.has-topics")
+      end
+
+      def click_new_topics_alert
+        find(".show-more.has-topics").click
+      end
+
+      def has_pinned_status?(topic)
+        page.has_css?("#{topic_list_item_class(topic)} .topic-statuses .topic-status.--pinned")
+      end
+
+      def has_no_pinned_status?(topic)
+        page.has_no_css?("#{topic_list_item_class(topic)} .topic-statuses .topic-status.--pinned")
+      end
+
       private
 
       def topic_list_item_closed(topic)
-        "#{topic_list_item_class(topic)} .topic-statuses .topic-status svg.locked"
+        "#{topic_list_item_class(topic)} .topic-statuses .topic-status svg[class*='d-icon-lock']"
       end
 
       def topic_list_item_unread_badge(topic)

@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 
-describe "Thread tracking state | drawer", type: :system do
+describe "Thread tracking state | drawer" do
   include ActiveSupport::Testing::TimeHelpers
 
-  fab!(:current_user) { Fabricate(:admin) }
+  fab!(:current_user, :admin)
   fab!(:channel) { Fabricate(:chat_channel, threading_enabled: true) }
-  fab!(:other_user) { Fabricate(:user) }
+  fab!(:other_user, :user)
   fab!(:thread) { Fabricate(:chat_thread, channel: channel) }
 
   let(:chat_page) { PageObjects::Pages::Chat.new }
@@ -43,9 +43,20 @@ describe "Thread tracking state | drawer", type: :system do
       expect(thread_list_page).to have_unread_item(thread.id)
     end
 
-    it "marks the thread as read and removes both indicators when the user opens it" do
-      skip("Flaky on CI") if ENV["CI"]
+    it "shows an urgent indicator on the watched thread in the list" do
+      thread.membership_for(current_user).update!(
+        notification_level: ::Chat::NotificationLevels.all[:watching],
+      )
 
+      visit("/")
+      chat_page.open_from_header
+      drawer_page.open_channel(channel)
+      drawer_page.open_thread_list
+      expect(drawer_page).to have_open_thread_list
+      expect(thread_list_page).to have_unread_item(thread.id, urgent: true)
+    end
+
+    it "marks the thread as read and removes both indicators when the user opens it" do
       visit("/")
       chat_page.open_from_header
       drawer_page.open_channel(channel)
@@ -54,30 +65,31 @@ describe "Thread tracking state | drawer", type: :system do
 
       expect(drawer_page).to have_no_unread_thread_indicator
 
-      # this is a hack to ensure we don't destroy the component as it's doing the mark as read request
-      sleep 1
+      try_until_success(reason: "Waiting for the debounced mark-as-read request to land") do
+        expect(thread.membership_for(current_user).reload.last_read_message_id).to eq(message_2.id)
+      end
 
       drawer_page.back
 
       expect(thread_list_page).to have_no_unread_item(thread.id)
     end
 
-    xit "shows unread indicators for the header icon and the list when a new unread arrives" do
+    it "shows unread indicators for the header icon and the list when a new unread arrives" do
       thread.membership_for(current_user).update!(last_read_message_id: message_2.id)
       visit("/")
       chat_page.open_from_header
       drawer_page.open_channel(channel)
       drawer_page.open_thread_list
-      expect(drawer_page).to have_no_unread_thread_indicator
+      expect(page).to have_no_css(".chat-header-icon .chat-channel-unread-indicator")
       expect(thread_list_page).to have_no_unread_item(thread.id)
       travel_to(1.minute.from_now)
       Fabricate(:chat_message, thread: thread, user: other_user, use_service: true)
-      expect(drawer_page).to have_unread_thread_indicator(count: 1)
+      expect(page).to have_css(".chat-header-icon .chat-channel-unread-indicator")
       expect(thread_list_page).to have_unread_item(thread.id)
     end
 
     describe "channel index unread indicators" do
-      fab!(:other_channel) { Fabricate(:chat_channel) }
+      fab!(:other_channel, :chat_channel)
 
       before { other_channel.add(current_user) }
 

@@ -19,7 +19,10 @@ RSpec.describe UserActionsController do
       let(:actions) { response.parsed_body["user_actions"] }
       let(:post) { create_post }
 
-      before { UserActionManager.enable }
+      before do
+        UserActionManager.enable
+        post.user.user_stat.update!(post_count: 1)
+      end
 
       it "renders list correctly" do
         user_actions
@@ -40,6 +43,7 @@ RSpec.describe UserActionsController do
         let(:user) { Fabricate(:user) }
 
         before do
+          sign_in(post.user)
           PostActionNotifier.enable
           PostActionCreator.like(user, post)
           params[:acting_username] = user.username
@@ -55,7 +59,7 @@ RSpec.describe UserActionsController do
       context "when user's profile is hidden" do
         fab!(:post)
 
-        before { post.user.user_option.update_column(:hide_profile_and_presence, true) }
+        before { post.user.user_option.update_column(:hide_profile, true) }
 
         context "when `allow_users_to_hide_profile` is disabled" do
           before { SiteSetting.allow_users_to_hide_profile = false }
@@ -75,7 +79,28 @@ RSpec.describe UserActionsController do
       end
 
       context "when checking other users' activity" do
-        fab!(:another_user) { Fabricate(:user) }
+        fab!(:another_user, :user)
+
+        context "when filter is omitted" do
+          it "does not return private action types for another user" do
+            another_user.user_stat.update!(post_count: 1)
+            topic = Fabricate(:topic, user: another_user)
+            post = Fabricate(:post, topic: topic, user: another_user)
+            UserAction.create!(
+              action_type: UserAction::RESPONSE,
+              user_id: another_user.id,
+              acting_user_id: another_user.id,
+              target_topic_id: topic.id,
+              target_post_id: post.id,
+            )
+
+            get "/user_actions.json", params: { username: another_user.username }
+
+            expect(response.status).to eq(200)
+            action_types = response.parsed_body["user_actions"].map { |a| a["action_type"] }
+            expect(action_types).not_to include(*UserAction.private_types)
+          end
+        end
 
         context "when user is anonymous" do
           UserAction.private_types.each do |action_type|
@@ -152,6 +177,72 @@ RSpec.describe UserActionsController do
           end
         end
       end
+    end
+  end
+
+  describe "#show" do
+    fab!(:acting_user) { Fabricate(:user, refresh_auto_groups: true) }
+
+    fab!(:target_post) do
+      UserActionManager.enable
+      post = create_post(user: acting_user)
+      acting_user.user_stat.update!(post_count: 1)
+      post
+    end
+
+    fab!(:user_action) do
+      UserAction.find_by(user_id: acting_user.id, action_type: UserAction.types[:new_topic])
+    end
+
+    it "returns the action for a visible user with a public action" do
+      get "/user_actions/#{user_action.id}.json"
+
+      parsed = response.parsed_body["user_action"]
+
+      expect(response).to have_http_status :ok
+      expect(parsed["action_type"]).to eq(user_action.action_type)
+      expect(parsed["title"]).to eq(target_post.topic.title)
+      expect(parsed["excerpt"]).to eq(
+        PrettyText.excerpt(target_post.cooked, 300, keep_emoji_images: true),
+      )
+    end
+
+    it "returns 404 for a non-existent action" do
+      get "/user_actions/-1.json"
+
+      expect(response).to have_http_status :not_found
+    end
+
+    it "returns 404 when the acting user has a hidden profile" do
+      SiteSetting.allow_users_to_hide_profile = true
+      acting_user.user_option.update!(hide_profile: true)
+
+      get "/user_actions/#{user_action.id}.json"
+
+      expect(response).to have_http_status :not_found
+    end
+
+    it "returns 404 when hide_user_activity_tab is enabled" do
+      SiteSetting.hide_user_activity_tab = true
+
+      get "/user_actions/#{user_action.id}.json"
+
+      expect(response).to have_http_status :not_found
+    end
+
+    it "returns 404 for a private action type viewed by a non-admin non-owner" do
+      liker = Fabricate(:user)
+      other_user = Fabricate(:user)
+      UserActionManager.enable
+      PostActionNotifier.enable
+      PostActionCreator.like(liker, target_post)
+      was_liked_action =
+        UserAction.find_by(user_id: acting_user.id, action_type: UserAction.types[:was_liked])
+
+      sign_in(other_user)
+      get "/user_actions/#{was_liked_action.id}.json"
+
+      expect(response).to have_http_status :not_found
     end
   end
 end

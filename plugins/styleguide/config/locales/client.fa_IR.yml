@@ -27,8 +27,6 @@ fa_IR:
         icons:
           title: "آیکون‌ها"
           full_list: "نمایش کامل لیست آیکون‌های فونت‌های بسیار جذاب"
-        input_fields:
-          title: "فیلدهای ورودی"
         buttons:
           title: "دکمه‌ها"
         dropdowns:
@@ -45,8 +43,6 @@ fa_IR:
           title: "پنل انتخاب تنظیمات"
         categories_list:
           title: "فهرست دسته‌بندی‌ها"
-        topic_link:
-          title: "پیوند موضوع"
         topic_list_item:
           title: "آیتم فهرست موضوع"
         topic_statuses:
@@ -55,8 +51,6 @@ fa_IR:
           title: "فهرست موضوعات"
         basic_topic_list:
           title: "فهرست موضوعات اصلی"
-        footer_message:
-          title: "پیام پاورقی"
         signup_cta:
           title: "فراخوانی اقدام به ثبت‌نام"
         topic_timer_info:
@@ -71,8 +65,8 @@ fa_IR:
           title: "نقشه موضوع"
         site_header:
           title: "سربرگ سایت"
-        suggested_topics:
-          title: "موضوعات پیشنهادی"
+        more_topics:
+          title: "موضوعات بیشتر"
         post_menu:
           title: "منوی نوشته"
         modal:

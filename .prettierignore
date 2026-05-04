@@ -9,18 +9,13 @@ config/locales/**/*.yml
 !config/locales/**/*.en*.yml
 script/import_scripts/**/*.yml
 
-app/assets/javascripts/browser-update.js
-app/assets/javascripts/ember-addons/
-app/assets/javascripts/discourse/lib/autosize.js
-lib/javascripts/locale/
-lib/javascripts/messageformat.js
-lib/highlight_js/
 plugins/**/lib/javascripts/locale
 public/
-!/app/assets/javascripts/discourse/public
+!/frontend/discourse/public
 vendor/
-!app/assets/javascripts/ember-production-deprecations/vendor/
-app/assets/javascripts/discourse/tests/fixtures
+frontend/discourse/tests/unit/utils/decorators-test.js
+frontend/discourse/tests/fixtures
+frontend/discourse-types/dts-generator.js
 spec/
 node_modules/
 dist/
@@ -29,4 +24,5 @@ tmp/
 **/*.rb
 **/*.html
 **/*.json
+!**/tsconfig.json
 **/*.md

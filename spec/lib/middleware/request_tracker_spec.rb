@@ -109,6 +109,94 @@ RSpec.describe Middleware::RequestTracker do
       expect(ApplicationRequest.page_view_anon_browser.first.count).to eq(2)
     end
 
+    it "adds the appropriate response header based on explicit tracking (AJAX requests, BPVs)" do
+      middleware = Middleware::RequestTracker.new(lambda { |env| [200, {}, ["OK"]] })
+      status, headers = middleware.call(env("HTTP_DISCOURSE_TRACK_VIEW" => "1"))
+
+      expect(status).to eq(200)
+      expect(headers["X-Discourse-TrackView"]).to eq("1")
+      expect(headers["X-Discourse-BrowserPageView"]).to eq("1")
+    end
+
+    it "adds the appropriate response header based on implicit tracking (HTML requests)" do
+      middleware =
+        Middleware::RequestTracker.new(
+          lambda { |env| [200, { "Content-Type" => "text/html" }, ["OK"]] },
+        )
+      status, headers = middleware.call(env)
+
+      expect(status).to eq(200)
+      expect(headers["X-Discourse-TrackView"]).to eq("1")
+      expect(headers["X-Discourse-BrowserPageView"]).to eq(nil)
+    end
+
+    it "adds the appropriate response header based on deferred tracking (MiniProfiler piggyback, BPVs)" do
+      middleware = Middleware::RequestTracker.new(lambda { |env| [200, {}, ["OK"]] })
+      status, headers = middleware.call(env("HTTP_DISCOURSE_TRACK_VIEW_DEFERRED" => "1"))
+
+      expect(status).to eq(200)
+      expect(headers["X-Discourse-TrackView"]).to eq(nil)
+      expect(headers["X-Discourse-BrowserPageView"]).to eq("1")
+    end
+
+    it "adds the appropriate response headers for MessageBus requests with deferred tracking" do
+      app =
+        lambda do |env|
+          headers = MessageBus.extra_response_headers_lookup.call(env)
+          [200, headers, ["OK"]]
+        end
+
+      middleware = Middleware::RequestTracker.new(app)
+
+      status, headers =
+        middleware.call(
+          env("HTTP_DISCOURSE_TRACK_VIEW_DEFERRED" => "1", :path => "/message-bus/abcde/poll"),
+        )
+
+      expect(status).to eq(200)
+      expect(headers["X-Discourse-BrowserPageView"]).to eq("1")
+    end
+
+    it "adds the appropriate response headers for MessageBus requests with regular tracking" do
+      app =
+        lambda do |env|
+          headers = MessageBus.extra_response_headers_lookup.call(env)
+          [200, headers, ["OK"]]
+        end
+
+      middleware = Middleware::RequestTracker.new(app)
+
+      status, headers =
+        middleware.call(env("HTTP_DISCOURSE_TRACK_VIEW" => "1", :path => "/message-bus/abcde/poll"))
+
+      expect(status).to eq(200)
+      expect(headers["X-Discourse-BrowserPageView"]).to eq("1")
+      expect(headers["X-Discourse-TrackView"]).to eq("1")
+    end
+
+    it "does not add these response headers when skipping the request tracker" do
+      app =
+        lambda do |env|
+          headers = MessageBus.extra_response_headers_lookup.call(env)
+          [200, headers, ["OK"]]
+        end
+
+      middleware = Middleware::RequestTracker.new(app)
+
+      status, headers =
+        middleware.call(
+          env(
+            "HTTP_DISCOURSE_TRACK_VIEW" => "1",
+            :path => "/message-bus/abcde/poll",
+            "discourse.request_tracker.skip" => true,
+          ),
+        )
+
+      expect(status).to eq(200)
+      expect(headers["X-Discourse-BrowserPageView"]).to eq(nil)
+      expect(headers["X-Discourse-TrackView"]).to eq(nil)
+    end
+
     it "can log requests correctly" do
       data =
         Middleware::RequestTracker.get_data(
@@ -143,7 +231,7 @@ RSpec.describe Middleware::RequestTracker do
       # /srv/status is never a tracked view because content-type is text/plain
       data =
         Middleware::RequestTracker.get_data(
-          env("HTTP_USER_AGENT" => "kube-probe/1.18", "REQUEST_URI" => "/srv/status?shutdown_ok=1"),
+          env("HTTP_USER_AGENT" => "kube-probe/1.18", "REQUEST_URI" => "/srv/status"),
           ["200", { "Content-Type" => "text/plain" }],
           0.1,
         )
@@ -167,13 +255,13 @@ RSpec.describe Middleware::RequestTracker do
     it "logs deferred pageviews correctly" do
       data =
         Middleware::RequestTracker.get_data(
-          env(:path => "/message-bus/abcde/poll", "HTTP_DISCOURSE_DEFERRED_TRACK_VIEW" => "1"),
+          env(:path => "/message-bus/abcde/poll", "HTTP_DISCOURSE_TRACK_VIEW_DEFERRED" => "1"),
           ["200", { "Content-Type" => "text/html" }],
           0.1,
         )
       Middleware::RequestTracker.log_request(data)
 
-      expect(data[:deferred_track]).to eq(true)
+      expect(data[:deferred_track_view]).to eq(true)
       CachedCounting.flush
 
       expect(ApplicationRequest.page_view_anon_browser.first.count).to eq(1)
@@ -243,6 +331,203 @@ RSpec.describe Middleware::RequestTracker do
       expect(ApplicationRequest.page_view_anon.first.count).to eq(1)
     end
 
+    describe "topic views" do
+      fab!(:topic)
+      fab!(:post) { Fabricate(:post, topic: topic) }
+      fab!(:user) { Fabricate(:user, active: true) }
+
+      let!(:auth_cookie) do
+        token = UserAuthToken.generate!(user_id: user.id)
+        create_auth_cookie(
+          token: token.unhashed_auth_token,
+          user_id: user.id,
+          trust_level: user.trust_level,
+          issued_at: 5.minutes.ago,
+        )
+      end
+
+      def log_topic_view(authenticated: false, deferred: false)
+        headers = { "action_dispatch.remote_ip" => "127.0.0.1" }
+
+        headers["HTTP_COOKIE"] = "_t=#{auth_cookie};" if authenticated
+
+        if deferred
+          headers["HTTP_DISCOURSE_TRACK_VIEW"] = "1"
+          headers["HTTP_DISCOURSE_TRACK_VIEW_DEFERRED"] = "1"
+          headers["HTTP_DISCOURSE_TRACK_VIEW_TOPIC_ID"] = topic.id
+          path = "/message-bus/abcde/poll"
+        else
+          headers["HTTP_DISCOURSE_TRACK_VIEW"] = "1"
+          headers["HTTP_DISCOURSE_TRACK_VIEW_TOPIC_ID"] = topic.id
+          path = URI.parse(topic.url).path
+        end
+
+        data =
+          Middleware::RequestTracker.get_data(
+            env(path: path, **headers),
+            ["200", { "Content-Type" => "text/html" }],
+            0.1,
+          )
+        Middleware::RequestTracker.log_request(data)
+        data
+      end
+
+      it "logs deferred topic views correctly for logged in users" do
+        data = log_topic_view(authenticated: true, deferred: true)
+
+        expect(data[:topic_id]).to eq(topic.id)
+        expect(data[:request_remote_ip]).to eq("127.0.0.1")
+        expect(data[:current_user_id]).to eq(user.id)
+        CachedCounting.flush
+
+        expect(TopicViewItem.exists?(topic_id: topic.id, user_id: user.id, ip_address: nil)).to eq(
+          true,
+        )
+        expect(
+          TopicViewStat.exists?(
+            topic_id: topic.id,
+            anonymous_views: 0,
+            logged_in_views: 1,
+            viewed_at: Time.zone.now.to_date,
+          ),
+        ).to eq(true)
+      end
+
+      it "does not log deferred topic views for topics the user cannot access" do
+        topic.update!(category: Fabricate(:private_category, group: Fabricate(:group)))
+        log_topic_view(authenticated: true, deferred: true)
+        CachedCounting.flush
+        expect(TopicViewItem.exists?(topic_id: topic.id, user_id: user.id, ip_address: nil)).to eq(
+          false,
+        )
+        expect(
+          TopicViewStat.exists?(
+            topic_id: topic.id,
+            anonymous_views: 0,
+            logged_in_views: 1,
+            viewed_at: Time.zone.now.to_date,
+          ),
+        ).to eq(false)
+      end
+
+      it "logs deferred topic views correctly for anonymous" do
+        data = log_topic_view(authenticated: false, deferred: true)
+
+        expect(data[:topic_id]).to eq(topic.id)
+        expect(data[:request_remote_ip]).to eq("127.0.0.1")
+        expect(data[:current_user_id]).to eq(nil)
+        CachedCounting.flush
+
+        expect(
+          TopicViewItem.exists?(topic_id: topic.id, user_id: nil, ip_address: "127.0.0.1"),
+        ).to eq(true)
+        expect(
+          TopicViewStat.exists?(
+            topic_id: topic.id,
+            anonymous_views: 1,
+            logged_in_views: 0,
+            viewed_at: Time.zone.now.to_date,
+          ),
+        ).to eq(true)
+      end
+
+      it "does not log deferred topic views for topics the anonymous user cannot access" do
+        topic.update!(category: Fabricate(:private_category, group: Fabricate(:group)))
+        log_topic_view(authenticated: false, deferred: true)
+        CachedCounting.flush
+
+        expect(
+          TopicViewItem.exists?(topic_id: topic.id, user_id: nil, ip_address: "127.0.0.1"),
+        ).to eq(false)
+        expect(
+          TopicViewStat.exists?(
+            topic_id: topic.id,
+            anonymous_views: 1,
+            logged_in_views: 0,
+            viewed_at: Time.zone.now.to_date,
+          ),
+        ).to eq(false)
+      end
+
+      it "logs explicit topic views correctly for logged in users" do
+        data = log_topic_view(authenticated: true, deferred: false)
+
+        expect(data[:topic_id]).to eq(topic.id)
+        expect(data[:request_remote_ip]).to eq("127.0.0.1")
+        expect(data[:current_user_id]).to eq(user.id)
+        CachedCounting.flush
+
+        expect(TopicViewItem.exists?(topic_id: topic.id, user_id: user.id, ip_address: nil)).to eq(
+          true,
+        )
+        expect(
+          TopicViewStat.exists?(
+            topic_id: topic.id,
+            anonymous_views: 0,
+            logged_in_views: 1,
+            viewed_at: Time.zone.now.to_date,
+          ),
+        ).to eq(true)
+      end
+
+      it "does not log explicit topic views for topics the user cannot access" do
+        topic.update!(category: Fabricate(:private_category, group: Fabricate(:group)))
+        log_topic_view(authenticated: true, deferred: false)
+        CachedCounting.flush
+
+        expect(TopicViewItem.exists?(topic_id: topic.id, user_id: user.id, ip_address: nil)).to eq(
+          false,
+        )
+        expect(
+          TopicViewStat.exists?(
+            topic_id: topic.id,
+            anonymous_views: 0,
+            logged_in_views: 1,
+            viewed_at: Time.zone.now.to_date,
+          ),
+        ).to eq(false)
+      end
+
+      it "logs explicit topic views correctly for anonymous" do
+        data = log_topic_view(authenticated: false, deferred: false)
+
+        expect(data[:topic_id]).to eq(topic.id)
+        expect(data[:request_remote_ip]).to eq("127.0.0.1")
+        expect(data[:current_user_id]).to eq(nil)
+        CachedCounting.flush
+
+        expect(
+          TopicViewItem.exists?(topic_id: topic.id, user_id: nil, ip_address: "127.0.0.1"),
+        ).to eq(true)
+        expect(
+          TopicViewStat.exists?(
+            topic_id: topic.id,
+            anonymous_views: 1,
+            logged_in_views: 0,
+            viewed_at: Time.zone.now.to_date,
+          ),
+        ).to eq(true)
+      end
+
+      it "does not log explicit topic views for topics the anonymous user cannot access" do
+        topic.update!(category: Fabricate(:private_category, group: Fabricate(:group)))
+        log_topic_view(authenticated: false, deferred: false)
+        CachedCounting.flush
+
+        expect(
+          TopicViewItem.exists?(topic_id: topic.id, user_id: nil, ip_address: "127.0.0.1"),
+        ).to eq(false)
+        expect(
+          TopicViewStat.exists?(
+            topic_id: topic.id,
+            anonymous_views: 1,
+            logged_in_views: 0,
+            viewed_at: Time.zone.now.to_date,
+          ),
+        ).to eq(false)
+      end
+    end
+
     context "when ignoring anonymous page views" do
       let(:anon_data) do
         Middleware::RequestTracker.get_data(
@@ -306,26 +591,337 @@ RSpec.describe Middleware::RequestTracker do
         expect(ApplicationRequest.page_view_anon.first).to eq(nil)
       end
     end
+
+    describe "browser_pageview event" do
+      context "when SiteSetting.trigger_browser_pageview_events is true" do
+        before { SiteSetting.trigger_browser_pageview_events = true }
+        it "triggers event for anonymous user page views when `login_required` site setting is false" do
+          session_id = "xxxxxxxxxxxx4xxxyxxxxxxxxxxxxxxx"
+          DiscourseIpInfo.stubs(:get).returns(country_code: "AU")
+
+          data =
+            Middleware::RequestTracker.get_data(
+              env(
+                "HTTP_DISCOURSE_TRACK_VIEW" => "1",
+                "HTTP_DISCOURSE_TRACK_VIEW_SESSION_ID" => session_id,
+                "HTTP_DISCOURSE_TRACK_VIEW_URL" => "https://discourse.org",
+                "HTTP_DISCOURSE_TRACK_VIEW_REFERRER" => "https://example.com",
+              ),
+              ["200", { "Content-Type" => "text/html" }],
+              0.2,
+            )
+
+          events =
+            DiscourseEvent.track_events(:browser_pageview) do
+              Middleware::RequestTracker.log_request(data)
+            end
+
+          expect(events.length).to eq(1)
+          event = events[0][:params].first
+          expect(event[:user_id]).to be_nil
+          expect(event[:session_id]).to eq(session_id)
+          expect(event[:url]).to eq("https://discourse.org")
+          expect(event[:referrer]).to eq("https://example.com")
+          expect(event).to have_key(:ip_address)
+          expect(event[:country_code]).to eq("AU")
+          expect(event[:user_agent]).to be_present
+        end
+
+        it "does not trigger event for anonymous user page views when `login_required` site setting is true" do
+          SiteSetting.login_required = true
+          session_id = "xxxxxxxxxxxx4xxxyxxxxxxxxxxxxxxx"
+
+          data =
+            Middleware::RequestTracker.get_data(
+              env(
+                "HTTP_DISCOURSE_TRACK_VIEW" => "1",
+                "HTTP_DISCOURSE_TRACK_VIEW_SESSION_ID" => session_id,
+                "HTTP_DISCOURSE_TRACK_VIEW_URL" => "https://discourse.org",
+                "HTTP_DISCOURSE_TRACK_VIEW_REFERRER" => "https://example.com",
+              ),
+              ["200", { "Content-Type" => "text/html" }],
+              0.2,
+            )
+
+          events =
+            DiscourseEvent.track_events(:browser_pageview) do
+              Middleware::RequestTracker.log_request(data)
+            end
+
+          expect(events).to be_empty
+        end
+
+        it "truncates session id, url, referrer, ip address and user agent" do
+          Middleware::AnonymousCache::Helper.any_instance.expects(:is_crawler?).returns(false)
+          data =
+            Middleware::RequestTracker.get_data(
+              env(
+                "HTTP_DISCOURSE_TRACK_VIEW" => "1",
+                "HTTP_DISCOURSE_TRACK_VIEW_SESSION_ID" => "A" * 50,
+                "HTTP_DISCOURSE_TRACK_VIEW_URL" => "A" * 5000,
+                "HTTP_DISCOURSE_TRACK_VIEW_REFERRER" => "A" * 5000,
+                "HTTP_USER_AGENT" => "A" * 5000,
+                "action_dispatch.remote_ip" => "1" * 50,
+              ),
+              ["200", { "Content-Type" => "text/html" }],
+              0.2,
+            )
+
+          events =
+            DiscourseEvent.track_events(:browser_pageview) do
+              Middleware::RequestTracker.log_request(data)
+            end
+
+          expect(events.length).to eq(1)
+          event = events[0][:params].first
+          expect(event[:url].length).to eq(Middleware::RequestTracker::MAX_URL_LENGTH)
+          expect(event[:referrer].length).to eq(Middleware::RequestTracker::MAX_URL_LENGTH)
+          expect(event[:session_id].length).to eq(Middleware::RequestTracker::MAX_SESSION_ID_LENGTH)
+          expect(event[:user_agent].length).to eq(Middleware::RequestTracker::MAX_USER_AGENT_LENGTH)
+          expect(event[:ip_address].length).to eq(Middleware::RequestTracker::MAX_IP_ADDRESS_LENGTH)
+        end
+
+        it "triggers event for logged-in user page views" do
+          user = Fabricate(:user, active: true)
+          DiscourseIpInfo.stubs(:get).returns(country_code: "DE")
+          token = UserAuthToken.generate!(user_id: user.id)
+          cookie =
+            create_auth_cookie(
+              token: token.unhashed_auth_token,
+              user_id: user.id,
+              trust_level: user.trust_level,
+              issued_at: 5.minutes.ago,
+            )
+
+          data =
+            Middleware::RequestTracker.get_data(
+              env(
+                "HTTP_DISCOURSE_TRACK_VIEW" => "1",
+                "HTTP_COOKIE" => "_t=#{cookie};",
+                "HTTP_DISCOURSE_TRACK_VIEW_URL" => "https://discourse.org",
+                "HTTP_DISCOURSE_TRACK_VIEW_REFERRER" => "https://example.com",
+              ),
+              ["200", { "Content-Type" => "text/html" }],
+              0.2,
+            )
+
+          events =
+            DiscourseEvent.track_events(:browser_pageview) do
+              Middleware::RequestTracker.log_request(data)
+            end
+
+          expect(events.length).to eq(1)
+          event = events[0][:params].first
+          expect(event[:user_id]).to eq(user.id)
+          expect(event[:url]).to eq("https://discourse.org")
+          expect(event[:referrer]).to eq("https://example.com")
+          expect(event).to have_key(:ip_address)
+          expect(event[:country_code]).to eq("DE")
+          expect(event[:user_agent]).to be_present
+        end
+
+        it "does not trigger event for crawler page views" do
+          data =
+            Middleware::RequestTracker.get_data(
+              env("HTTP_USER_AGENT" => "Googlebot"),
+              ["200", { "Content-Type" => "text/html" }],
+              0.2,
+            )
+
+          events =
+            DiscourseEvent.track_events(:browser_pageview) do
+              Middleware::RequestTracker.log_request(data)
+            end
+
+          expect(events.length).to eq(0)
+        end
+      end
+
+      context "when SiteSetting.trigger_browser_pageview_events is false" do
+        it "does not trigger events" do
+          session_id = "xxxxxxxxxxxx4xxxyxxxxxxxxxxxxxxx"
+
+          data =
+            Middleware::RequestTracker.get_data(
+              env(
+                "HTTP_DISCOURSE_TRACK_VIEW" => "1",
+                "HTTP_DISCOURSE_TRACK_VIEW_SESSION_ID" => session_id,
+                "HTTP_DISCOURSE_TRACK_VIEW_URL" => "https://discourse.org",
+                "HTTP_DISCOURSE_TRACK_VIEW_REFERRER" => "https://example.com",
+              ),
+              ["200", { "Content-Type" => "text/html" }],
+              0.2,
+            )
+
+          events =
+            DiscourseEvent.track_events(:browser_pageview) do
+              Middleware::RequestTracker.log_request(data)
+            end
+
+          expect(events.length).to eq(0)
+        end
+      end
+    end
+  end
+
+  describe "beacon pageview tracking via /srv/pv" do
+    before do
+      SiteSetting.use_beacon_for_browser_page_views = true
+      freeze_time
+      ApplicationRequest.clear_cache!
+    end
+
+    def beacon_env(body_hash, extra = {})
+      json_body = JSON.generate(body_hash)
+      env(
+        {
+          :path => "/srv/pv",
+          "REQUEST_METHOD" => "POST",
+          "CONTENT_TYPE" => "application/json",
+          "rack.input" => StringIO.new(json_body),
+        }.merge(extra),
+      )
+    end
+
+    it "returns 204 and does not call the app" do
+      app_called = false
+      middleware =
+        Middleware::RequestTracker.new(
+          lambda do |env|
+            app_called = true
+            [200, {}, ["OK"]]
+          end,
+        )
+      status, = middleware.call(beacon_env({}))
+
+      expect(status).to eq(204)
+      expect(app_called).to eq(false)
+    end
+
+    it "returns 204 for beacon requests in a subfolder setup" do
+      set_subfolder "/forum"
+      middleware = Middleware::RequestTracker.new(lambda { |env| [200, {}, ["OK"]] })
+      status, = middleware.call(beacon_env({}, { path: "/forum/srv/pv" }))
+
+      expect(status).to eq(204)
+    end
+
+    it "handles malformed JSON body gracefully" do
+      middleware = Middleware::RequestTracker.new(lambda { |env| [200, {}, ["OK"]] })
+      status, =
+        middleware.call(
+          env(
+            :path => "/srv/pv",
+            "REQUEST_METHOD" => "POST",
+            "CONTENT_TYPE" => "application/json",
+            "rack.input" => StringIO.new("not json"),
+          ),
+        )
+
+      expect(status).to eq(204)
+    end
+
+    it "increments beacon-specific counters and fires beacon event with correct data" do
+      SiteSetting.trigger_browser_pageview_events = true
+      DiscourseIpInfo.stubs(:get).returns(country_code: "US")
+      middleware = Middleware::RequestTracker.new(lambda { |env| [200, {}, ["OK"]] })
+
+      events =
+        DiscourseEvent.track_events(:beacon_browser_pageview) do
+          middleware.call(
+            beacon_env(
+              {
+                url: "https://test.com/t/topic/123",
+                referrer: "https://test.com/",
+                session_id: "abc123",
+                topic_id: 123,
+              },
+            ),
+          )
+        end
+
+      CachedCounting.flush
+
+      expect(ApplicationRequest.page_view_anon_browser_beacon.first.count).to eq(1)
+      expect(ApplicationRequest.page_view_anon.first).to be_nil
+      expect(ApplicationRequest.page_view_anon_browser.first).to be_nil
+
+      event = events[0][:params].last
+      expect(event[:url]).to eq("https://test.com/t/topic/123")
+      expect(event[:referrer]).to eq("https://test.com/")
+      expect(event[:session_id]).to eq("abc123")
+      expect(event[:topic_id]).to eq(123)
+      expect(event[:country_code]).to eq("US")
+      expect(event[:user_agent]).to eq(
+        "Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2228.0 Safari/537.36",
+      )
+    end
+
+    it "increments legacy and BPV counters from non-beacon requests" do
+      middleware = Middleware::RequestTracker.new(lambda { |env| [200, {}, ["OK"]] })
+      middleware.call(env("HTTP_DISCOURSE_TRACK_VIEW" => "1"))
+      CachedCounting.flush
+
+      expect(ApplicationRequest.page_view_anon.first.count).to eq(1)
+      expect(ApplicationRequest.page_view_anon_browser.first.count).to eq(1)
+
+      expect(ApplicationRequest.page_view_anon_browser_beacon.first).to be_nil
+    end
+
+    it "skips beacon page view when the remote IP resolves to a crawler ASN" do
+      DiscourseIpInfo.stubs(:get).returns({ asn: SiteSetting.crawler_asns_map.first.to_i })
+      middleware = Middleware::RequestTracker.new(lambda { |env| [200, {}, ["OK"]] })
+      middleware.call(beacon_env({}, { "action_dispatch.remote_ip" => "1.2.3.4" }))
+      CachedCounting.flush
+
+      expect(ApplicationRequest.page_view_anon_browser_beacon.first).to be_nil
+    end
+
+    it "counts beacon page view when the remote IP is not a crawler ASN" do
+      DiscourseIpInfo.stubs(:get).returns({ asn: 1 })
+      middleware = Middleware::RequestTracker.new(lambda { |env| [200, {}, ["OK"]] })
+      middleware.call(beacon_env({}, { "action_dispatch.remote_ip" => "1.2.3.4" }))
+      CachedCounting.flush
+
+      expect(ApplicationRequest.page_view_anon_browser_beacon.first.count).to eq(1)
+    end
+
+    context "when SiteSetting.use_beacon_for_browser_page_views is false" do
+      before { SiteSetting.use_beacon_for_browser_page_views = false }
+
+      it "returns the app's response for beacon requests instead of 204" do
+        app_called = false
+        middleware =
+          Middleware::RequestTracker.new(
+            lambda do |env|
+              app_called = true
+              [404, {}, ["unknown app path"]]
+            end,
+          )
+        status, = middleware.call(beacon_env({}))
+
+        expect(status).to eq(404)
+        expect(app_called).to eq(true)
+      end
+    end
   end
 
   describe "rate limiting" do
+    let(:fake_logger) { FakeLogger.new }
+
     before do
       RateLimiter.enable
       RateLimiter.clear_all_global!
 
-      @orig_logger = Rails.logger
-      Rails.logger = @fake_logger = FakeLogger.new
-
+      Rails.logger.broadcast_to(fake_logger)
       # rate limiter tests depend on checks for retry-after
       # they can be sensitive to clock skew during test runs
       freeze_time_safe
     end
 
-    use_redis_snapshotting
+    after { Rails.logger.stop_broadcasting_to(fake_logger) }
 
-    after { Rails.logger = @orig_logger }
-
-    let :middleware do
+    let(:middleware) do
       app = lambda { |env| [200, {}, ["OK"]] }
 
       Middleware::RequestTracker.new(app)
@@ -365,7 +961,7 @@ RSpec.describe Middleware::RequestTracker do
         status, _ = middleware.call(env1)
         status, _ = middleware.call(env1)
 
-        expect(@fake_logger.warnings.count { |w| w.include?("Global rate limit exceeded") }).to eq(
+        expect(fake_logger.warnings.count { |w| w.include?("Global rate limit exceeded") }).to eq(
           warn_count,
         )
         expect(status).to eq(429)
@@ -481,9 +1077,7 @@ RSpec.describe Middleware::RequestTracker do
         status, _ = middleware.call(env1)
         status, _ = middleware.call(env1)
 
-        expect(@fake_logger.warnings.count { |w| w.include?("Global rate limit exceeded") }).to eq(
-          0,
-        )
+        expect(fake_logger.warnings.count { |w| w.include?("Global rate limit exceeded") }).to eq(0)
         expect(status).to eq(200)
       end
     end
@@ -492,10 +1086,11 @@ RSpec.describe Middleware::RequestTracker do
       global_setting :max_reqs_per_ip_per_10_seconds, 1
       global_setting :max_reqs_per_ip_mode, "warn+block"
 
-      status, _ = middleware.call(env)
-      status, headers = middleware.call(env)
+      env1 = env("REMOTE_ADDR" => "192.0.2.42")
+      status, _ = middleware.call(env1)
+      status, headers = middleware.call(env1)
 
-      expect(@fake_logger.warnings.count { |w| w.include?("Global rate limit exceeded") }).to eq(1)
+      expect(fake_logger.warnings.count { |w| w.include?("Global rate limit exceeded") }).to eq(1)
       expect(status).to eq(429)
       expect(headers["Retry-After"]).to eq("10")
     end
@@ -504,10 +1099,11 @@ RSpec.describe Middleware::RequestTracker do
       global_setting :max_reqs_per_ip_per_10_seconds, 1
       global_setting :max_reqs_per_ip_mode, "warn"
 
-      status, _ = middleware.call(env)
-      status, _ = middleware.call(env)
+      env1 = env("REMOTE_ADDR" => "192.0.2.42")
+      status, _ = middleware.call(env1)
+      status, _ = middleware.call(env1)
 
-      expect(@fake_logger.warnings.count { |w| w.include?("Global rate limit exceeded") }).to eq(1)
+      expect(fake_logger.warnings.count { |w| w.include?("Global rate limit exceeded") }).to eq(1)
       expect(status).to eq(200)
     end
 
@@ -574,8 +1170,12 @@ RSpec.describe Middleware::RequestTracker do
         expect(status).to eq(429)
         expect(called).to eq(1)
         expect(headers["Discourse-Rate-Limit-Error-Code"]).to eq("ip_10_secs_limit")
-        expect(response.first).to include("too many requests from this IP address")
-        expect(response.first).to include("Error code: ip_10_secs_limit.")
+
+        expect(response.first).to eq(<<~MSG)
+        Slow down, you're making too many requests.
+        Please retry again in 10 seconds.
+        Error code: ip_10_secs_limit.
+        MSG
       end
 
       it "is included when the requests-per-minute limit is reached" do
@@ -598,8 +1198,12 @@ RSpec.describe Middleware::RequestTracker do
         expect(status).to eq(429)
         expect(called).to eq(1)
         expect(headers["Discourse-Rate-Limit-Error-Code"]).to eq("ip_60_secs_limit")
-        expect(response.first).to include("too many requests from this IP address")
-        expect(response.first).to include("Error code: ip_60_secs_limit.")
+
+        expect(response.first).to eq(<<~MSG)
+        Slow down, you're making too many requests.
+        Please retry again in 60 seconds.
+        Error code: ip_60_secs_limit.
+        MSG
       end
 
       it "is included when the assets-requests-per-10-seconds limit is reached" do
@@ -623,8 +1227,12 @@ RSpec.describe Middleware::RequestTracker do
         expect(status).to eq(429)
         expect(called).to eq(1)
         expect(headers["Discourse-Rate-Limit-Error-Code"]).to eq("ip_assets_10_secs_limit")
-        expect(response.first).to include("too many requests from this IP address")
-        expect(response.first).to include("Error code: ip_assets_10_secs_limit.")
+
+        expect(response.first).to eq(<<~MSG)
+        Slow down, you're making too many requests.
+        Please retry again in 10 seconds.
+        Error code: ip_assets_10_secs_limit.
+        MSG
       end
     end
 
@@ -663,10 +1271,15 @@ RSpec.describe Middleware::RequestTracker do
         middleware = Middleware::RequestTracker.new(app)
         status, headers, response = middleware.call(env)
         expect(status).to eq(429)
-        expect(headers["Discourse-Rate-Limit-Error-Code"]).to eq("id_60_secs_limit")
-        expect(response.first).to include("too many requests from this user")
-        expect(response.first).to include("Error code: id_60_secs_limit.")
+        expect(headers["Discourse-Rate-Limit-Error-Code"]).to eq("user_60_secs_limit")
+
+        expect(response.first).to eq(<<~MSG)
+        Slow down, you're making too many requests.
+        Please retry again in 60 seconds.
+        Error code: user_60_secs_limit.
+        MSG
       end
+
       expect(called).to eq(3)
     end
 
@@ -686,11 +1299,13 @@ RSpec.describe Middleware::RequestTracker do
       env = env("HTTP_COOKIE" => "_t=#{cookie}", "REMOTE_ADDR" => "1.1.1.1")
 
       called = 0
+
       app =
         lambda do |_|
           called += 1
           [200, {}, ["OK"]]
         end
+
       freeze_time(12.minutes.from_now) do
         middleware = Middleware::RequestTracker.new(app)
         status, = middleware.call(env)
@@ -700,8 +1315,12 @@ RSpec.describe Middleware::RequestTracker do
         status, headers, response = middleware.call(env)
         expect(status).to eq(429)
         expect(headers["Discourse-Rate-Limit-Error-Code"]).to eq("ip_60_secs_limit")
-        expect(response.first).to include("too many requests from this IP address")
-        expect(response.first).to include("Error code: ip_60_secs_limit.")
+
+        expect(response.first).to eq(<<~MSG)
+        Slow down, you're making too many requests.
+        Please retry again in 60 seconds.
+        Error code: ip_60_secs_limit.
+        MSG
       end
     end
 
@@ -736,8 +1355,53 @@ RSpec.describe Middleware::RequestTracker do
       status, headers, response = middleware.call(env)
       expect(status).to eq(429)
       expect(headers["Discourse-Rate-Limit-Error-Code"]).to eq("ip_60_secs_limit")
-      expect(response.first).to include("too many requests from this IP address")
-      expect(response.first).to include("Error code: ip_60_secs_limit.")
+
+      expect(response.first).to eq(<<~MSG)
+      Slow down, you're making too many requests.
+      Please retry again in 60 seconds.
+      Error code: ip_60_secs_limit.
+      MSG
+    end
+
+    context "for `add_request_rate_limiter` plugin API" do
+      after { described_class.reset_rate_limiters_stack }
+
+      it "can be used to add a custom rate limiter" do
+        global_setting :max_reqs_per_ip_per_minute, 1
+
+        plugin = Plugin::Instance.new
+
+        plugin.add_request_rate_limiter(
+          identifier: :crawlers,
+          key: ->(_request) { "crawlers" },
+          activate_when: ->(request) { request.user_agent =~ /crawler/ },
+        )
+
+        env1 = env("HTTP_USER_AGENT" => "some crawler")
+
+        called = 0
+
+        app =
+          lambda do |_|
+            called += 1
+            [200, {}, ["OK"]]
+          end
+
+        middleware = Middleware::RequestTracker.new(app)
+        status, = middleware.call(env1)
+        expect(status).to eq(200)
+
+        middleware = Middleware::RequestTracker.new(app)
+        status, headers, response = middleware.call(env1)
+        expect(status).to eq(429)
+        expect(headers["Discourse-Rate-Limit-Error-Code"]).to eq("crawlers_60_secs_limit")
+
+        expect(response.first).to eq(<<~MSG)
+        Slow down, you're making too many requests.
+        Please retry again in 60 seconds.
+        Error code: crawlers_60_secs_limit.
+        MSG
+      end
     end
   end
 
@@ -811,7 +1475,14 @@ RSpec.describe Middleware::RequestTracker do
       freeze_time 1.minute.from_now
 
       tracker = Middleware::RequestTracker.new(app([200, {}, []], sql_calls: 2, redis_calls: 2))
-      _, headers, _ = tracker.call(env("HTTP_X_REQUEST_START" => "t=#{start}"))
+
+      _, headers, _ =
+        tracker.call(
+          env(
+            "HTTP_X_REQUEST_START" => "t=#{start}",
+            Middleware::ProcessingRequest::REQUEST_QUEUE_SECONDS_ENV_KEY => 60,
+          ),
+        )
 
       expect(@data[:queue_seconds]).to eq(60)
 
@@ -883,20 +1554,20 @@ RSpec.describe Middleware::RequestTracker do
   end
 
   describe "error handling" do
-    before do
-      @original_logger = Rails.logger
-      Rails.logger = @fake_logger = FakeLogger.new
-    end
+    let(:fake_logger) { FakeLogger.new }
 
-    after { Rails.logger = @original_logger }
+    before { Rails.logger.broadcast_to(fake_logger) }
+
+    after { Rails.logger.stop_broadcasting_to(fake_logger) }
 
     it "logs requests even if they cause exceptions" do
       app = lambda { |env| raise RateLimiter::LimitExceeded, 1 }
       tracker = Middleware::RequestTracker.new(app)
       expect { tracker.call(env) }.to raise_error(RateLimiter::LimitExceeded)
+
       CachedCounting.flush
-      expect(ApplicationRequest.stats).to include("http_total_total" => 1)
-      expect(@fake_logger.warnings).to be_empty
+      expect(ApplicationRequest.stats["http_total_total"]).to eq(1)
+      expect(fake_logger.warnings).to be_empty
     end
   end
 end

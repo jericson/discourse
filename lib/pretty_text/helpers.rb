@@ -45,7 +45,10 @@ module PrettyText
       urls.each do |url|
         sha1 = Upload.sha1_from_short_url(url)
         if (url.split(".")[1].nil?) # video sha1 without extension for thumbnail
-          thumbnail = Upload.where("original_filename LIKE ?", "#{sha1}.%").last
+          thumbnail = Upload.where("original_filename LIKE ?", "#{sha1}.%").last if sha1
+          # Fallback for old posts that don't contain data-video-base62-sha1
+          thumbnail = Upload.where("original_filename LIKE ?", "#{url}.%").last if thumbnail.nil? &&
+            sha1.nil?
           sha1 = thumbnail.sha1 if thumbnail
         end
         map[url] = sha1 if sha1
@@ -61,9 +64,9 @@ module PrettyText
 
         Upload
           .where(sha1: map.values)
-          .pluck(:sha1, :url, :extension, :original_filename, :secure)
+          .pluck(:sha1, :url, :extension, :secure)
           .each do |row|
-            sha1, url, extension, original_filename, secure = row
+            sha1, url, extension, secure = row
 
             if short_urls = reverse_map[sha1]
               secure_uploads = SiteSetting.secure_uploads? && secure
@@ -108,11 +111,7 @@ module PrettyText
       # categories, however if the suppress_secured_categories_from_admin
       # site setting is activated then this user will not be able to access
       # secure categories, so hashtags that are secure will not render.
-      if cooking_user_id.blank?
-        cooking_user = Discourse.system_user
-      else
-        cooking_user = User.find(cooking_user_id)
-      end
+      cooking_user = User.find_by(id: cooking_user_id) || Discourse.system_user
 
       types_in_priority_order =
         types_in_priority_order.select do |type|

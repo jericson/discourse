@@ -20,4 +20,18 @@ module TopicsHelper
 
     Plugin::Filter.apply(:topic_categories_breadcrumb, topic, breadcrumb)
   end
+
+  def localize_topic_view_content(topic_view)
+    return if cookies.key?(ContentLocalization::SHOW_ORIGINAL_COOKIE)
+    return if current_user&.user_option&.show_original_content
+
+    # locale param is appropriately set in the application controller
+    # depending on site settings and presence of user
+    locale = I18n.locale
+
+    LocalizationAttributesReplacer.replace_topic_attributes(topic_view.topic, locale)
+    topic_view.posts.each do |post|
+      LocalizationAttributesReplacer.replace_post_attributes(post, locale)
+    end
+  end
 end

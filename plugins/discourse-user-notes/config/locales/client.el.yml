@@ -1,0 +1,17 @@
+# WARNING: Never edit this file.
+# It will be overwritten when translations are pulled from Crowdin.
+#
+# To work with us on translations, join this project:
+# https://translate.discourse.org/
+
+el:
+  js:
+    user_notes:
+      title: "Σημειώσεις χρήστη"
+      attach: "Προσθήκη σημείωσης χρήστη"
+      remove: "Αφαίρεση σημείωσης χρήστη"
+      show: "Σημειώσεις χρήστη (%{count})"
+      delete_confirm: "Σίγουρα θέλετε να διαγράψετε αυτήν τη σημείωση χρήστη;"
+      show_post: "Εμφάνιση ανάρτησης"
+      show_flag: "Εμφάνιση αναφοράς"
+      copy_reviewable_note: "Αντιγραφή σημείωσης στη 'Σημείωση χρήστη' στο προφίλ του χρήστη %{username};"

@@ -12,14 +12,21 @@ sw:
           always: "Mara kwa mara"
           never: "Kamwe"
     chat:
+      edit_category:
+        channel: "Chaneli"
+        description: "Maelezo"
+        actions: "Vitendo"
+        settings: "Mipangilio"
       deleted_chat_username: imefutwa
       dates:
         yesterday: "Jana"
       create: "Tengeneza"
       cancel: "Ghairi"
+      pinned: "Imebandikwa"
       channel_settings:
         edit: "Hariri"
         add: "ongeza"
+        notification_settings_context: "Taarifa"
         join: "Jiunge"
         leave: "Ondoka"
       close: "Funga"
@@ -41,7 +48,6 @@ sw:
       save: "Hifadhi"
       sounds:
         none: "Hakuna"
-      exit: "iliyopita"
       channel_status:
         closed: "Imefungwa"
         open: "Fungua"
@@ -53,6 +59,8 @@ sw:
       chat_message_separator:
         today: Leo
         yesterday: Jana
+      search_view:
+        filter_placeholder: Tafuta ujumbe
       about_view:
         title: Kichwa cha Habari
         name: Jina
@@ -62,6 +70,8 @@ sw:
         tabs:
           members: Wanachama
           settings: Mipangilio
+          search: Tafuta
+        remove_member: "Ondoa"
       new_message_modal:
         filter: "Chuja"
       direct_message_creator:
@@ -72,6 +82,8 @@ sw:
         types:
           category: "Kikundi"
           topic: "Mada"
+      reviewable:
+        message_in_channel: "Chaneli"
       composer:
         italic_text: "Maneno yaliyo tiliwa mkazo"
         bold_text: "Maneno yaliyokolezwa"
@@ -93,6 +105,12 @@ sw:
         category_label: "Kategoria"
         history_label: "Historia"
         members_label: "Wanachama"
+      search:
+        short_title: Tafuta
+        no_results: "Hakuna Majibu Yaliyopatikana"
+        sort:
+          relevance: "Umuhimu"
+          latest: "Hivi Karibuni"
       incoming_webhooks:
         back: "Iliyopita"
         description: "Elezo"
@@ -130,6 +148,8 @@ sw:
             title: "Kawaida"
           tracking:
             title: "Fuatilia"
+          watching:
+            title: "Angalia"
       draft_channel_screen:
         header: "Ujumbe Mpya"
         cancel: "Ghairi"

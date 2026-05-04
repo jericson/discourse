@@ -20,11 +20,12 @@ class AdminUserListSerializer < BasicUserSerializer
              :approved,
              :suspended_at,
              :suspended_till,
-             :silenced,
              :silenced_till,
              :time_read,
              :staged,
-             :second_factor_enabled
+             :second_factor_enabled,
+             :can_be_deleted,
+             :silence_reason
 
   %i[days_visited posts_read_count topics_entered post_count].each do |sym|
     attributes sym
@@ -41,14 +42,6 @@ class AdminUserListSerializer < BasicUserSerializer
 
   alias_method :include_secondary_emails?, :include_email?
   alias_method :include_associated_accounts?, :include_email?
-
-  def silenced
-    object.silenced?
-  end
-
-  def include_silenced?
-    object.silenced?
-  end
 
   def silenced_till
     object.silenced_till
@@ -110,5 +103,21 @@ class AdminUserListSerializer < BasicUserSerializer
 
   def second_factor_enabled
     true
+  end
+
+  def can_be_deleted
+    scope.can_delete_user?(object)
+  end
+
+  def include_can_be_deleted?
+    @options[:include_can_be_deleted]
+  end
+
+  def silence_reason
+    object.silence_reason
+  end
+
+  def include_silence_reason?
+    @options[:include_silence_reason]
   end
 end

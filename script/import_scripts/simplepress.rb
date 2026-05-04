@@ -1,12 +1,12 @@
 # frozen_string_literal: true
 
 require "mysql2"
-require File.expand_path(File.dirname(__FILE__) + "/base.rb")
+require_relative "base"
 
 class ImportScripts::SimplePress < ImportScripts::Base
-  SIMPLE_PRESS_DB ||= ENV["SIMPLEPRESS_DB"] || "simplepress"
+  SIMPLE_PRESS_DB = ENV["SIMPLEPRESS_DB"] || "simplepress"
   TABLE_PREFIX = "wp_sf"
-  BATCH_SIZE ||= 1000
+  BATCH_SIZE = 1000
 
   def initialize
     super

@@ -2,6 +2,7 @@
 
 RSpec.describe UploadsController do
   fab!(:user) { Fabricate(:user, refresh_auto_groups: true) }
+  fab!(:system_user) { Discourse.system_user }
 
   describe "#create" do
     it "requires you to be logged in" do
@@ -22,15 +23,13 @@ RSpec.describe UploadsController do
       context "when rate limited" do
         before { RateLimiter.enable }
 
-        use_redis_snapshotting
-
         it "should return 429 response code when maximum number of uploads per minute has been exceeded for a user" do
           SiteSetting.max_uploads_per_minute = 1
 
           post "/uploads.json",
                params: {
                  file: Rack::Test::UploadedFile.new(logo_file),
-                 type: "avatar",
+                 upload_type: "avatar",
                }
 
           expect(response.status).to eq(200)
@@ -38,20 +37,20 @@ RSpec.describe UploadsController do
           post "/uploads.json",
                params: {
                  file: Rack::Test::UploadedFile.new(logo_file),
-                 type: "avatar",
+                 upload_type: "avatar",
                }
 
           expect(response.status).to eq(429)
         end
       end
 
-      it "expects a type or upload_type" do
+      it "expects upload_type" do
         post "/uploads.json", params: { file: logo }
         expect(response.status).to eq(400)
         post "/uploads.json",
              params: {
                file: Rack::Test::UploadedFile.new(logo_file),
-               type: "avatar",
+               upload_type: "avatar",
              }
         expect(response.status).to eq 200
         post "/uploads.json",
@@ -62,8 +61,23 @@ RSpec.describe UploadsController do
         expect(response.status).to eq 200
       end
 
+      it "accepts the type param but logs a deprecation message when used" do
+        allow(Discourse).to receive(:deprecate)
+        post "/uploads.json",
+             params: {
+               file: Rack::Test::UploadedFile.new(logo_file),
+               type: "avatar",
+             }
+        expect(response.status).to eq 200
+        expect(Discourse).to have_received(:deprecate).with(
+          "the :type param of `POST /uploads` is deprecated, use the :upload_type param instead",
+          since: "3.4",
+          drop_from: "3.5",
+        )
+      end
+
       it "is successful with an image" do
-        post "/uploads.json", params: { file: logo, type: "avatar" }
+        post "/uploads.json", params: { file: logo, upload_type: "avatar" }
         expect(response.status).to eq 200
         expect(response.parsed_body["id"]).to be_present
         expect(Jobs::CreateAvatarThumbnails.jobs.size).to eq(1)
@@ -75,14 +89,19 @@ RSpec.describe UploadsController do
         upload = UploadCreator.new(logo_file, "logo.png").create_for(-1)
         logo = Rack::Test::UploadedFile.new(file_from_fixtures("logo.png"))
 
-        post "/uploads.json", params: { file: logo, type: "site_setting", for_site_setting: "true" }
+        post "/uploads.json",
+             params: {
+               file: logo,
+               upload_type: "site_setting",
+               for_site_setting: "true",
+             }
         expect(response.status).to eq 200
         expect(response.parsed_body["url"]).to eq(upload.url)
       end
 
       it "returns cdn url" do
         set_cdn_url "https://awesome.com"
-        post "/uploads.json", params: { file: logo, type: "composer" }
+        post "/uploads.json", params: { file: logo, upload_type: "composer" }
         expect(response.status).to eq 200
         expect(response.parsed_body["url"]).to start_with("https://awesome.com/uploads/default/")
       end
@@ -90,7 +109,7 @@ RSpec.describe UploadsController do
       it "is successful with an attachment" do
         SiteSetting.authorized_extensions = "*"
 
-        post "/uploads.json", params: { file: text_file, type: "composer" }
+        post "/uploads.json", params: { file: text_file, upload_type: "composer" }
         expect(response.status).to eq 200
 
         expect(Jobs::CreateAvatarThumbnails.jobs.size).to eq(0)
@@ -110,7 +129,7 @@ RSpec.describe UploadsController do
         post "/uploads.json",
              params: {
                url: url,
-               type: "avatar",
+               upload_type: "avatar",
              },
              headers: {
                HTTP_API_KEY: api_key,
@@ -128,7 +147,12 @@ RSpec.describe UploadsController do
       it "correctly sets retain_hours for admins" do
         sign_in(Fabricate(:admin))
 
-        post "/uploads.json", params: { file: logo, retain_hours: 100, type: "profile_background" }
+        post "/uploads.json",
+             params: {
+               file: logo,
+               retain_hours: 100,
+               upload_type: "profile_background",
+             }
 
         id = response.parsed_body["id"]
         expect(Jobs::CreateAvatarThumbnails.jobs.size).to eq(0)
@@ -136,7 +160,7 @@ RSpec.describe UploadsController do
       end
 
       it "requires a file" do
-        post "/uploads.json", params: { type: "composer" }
+        post "/uploads.json", params: { upload_type: "composer" }
 
         expect(Jobs::CreateAvatarThumbnails.jobs.size).to eq(0)
         message = response.parsed_body
@@ -148,7 +172,7 @@ RSpec.describe UploadsController do
         SiteSetting.authorized_extensions = "*"
         SiteSetting.max_attachment_size_kb = 1
 
-        post "/uploads.json", params: { file: text_file, type: "avatar" }
+        post "/uploads.json", params: { file: text_file, upload_type: "avatar" }
 
         expect(response.status).to eq(422)
         expect(Jobs::CreateAvatarThumbnails.jobs.size).to eq(0)
@@ -160,18 +184,24 @@ RSpec.describe UploadsController do
 
       it "ensures user belongs to uploaded_avatars_allowed_groups when uploading an avatar" do
         SiteSetting.uploaded_avatars_allowed_groups = "13"
-        post "/uploads.json", params: { file: logo, type: "avatar" }
+        post "/uploads.json", params: { file: logo, upload_type: "avatar" }
         expect(response.status).to eq(422)
 
         user.change_trust_level!(TrustLevel[3])
 
-        post "/uploads.json", params: { file: logo, type: "avatar" }
+        post "/uploads.json", params: { file: logo, upload_type: "avatar" }
         expect(response.status).to eq(200)
       end
 
       it "ensures discourse_connect_overrides_avatar is not enabled when uploading an avatar" do
         SiteSetting.discourse_connect_overrides_avatar = true
-        post "/uploads.json", params: { file: logo, type: "avatar" }
+        post "/uploads.json", params: { file: logo, upload_type: "avatar" }
+        expect(response.status).to eq(422)
+      end
+
+      it "ensures uploads fail when auth_overrides_avatar is enabled" do
+        SiteSetting.auth_overrides_avatar = true
+        post "/uploads.json", params: { file: logo, upload_type: "avatar" }
         expect(response.status).to eq(422)
       end
 
@@ -183,7 +213,7 @@ RSpec.describe UploadsController do
         post "/uploads.json",
              params: {
                file: text_file,
-               type: "composer",
+               upload_type: "composer",
                for_private_message: "true",
              }
 
@@ -196,7 +226,12 @@ RSpec.describe UploadsController do
         SiteSetting.authorized_extensions = ""
         user.update!(admin: true)
 
-        post "/uploads.json", params: { file: logo, type: "site_setting", for_site_setting: "true" }
+        post "/uploads.json",
+             params: {
+               file: logo,
+               upload_type: "site_setting",
+               for_site_setting: "true",
+             }
 
         expect(response.status).to eq(200)
         id = response.parsed_body["id"]
@@ -212,7 +247,7 @@ RSpec.describe UploadsController do
         SiteSetting.authorized_extensions_for_staff = "*"
         user.update_columns(moderator: true)
 
-        post "/uploads.json", params: { file: text_file, type: "composer" }
+        post "/uploads.json", params: { file: text_file, upload_type: "composer" }
 
         expect(response.status).to eq(200)
         data = response.parsed_body
@@ -223,19 +258,88 @@ RSpec.describe UploadsController do
         SiteSetting.authorized_extensions = ""
         SiteSetting.authorized_extensions_for_staff = "*"
 
-        post "/uploads.json", params: { file: text_file, type: "composer" }
+        post "/uploads.json", params: { file: text_file, upload_type: "composer" }
 
         data = response.parsed_body
         expect(data["errors"].first).to eq(I18n.t("upload.unauthorized", authorized_extensions: ""))
       end
 
       it "returns an error when it could not determine the dimensions of an image" do
-        post "/uploads.json", params: { file: fake_jpg, type: "composer" }
+        post "/uploads.json", params: { file: fake_jpg, upload_type: "composer" }
 
         expect(response.status).to eq(422)
         expect(Jobs::CreateAvatarThumbnails.jobs.size).to eq(0)
         message = response.parsed_body["errors"]
         expect(message).to contain_exactly(I18n.t("upload.images.size_not_found"))
+      end
+    end
+
+    context "when system user is logged in" do
+      before { sign_in(system_user) }
+
+      let(:text_file) { Rack::Test::UploadedFile.new(File.new("#{Rails.root}/LICENSE.txt")) }
+
+      it "properly returns errors if system_user_max_attachment_size_kb is not set" do
+        SiteSetting.authorized_extensions = "*"
+        SiteSetting.max_attachment_size_kb = 1
+
+        post "/uploads.json", params: { file: text_file, upload_type: "composer" }
+
+        expect(response.status).to eq(422)
+        errors = response.parsed_body["errors"]
+        expect(errors.first).to eq(
+          I18n.t("upload.attachments.too_large_humanized", max_size: "1 KB"),
+        )
+      end
+
+      it "should accept large files if system user" do
+        SiteSetting.authorized_extensions = "*"
+        SiteSetting.system_user_max_attachment_size_kb = 421_730
+
+        post "/uploads.json", params: { file: text_file, upload_type: "composer" }
+        expect(response.status).to eq(200)
+      end
+
+      it "should fail to accept large files if system user system_user_max_attachment_size_kb setting is low" do
+        SiteSetting.authorized_extensions = "*"
+        SiteSetting.max_attachment_size_kb = 1
+        SiteSetting.system_user_max_attachment_size_kb = 1
+
+        post "/uploads.json", params: { file: text_file, upload_type: "composer" }
+
+        expect(response.status).to eq(422)
+        errors = response.parsed_body["errors"]
+        expect(errors.first).to eq(
+          I18n.t("upload.attachments.too_large_humanized", max_size: "1 KB"),
+        )
+      end
+
+      it "should fail to accept large files if system user system_user_max_attachment_size_kb setting is low and general setting is low" do
+        SiteSetting.authorized_extensions = "*"
+        SiteSetting.max_attachment_size_kb = 10
+        SiteSetting.system_user_max_attachment_size_kb = 5
+
+        post "/uploads.json", params: { file: text_file, upload_type: "composer" }
+
+        expect(response.status).to eq(422)
+        errors = response.parsed_body["errors"]
+        expect(errors.first).to eq(
+          I18n.t("upload.attachments.too_large_humanized", max_size: "10 KB"),
+        )
+      end
+
+      it "should fail to accept large files if attachment_size settings are low" do
+        SiteSetting.authorized_extensions = "*"
+        SiteSetting.max_attachment_size_kb = 1
+        SiteSetting.system_user_max_attachment_size_kb = 10
+
+        post "/uploads.json", params: { file: text_file, upload_type: "composer" }
+
+        expect(response.status).to eq(422)
+        errors = response.parsed_body["errors"]
+        expect(errors.first).to eq(
+          I18n.t("upload.attachments.too_large_humanized", max_size: "10 KB"),
+        )
       end
     end
   end
@@ -245,7 +349,7 @@ RSpec.describe UploadsController do
     SiteSetting.authorized_extensions = "*"
     sign_in(user)
 
-    post "/uploads.json", params: { file: fake_logo, type: "composer" }
+    post "/uploads.json", params: { file: fake_logo, upload_type: "composer" }
 
     expect(response.status).to eq(200)
 
@@ -397,6 +501,66 @@ RSpec.describe UploadsController do
         expect(response.status).to eq(200)
       end
 
+      it "includes CSP sandbox header for all uploads" do
+        get image_upload.short_path
+
+        expect(response.status).to eq(200)
+        expect(response.headers["Content-Security-Policy"]).to eq("sandbox;")
+      end
+
+      it "serves PNG images inline with CSP header when inline param is given" do
+        png_upload = upload_file("smallest.png")
+        get "#{png_upload.short_path}?inline=1"
+
+        expect(response.status).to eq(200)
+        expect(response.headers["Content-Disposition"]).to include("inline")
+        expect(response.headers["Content-Security-Policy"]).to eq("sandbox;")
+      end
+
+      it "serves PDFs inline with CSP header when inline param is given" do
+        SiteSetting.authorized_extensions = "pdf|png"
+        pdf_upload = upload_file("smallest.png")
+        pdf_upload.update!(original_filename: "document.pdf", extension: "pdf")
+        get "#{pdf_upload.short_path}?inline=1"
+
+        expect(response.status).to eq(200)
+        expect(response.headers["Content-Disposition"]).to include("inline")
+        expect(response.headers["Content-Security-Policy"]).to eq("sandbox;")
+      end
+
+      it "forces attachment disposition for HTML files with CSP header" do
+        SiteSetting.authorized_extensions = "html|png"
+        html_upload = upload_file("smallest.png")
+        html_upload.update!(original_filename: "page.html", extension: "html")
+        get "#{html_upload.short_path}?inline=1"
+
+        expect(response.status).to eq(200)
+        expect(response.headers["Content-Disposition"]).to include("attachment")
+        expect(response.headers["Content-Security-Policy"]).to eq("sandbox;")
+      end
+
+      it "forces attachment disposition for XML files with CSP header" do
+        SiteSetting.authorized_extensions = "xml|png"
+        xml_upload = upload_file("smallest.png")
+        xml_upload.update!(original_filename: "data.xml", extension: "xml")
+        get "#{xml_upload.short_path}?inline=1"
+
+        expect(response.status).to eq(200)
+        expect(response.headers["Content-Disposition"]).to include("attachment")
+        expect(response.headers["Content-Security-Policy"]).to eq("sandbox;")
+      end
+
+      it "forces attachment disposition for SVG files with CSP header" do
+        SiteSetting.authorized_extensions = "svg|png"
+        svg_upload = upload_file("smallest.png")
+        svg_upload.update!(original_filename: "image.svg", extension: "svg")
+        get "#{svg_upload.short_path}?inline=1"
+
+        expect(response.status).to eq(200)
+        expect(response.headers["Content-Disposition"]).to include("attachment")
+        expect(response.headers["Content-Security-Policy"]).to eq("sandbox;")
+      end
+
       it "returns the right response when anon tries to download a file " \
            "when prevent_anons_from_downloading_files is true" do
         delete "/session/#{user.username}.json"
@@ -431,7 +595,11 @@ RSpec.describe UploadsController do
           get upload.short_path
 
           expect(response).to redirect_to(
-            Discourse.store.signed_url_for_path(Discourse.store.get_path_for_upload(upload)),
+            Discourse.store.signed_url_for_path(
+              Discourse.store.get_path_for_upload(upload),
+              filename: upload.original_filename,
+              include_content_disposition: true,
+            ),
           )
           expect(response.header["Location"]).not_to include(
             "response-content-disposition=attachment",
@@ -505,6 +673,18 @@ RSpec.describe UploadsController do
 
         expect(response.status).to eq(302)
         expect(response.redirect_url).to match("Amz-Expires")
+        expect(response.redirect_url).to include("response-content-disposition=inline")
+      end
+
+      it "returns signed url for legitimate request with no extension" do
+        upload.update!(extension: nil, url: upload.url.sub(".png", ""))
+        sign_in(user)
+        get secure_url
+
+        expect(response.status).to eq(302)
+        expect(response.redirect_url).to match("Amz-Expires")
+        expect(response.location).not_to include(".?")
+        expect(response.redirect_url).to include("response-content-disposition=inline")
       end
 
       it "should return secure uploads URL when looking up urls" do
@@ -791,6 +971,7 @@ RSpec.describe UploadsController do
         expect(result["key"]).to include(FileStore::S3Store::TEMPORARY_UPLOAD_PREFIX)
         expect(result["url"]).to include(FileStore::S3Store::TEMPORARY_UPLOAD_PREFIX)
         expect(result["url"]).to include("Amz-Expires")
+        expect(result["url"]).to include("dualstack")
       end
 
       it "includes accepted metadata in the response when provided" do
@@ -812,7 +993,7 @@ RSpec.describe UploadsController do
         expect(result["url"]).not_to include("&x-amz-meta-sha1-checksum=testing")
         expect(result["url"]).not_to include("&x-amz-meta-blah=wontbeincluded")
         expect(result["signed_headers"]).to eq(
-          "x-amz-acl" => "private",
+          "x-amz-acl" => FileStore::S3Store::CANNED_ACL_PRIVATE,
           "x-amz-meta-sha1-checksum" => "testing",
         )
       end
@@ -842,8 +1023,6 @@ RSpec.describe UploadsController do
 
       describe "rate limiting" do
         before { RateLimiter.enable }
-
-        use_redis_snapshotting
 
         it "rate limits" do
           SiteSetting.max_presigned_put_per_minute = 1
@@ -959,7 +1138,7 @@ RSpec.describe UploadsController do
         XML
         stub_request(
           :post,
-          "https://s3-upload-bucket.s3.us-west-1.amazonaws.com/uploads/default/#{test_bucket_prefix}/temp/28fccf8259bbe75b873a2bd2564b778c/test.png?uploads",
+          "https://s3-upload-bucket.s3.dualstack.us-west-1.amazonaws.com/uploads/default/#{test_bucket_prefix}/temp/28fccf8259bbe75b873a2bd2564b778c/test.png?uploads",
         ).to_return({ status: 200, body: create_multipart_result })
       end
 
@@ -1014,8 +1193,6 @@ RSpec.describe UploadsController do
 
       describe "rate limiting" do
         before { RateLimiter.enable }
-
-        use_redis_snapshotting
 
         it "rate limits" do
           SiteSetting.max_create_multipart_per_minute = 1
@@ -1105,7 +1282,7 @@ RSpec.describe UploadsController do
         XML
         stub_request(
           :get,
-          "https://s3-upload-bucket.#{SiteSetting.enable_s3_transfer_acceleration ? "s3-accelerate" : "s3.us-west-1"}.amazonaws.com/#{external_upload_stub.key}?max-parts=1&uploadId=#{mock_multipart_upload_id}",
+          "https://s3-upload-bucket.#{SiteSetting.enable_s3_transfer_acceleration ? "s3-accelerate.dualstack" : "s3.dualstack.us-west-1"}.amazonaws.com/#{external_upload_stub.key}?max-parts=1&uploadId=#{mock_multipart_upload_id}",
         ).to_return({ status: 200, body: list_multipart_result })
       end
 
@@ -1189,6 +1366,19 @@ RSpec.describe UploadsController do
         )
       end
 
+      it "uses dualstack endpoint for presigned URLs based on S3 region" do
+        stub_list_multipart_request
+        post "/uploads/batch-presign-multipart-parts.json",
+             params: {
+               unique_identifier: external_upload_stub.unique_identifier,
+               part_numbers: [2, 3, 4],
+             }
+
+        expect(response.status).to eq(200)
+        result = response.parsed_body
+        expect(result["presigned_urls"]["2"]).to include("dualstack")
+      end
+
       context "when enable_s3_transfer_acceleration is true" do
         before { SiteSetting.enable_s3_transfer_acceleration = true }
 
@@ -1209,8 +1399,6 @@ RSpec.describe UploadsController do
 
       describe "rate limiting" do
         before { RateLimiter.enable }
-
-        use_redis_snapshotting
 
         it "rate limits" do
           SiteSetting.max_batch_presign_multipart_per_minute = 1
@@ -1251,7 +1439,7 @@ RSpec.describe UploadsController do
 
   describe "#complete_multipart" do
     let(:upload_base_url) do
-      "https://#{SiteSetting.s3_upload_bucket}.#{SiteSetting.enable_s3_transfer_acceleration ? "s3-accelerate" : "s3.#{SiteSetting.s3_region}"}.amazonaws.com"
+      "https://#{SiteSetting.s3_upload_bucket}.#{SiteSetting.enable_s3_transfer_acceleration ? "s3-accelerate.dualstack" : "s3.dualstack.#{SiteSetting.s3_region}"}.amazonaws.com"
     end
     let(:mock_multipart_upload_id) do
       "ibZBv_75gd9r8lH_gqXatLdxMVpAlj6CFTR.OwyF3953YdwbcQnMA2BLGn8Lx12fQNICtMw5KyteFeHw.Sjng--"
@@ -1434,10 +1622,59 @@ RSpec.describe UploadsController do
         expect(result[:upload]).to eq(JSON.parse(UploadSerializer.new(upload).to_json)[:upload])
       end
 
+      context "with site setting uploads" do
+        fab!(:admin)
+        fab!(:text_upload_stub) do
+          Fabricate(
+            :multipart_external_upload_stub,
+            created_by: admin,
+            original_filename: "llms.txt",
+            upload_type: "site_setting",
+          )
+        end
+        let(:site_setting_upload) { Fabricate(:upload) }
+
+        before { sign_in(admin) }
+
+        it "passes site_setting_name to ExternalUploadManager" do
+          FileStore::S3Store.any_instance.stubs(:list_multipart_parts).returns({ parts: [] })
+
+          temp_location = "#{upload_base_url}/#{text_upload_stub.key}"
+          stub_request(
+            :post,
+            "#{temp_location}?uploadId=#{text_upload_stub.external_upload_identifier}",
+          ).to_return(status: 200, body: <<~XML)
+            <?xml version="1.0" encoding="UTF-8"?>
+            <CompleteMultipartUploadResult>
+               <Location>#{temp_location}</Location>
+               <Bucket>s3-upload-bucket</Bucket>
+               <Key>#{text_upload_stub.key}</Key>
+               <ETag>testfinal</ETag>
+            </CompleteMultipartUploadResult>
+          XML
+
+          ExternalUploadManager
+            .expects(:new)
+            .with(
+              text_upload_stub,
+              has_entries(for_site_setting: true, site_setting_name: "llms_txt"),
+            )
+            .returns(stub(transform!: site_setting_upload))
+
+          post "/uploads/complete-multipart.json",
+               params: {
+                 unique_identifier: text_upload_stub.unique_identifier,
+                 parts: [{ part_number: 1, etag: "test1" }],
+                 for_site_setting: "true",
+                 site_setting_name: "llms_txt",
+               }
+
+          expect(response.status).to eq(200)
+        end
+      end
+
       describe "rate limiting" do
         before { RateLimiter.enable }
-
-        use_redis_snapshotting
 
         it "rate limits" do
           SiteSetting.max_complete_multipart_per_minute = 1
@@ -1474,7 +1711,7 @@ RSpec.describe UploadsController do
 
   describe "#abort_multipart" do
     let(:upload_base_url) do
-      "https://#{SiteSetting.s3_upload_bucket}.#{SiteSetting.enable_s3_transfer_acceleration ? "s3-accelerate" : "s3.#{SiteSetting.s3_region}"}.amazonaws.com"
+      "https://#{SiteSetting.s3_upload_bucket}.#{SiteSetting.enable_s3_transfer_acceleration ? "s3-accelerate.dualstack" : "s3.dualstack.#{SiteSetting.s3_region}"}.amazonaws.com"
     end
     let(:mock_multipart_upload_id) do
       "ibZBv_75gd9r8lH_gqXatLdxMVpAlj6CFTR.OwyF3953YdwbcQnMA2BLGn8Lx12fQNICtMw5KyteFeHw.Sjng--"
@@ -1685,6 +1922,55 @@ RSpec.describe UploadsController do
         expect(ExternalUploadStub.exists?(id: external_upload_stub.id)).to eq(false)
         expect(response.status).to eq(200)
         expect(response.parsed_body).to eq(UploadsController.serialize_upload(upload))
+      end
+
+      context "with site setting uploads" do
+        fab!(:admin)
+        fab!(:text_upload_stub) do
+          Fabricate(
+            :external_upload_stub,
+            created_by: admin,
+            original_filename: "llms.txt",
+            upload_type: "site_setting",
+          )
+        end
+
+        before { sign_in(admin) }
+
+        it "passes site_setting_name to ExternalUploadManager" do
+          ExternalUploadManager
+            .expects(:new)
+            .with(
+              text_upload_stub,
+              has_entries(for_site_setting: true, site_setting_name: "llms_txt"),
+            )
+            .returns(stub(transform!: upload))
+
+          post "/uploads/complete-external-upload.json",
+               params: {
+                 unique_identifier: text_upload_stub.unique_identifier,
+                 for_site_setting: "true",
+                 site_setting_name: "llms_txt",
+               }
+
+          expect(response.status).to eq(200)
+        end
+
+        it "does not pass site_setting_name when for_site_setting is false" do
+          ExternalUploadManager
+            .expects(:new)
+            .with(text_upload_stub, has_entries(for_site_setting: false, site_setting_name: nil))
+            .returns(stub(transform!: upload))
+
+          post "/uploads/complete-external-upload.json",
+               params: {
+                 unique_identifier: text_upload_stub.unique_identifier,
+                 for_site_setting: "false",
+                 site_setting_name: "llms_txt",
+               }
+
+          expect(response.status).to eq(200)
+        end
       end
     end
 

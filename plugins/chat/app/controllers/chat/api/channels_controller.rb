@@ -1,19 +1,32 @@
 # frozen_string_literal: true
 
 class Chat::Api::ChannelsController < Chat::ApiController
-  CHANNEL_EDITABLE_PARAMS ||= %i[name description slug]
-  CATEGORY_CHANNEL_EDITABLE_PARAMS ||= %i[
-    auto_join_users
-    allow_channel_wide_mentions
-    threading_enabled
-  ]
+  CHANNEL_EDITABLE_PARAMS = %i[name description slug threading_enabled emoji]
+  CATEGORY_CHANNEL_EDITABLE_PARAMS = %i[auto_join_users allow_channel_wide_mentions]
 
   def index
-    permitted = params.permit(:filter, :limit, :offset, :status)
+    permitted =
+      params.permit(
+        :filter,
+        :limit,
+        :offset,
+        :status,
+        :chatable_id,
+        :chatable_type,
+        :include_subcategories,
+      )
 
     options = { filter: permitted[:filter], limit: (permitted[:limit] || 25).to_i }
     options[:offset] = permitted[:offset].to_i
     options[:status] = Chat::Channel.statuses[permitted[:status]] ? permitted[:status] : nil
+    options[:chatable_id] = permitted[:chatable_id]
+    options[:chatable_type] = permitted[:chatable_type]
+
+    if options[:chatable_type] == "Category"
+      options[:include_subcategories] = ActiveModel::Type::Boolean.new.cast(
+        permitted[:include_subcategories],
+      )
+    end
 
     memberships = Chat::ChannelMembershipManager.all_for_user(current_user)
     channels = Chat::ChannelFetcher.secured_public_channels(guardian, options)
@@ -33,13 +46,13 @@ class Chat::Api::ChannelsController < Chat::ApiController
   end
 
   def destroy
-    with_service Chat::TrashChannel do
+    Chat::TrashChannel.call(service_params) do
       on_failed_policy(:invalid_access) { raise Discourse::InvalidAccess }
       on_model_not_found(:channel) { raise ActiveRecord::RecordNotFound }
       on_success { render(json: success_json) }
-      on_failure { render(json: failed_json, status: 422) }
+      on_failure { render(json: failed_json, status: :unprocessable_entity) }
       on_failed_contract do |contract|
-        render(json: failed_json.merge(errors: contract.errors.full_messages), status: 400)
+        render(json: failed_json.merge(errors: contract.errors.full_messages), status: :bad_request)
       end
     end
   end
@@ -53,37 +66,32 @@ class Chat::Api::ChannelsController < Chat::ApiController
         :description,
         :auto_join_users,
         :threading_enabled,
+        :emoji,
       )
 
     # NOTE: We don't allow creating channels for anything but category chatable types
     # at the moment. This may change in future, at which point we will need to pass in
     # a chatable_type param as well and switch to the correct service here.
-    with_service(
-      Chat::CreateCategoryChannel,
-      **channel_params.merge(category_id: channel_params[:chatable_id]),
+    Chat::CreateCategoryChannel.call(
+      service_params.merge(params: channel_params.merge(category_id: channel_params[:chatable_id])),
     ) do
-      on_success do
-        render_serialized(
-          result.channel,
-          Chat::ChannelSerializer,
-          root: "channel",
-          membership: result.membership,
-        )
+      on_success do |channel:, membership:|
+        render_serialized(channel, Chat::ChannelSerializer, root: "channel", membership:)
       end
       on_model_not_found(:category) { raise ActiveRecord::RecordNotFound }
       on_failed_policy(:can_create_channel) { raise Discourse::InvalidAccess }
       on_failed_policy(:category_channel_does_not_exist) do
         raise Discourse::InvalidParameters.new(I18n.t("chat.errors.channel_exists_for_category"))
       end
-      on_model_errors(:channel) do
-        render_json_error(result.channel, type: :record_invalid, status: 422)
+      on_model_errors(:channel) do |model|
+        render_json_error(model, type: :record_invalid, status: 422)
       end
-      on_model_errors(:membership) do
-        render_json_error(result.membership, type: :record_invalid, status: 422)
+      on_model_errors(:membership) do |model|
+        render_json_error(model, type: :record_invalid, status: 422)
       end
-      on_failure { render(json: failed_json, status: 422) }
+      on_failure { render(json: failed_json, status: :unprocessable_entity) }
       on_failed_contract do |contract|
-        render(json: failed_json.merge(errors: contract.errors.full_messages), status: 400)
+        render(json: failed_json.merge(errors: contract.errors.full_messages), status: :bad_request)
       end
     end
   end
@@ -100,18 +108,18 @@ class Chat::Api::ChannelsController < Chat::ApiController
 
   def update
     params_to_edit = editable_params(params, channel_from_params)
-    params_to_edit.each { |k, v| params_to_edit[k] = nil if params_to_edit[k].blank? }
+    params_to_edit.each { |k, v| params_to_edit[k] = nil if v.is_a?(String) && v.blank? }
     if ActiveRecord::Type::Boolean.new.deserialize(params_to_edit[:auto_join_users])
       auto_join_limiter(channel_from_params).performed!
     end
 
-    with_service(Chat::UpdateChannel, **params_to_edit) do
-      on_success do
+    Chat::UpdateChannel.call(service_params.deep_merge(params: params_to_edit.to_unsafe_h)) do
+      on_success do |channel:|
         render_serialized(
-          result.channel,
+          channel,
           Chat::ChannelSerializer,
           root: "channel",
-          membership: result.channel.membership_for(current_user),
+          membership: channel.membership_for(current_user),
         )
       end
       on_model_not_found(:channel) { raise ActiveRecord::RecordNotFound }

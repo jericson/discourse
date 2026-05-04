@@ -7,8 +7,8 @@ class TopicEmbed < ActiveRecord::Base
 
   belongs_to :topic
   belongs_to :post
-  validates_presence_of :embed_url
-  validates_uniqueness_of :embed_url
+  validates :embed_url, presence: true
+  validates :embed_url, uniqueness: true
   validates :embed_content_cache, length: { maximum: EMBED_CONTENT_CACHE_MAX_LENGTH }
 
   before_validation(on: :create) do
@@ -73,7 +73,7 @@ class TopicEmbed < ActiveRecord::Base
           end
 
         create_args = {
-          title: title,
+          title: title.presence || url,
           raw: absolutize_urls(url, contents),
           skip_validations: true,
           cook_method: cook_method,
@@ -122,9 +122,9 @@ class TopicEmbed < ActiveRecord::Base
         end
 
         existing_tag_names = post.topic.tags.pluck(:name).sort
-        incoming_tag_names = Array(tags).map(&:name).sort
+        incoming_tag_names = Array(tags).map { |tag| tag.respond_to?(:name) ? tag.name : tag }.sort
 
-        tags_changed = existing_tag_names != incoming_tag_names
+        tags_changed = !tags.nil? && existing_tag_names != incoming_tag_names
 
         if (content_sha1 != embed.content_sha1) || (title && title != post&.topic&.title) ||
              tags_changed

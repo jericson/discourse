@@ -176,12 +176,12 @@ def clean_up_uploads
 
   if STDIN.gets.chomp.downcase == "y"
     puts "Starting backup..."
-    backuper = BackupRestore::Backuper.new(Discourse.system_user.id)
-    backuper.run
-    exit 1 unless backuper.success
+    creator = BackupRestore::Creator.new(Discourse.system_user.id)
+    creator.run
+    exit 1 unless creator.success
   end
 
-  public_directory = Rails.root.join("public").to_s
+  public_directory = Rails.public_path.to_s
 
   ##
   ## DATABASE vs FILE SYSTEM
@@ -313,7 +313,7 @@ def regenerate_missing_optimized
   [
     default_scope.where("optimized_images.upload_id IN (?)", avatar_upload_ids),
     default_scope
-      .where("optimized_images.upload_id NOT IN (?)", avatar_upload_ids)
+      .where.not(upload_id: avatar_upload_ids)
       .where("LENGTH(COALESCE(url, '')) > 0")
       .where("width > 0 AND height > 0"),
   ].each do |scope|
@@ -404,7 +404,7 @@ task "uploads:analyze", %i[cache_path limit] => :environment do |_, args|
   cache_path = args[:cache_path]
 
   current_db = RailsMultisite::ConnectionManagement.current_db
-  uploads_path = Rails.root.join("public", "uploads", current_db)
+  uploads_path = Rails.public_path.join("uploads", current_db)
 
   path =
     if cache_path
@@ -507,10 +507,6 @@ task "uploads:analyze", %i[cache_path limit] => :environment do |_, args|
   puts "Duration: #{Time.zone.now - now} seconds"
 end
 
-task "uploads:fix_incorrect_extensions" => :environment do
-  UploadFixer.fix_all_extensions
-end
-
 task "uploads:recover_from_tombstone" => :environment do
   Rake::Task["uploads:recover"].invoke
 end
@@ -528,27 +524,84 @@ task "uploads:recover" => :environment do
   end
 end
 
-task "uploads:sync_s3_acls" => :environment do
-  RailsMultisite::ConnectionManagement.each_connection do |db|
-    unless Discourse.store.external?
-      puts "This task only works for external storage."
+def sync_access_control(async: true, concurrency: 10)
+  if async
+    puts "CAUTION: This task may take a long time to complete! There are #{Upload.count} uploads to sync access control metadata for."
+    puts ""
+    puts "-" * 30
+    puts "Syncing access control metadata will be done in Sidekiq jobs in batches of 100 at a time, check Sidekiq queues for `Jobs::SyncAccessControlForUploads` for progress."
+    Upload
+      .select(:id)
+      .find_in_batches(batch_size: 100) { |uploads| adjust_access_controls(uploads.map(&:id)) }
+    puts "", "Syncing access control metadata complete!"
+  else
+    executor = Concurrent::ThreadPoolExecutor.new(min_threads: 1, max_threads: concurrency)
+    errors = []
+    current_db = RailsMultisite::ConnectionManagement.current_db
+
+    Upload.find_in_batches(batch_size: 100) do |uploads|
+      uploads
+        .map do |upload|
+          Concurrent::Future.execute(executor:) do
+            RailsMultisite::ConnectionManagement.with_connection(current_db) do
+              begin
+                Discourse.store.update_upload_access_control(upload, remove_existing_acl: true)
+              rescue => error
+                errors << "Error updating access control for upload #{upload.url}: #{error.message}"
+              end
+            end
+          end
+        end
+        .each(&:wait)
+    end
+
+    executor.shutdown
+    executor.wait_for_termination
+
+    if errors.present?
+      errors.each { |error| puts error }
       exit 1
     end
 
-    puts "CAUTION: This task may take a long time to complete! There are #{Upload.count} uploads to sync ACLs for."
-    puts ""
-    puts "-" * 30
-    puts "Uploads marked as secure will get a private ACL, and uploads marked as not secure will get a public ACL."
-    puts "Upload ACLs will be updated in Sidekiq jobs in batches of 100 at a time, check Sidekiq queues for SyncAclsForUploads for progress."
-    Upload.select(:id).find_in_batches(batch_size: 100) { |uploads| adjust_acls(uploads.map(&:id)) }
-    puts "", "Upload ACL sync complete!"
+    true
   end
 end
 
-#
-# TODO (martin) Update this rake task to use the _first_ UploadReference
+# This task is defined for backwards compatibility
+task "uploads:sync_s3_acls", %i[synchronous parallel] => :environment do |_, args|
+  Rake::Task["uploads:sync_access_control"].invoke(
+    synchronous: args[:synchronous],
+    parallel: args[:parallel],
+  )
+end
+
+task "uploads:sync_access_control", %i[synchronous parallel] => :environment do |_, args|
+  unless Discourse.store.external?
+    puts "This task only works for external storage."
+    exit 1
+  end
+
+  method = :sync_access_control
+  method_args = { async: !args.key?(:synchronous) || !(args[:synchronous] == "true") }
+  method_args[:concurrency] = args[:parallel].to_i if args.key?(:parallel)
+
+  if ENV["RAILS_DB"]
+    send(method, **method_args)
+  else
+    RailsMultisite::ConnectionManagement.each_connection { send(method, **method_args) }
+  end
+end
+
+def secure_upload_rebake_warning
+  puts "This task may mark a lot of posts for rebaking. To get through these quicker, the max_old_rebakes_per_15_minutes global setting (current value #{GlobalSetting.max_old_rebakes_per_15_minutes}) should be changed and the rebake_old_posts_count site setting (current value #{SiteSetting.rebake_old_posts_count}) increased as well. Do you want to proceed? (y/n)"
+end
+
+# NOTE: This needs to be updated to use the _first_ UploadReference
 # record for each upload to determine security, and do not mark things
 # as secure if the first record is something public e.g. a site setting.
+#
+# Alternatively, we need to overhaul this rake task to work with whatever
+# other strategy we come up with for secure uploads.
 task "uploads:disable_secure_uploads" => :environment do
   RailsMultisite::ConnectionManagement.each_connection do |db|
     unless Discourse.store.external?
@@ -556,33 +609,37 @@ task "uploads:disable_secure_uploads" => :environment do
       exit 1
     end
 
+    secure_upload_rebake_warning
+    exit 1 if STDIN.gets.chomp.downcase != "y"
+
     puts "Disabling secure upload and resetting uploads to not secure in #{db}...", ""
 
     SiteSetting.secure_uploads = false
+    SiteSetting.secure_uploads_pm_only = false
 
-    secure_uploads =
-      Upload
-        .joins(:upload_references)
-        .where(upload_references: { target_type: "Post" })
-        .where(secure: true)
+    secure_uploads = Upload.where(secure: true).distinct
     secure_upload_count = secure_uploads.count
-    secure_upload_ids = secure_uploads.pluck(:id)
 
     puts "", "Marking #{secure_upload_count} uploads as not secure.", ""
-    secure_uploads.update_all(
-      secure: false,
-      security_last_changed_at: Time.zone.now,
-      security_last_changed_reason: "marked as not secure by disable_secure_uploads task",
-    )
 
-    post_ids_to_rebake =
-      DB.query_single(
-        "SELECT DISTINCT target_id FROM upload_references WHERE upload_id IN (?) AND target_type = 'Post'",
-        secure_upload_ids,
+    secure_uploads.in_batches do |relation|
+      secure_upload_ids = relation.pluck(:id)
+
+      relation.update_all(
+        secure: false,
+        security_last_changed_at: Time.zone.now,
+        security_last_changed_reason: "marked as not secure by disable_secure_uploads task",
       )
-    adjust_acls(secure_upload_ids)
-    post_rebake_errors = rebake_upload_posts(post_ids_to_rebake)
-    log_rebake_errors(post_rebake_errors)
+
+      post_ids_to_rebake =
+        DB.query_single(
+          "SELECT DISTINCT target_id FROM upload_references WHERE upload_id IN (?) AND target_type = 'Post'",
+          secure_upload_ids,
+        )
+
+      adjust_access_controls(secure_upload_ids)
+      mark_upload_posts_for_rebake(post_ids_to_rebake)
+    end
 
     puts "", "Rebaking and uploading complete!", ""
   end
@@ -593,19 +650,25 @@ end
 ##
 # Run this task whenever the secure_uploads or login_required
 # settings are changed for a Discourse instance to update
-# the upload secure flag and S3 upload ACLs. Any uploads that
+# the upload secure flag and S3 access control metadata. Any uploads that
 # have their secure status changed will have all associated posts
 # rebaked.
 #
-# TODO (martin) Update this rake task to use the _first_ UploadReference
+# NOTE: This needs to be updated to use the _first_ UploadReference
 # record for each upload to determine security, and do not mark things
 # as secure if the first record is something public e.g. a site setting.
+#
+# Alternatively, we need to overhaul this rake task to work with whatever
+# other strategy we come up with for secure uploads.
 task "uploads:secure_upload_analyse_and_update" => :environment do
   RailsMultisite::ConnectionManagement.each_connection do |db|
     unless Discourse.store.external?
       puts "This task only works for external storage."
       exit 1
     end
+
+    secure_upload_rebake_warning
+    exit 1 if STDIN.gets.chomp.downcase != "y"
 
     puts "Analyzing security for uploads in #{db}...", ""
     all_upload_ids_changed, post_ids_to_rebake = nil
@@ -622,11 +685,17 @@ task "uploads:secure_upload_analyse_and_update" => :environment do
         # Simply mark all uploads linked to posts secure if login_required because
         # no anons will be able to access them; however if secure_uploads_pm_only is
         # true then login_required will not mark other uploads secure.
+        puts "",
+             "Site is login_required, and secure_uploads_pm_only is false. Continuing with strategy to mark all post uploads as secure.",
+             ""
         post_ids_to_rebake, all_upload_ids_changed = mark_all_as_secure_login_required
       else
         # Otherwise only mark uploads linked to posts either:
         #   * In secure categories or PMs if !SiteSetting.secure_uploads_pm_only
         #   * In PMs if SiteSetting.secure_uploads_pm_only
+        puts "",
+             "Site is not login_required. Continuing with normal strategy to mark uploads in secure contexts as secure.",
+             ""
         post_ids_to_rebake, all_upload_ids_changed =
           update_specific_upload_security_no_login_required
       end
@@ -634,29 +703,36 @@ task "uploads:secure_upload_analyse_and_update" => :environment do
 
     # Enqueue rebakes AFTER upload transaction complete, so there is no race condition
     # between updating the DB and the rebakes occurring.
-    post_rebake_errors = rebake_upload_posts(post_ids_to_rebake)
-    log_rebake_errors(post_rebake_errors)
+    #
+    # This is done asynchronously by changing the baked_version to NULL on
+    # affected posts and relying on Post.rebake_old in the PeriodicalUpdates
+    # job. To speed this up, these levers can be adjusted:
+    #
+    # * SiteSetting.rebake_old_posts_count
+    # * GlobalSetting.max_old_rebakes_per_15_minutes
+    mark_upload_posts_for_rebake(post_ids_to_rebake)
 
     # Also do this AFTER upload transaction complete so we don't end up with any
-    # errors leaving ACLs in a bad state (the ACL sync task can be run to fix any
-    # outliers at any time).
-    adjust_acls(all_upload_ids_changed)
+    # errors leaving access control in a bad state
+    adjust_access_controls(all_upload_ids_changed)
   end
   puts "", "", "Done!"
 end
 
-def adjust_acls(upload_ids_to_adjust_acl_for)
-  jobs_to_create = (upload_ids_to_adjust_acl_for.count.to_f / 100.00).ceil
+def adjust_access_controls(upload_ids_to_adjust_access_control_for)
+  jobs_to_create = (upload_ids_to_adjust_access_control_for.count.to_f / 100.00).ceil
 
   if jobs_to_create > 1
-    puts "Adjusting ACLs for #{upload_ids_to_adjust_acl_for} uploads. These will be batched across #{jobs_to_create} sync job(s)."
+    puts "Adjusting access control metadata for #{upload_ids_to_adjust_access_control_for} uploads. These will be batched across #{jobs_to_create} sync job(s)."
   end
 
-  upload_ids_to_adjust_acl_for.each_slice(100) do |upload_ids|
-    Jobs.enqueue(:sync_acls_for_uploads, upload_ids: upload_ids)
+  upload_ids_to_adjust_access_control_for.each_slice(100) do |upload_ids|
+    Jobs.enqueue(:sync_access_control_for_uploads, upload_ids: upload_ids)
   end
 
-  puts "ACL batching complete. Keep an eye on the Sidekiq queue for progress." if jobs_to_create > 1
+  if jobs_to_create > 1
+    puts "Adjusting access control metadata batching complete. Keep an eye on the Sidekiq queue for progress."
+  end
 end
 
 def mark_all_as_secure_login_required
@@ -672,7 +748,7 @@ def mark_all_as_secure_login_required
         security_last_changed_reason = 'upload security rake task mark as secure',
         security_last_changed_at = NOW()
     FROM upl
-    WHERE uploads.id = upl.upload_id AND NOT uploads.secure
+    WHERE uploads.id = upl.upload_id
     RETURNING uploads.id
   SQL
   puts "Marked #{post_upload_ids_marked_secure.count} upload(s) as secure because login_required is true.",
@@ -682,7 +758,7 @@ def mark_all_as_secure_login_required
     SET secure = false,
         security_last_changed_reason = 'upload security rake task mark as not secure',
         security_last_changed_at = NOW()
-    WHERE id NOT IN (?) AND uploads.secure
+    WHERE id NOT IN (?)
     RETURNING uploads.id
   SQL
   puts "Marked #{upload_ids_marked_not_secure.count} upload(s) as not secure because they are not linked to posts.",
@@ -792,24 +868,19 @@ def update_uploads_access_control_post
   SQL
 end
 
-def rebake_upload_posts(post_ids_to_rebake)
+def mark_upload_posts_for_rebake(post_ids_to_rebake)
   posts_to_rebake = Post.where(id: post_ids_to_rebake)
-  post_rebake_errors = []
-  puts "", "Rebaking #{posts_to_rebake.length} posts with affected uploads.", ""
-  begin
-    i = 0
-    posts_to_rebake.each do |post|
-      RakeHelpers.print_status_with_label("Rebaking posts.....", i, posts_to_rebake.length)
-      post.rebake!
-      i += 1
-    end
-
-    RakeHelpers.print_status_with_label("Rebaking complete!            ", i, posts_to_rebake.length)
-    puts ""
-  rescue => e
-    post_rebake_errors << e.message
-  end
-  post_rebake_errors
+  puts "",
+       "Marking #{posts_to_rebake.length} posts with affected uploads for rebake. Every 15 minutes, a batch of these will be enqueued for rebaking.",
+       ""
+  posts_to_rebake.update_all(baked_version: nil)
+  File.write(
+    "secure_upload_analyse_and_update_posts_for_rebake.json",
+    MultiJson.dump({ post_ids: post_ids_to_rebake }),
+  )
+  puts "",
+       "Post IDs written to secure_upload_analyse_and_update_posts_for_rebake.json for reference",
+       ""
 end
 
 def inline_uploads(post)
@@ -1065,7 +1136,7 @@ def fix_missing_s3
       tempfile =
         FileHelper.download(
           upload.url,
-          max_file_size: 30.megabyte,
+          max_file_size: 30.megabytes,
           tmp_file_name: "#{SecureRandom.hex}.#{upload.extension}",
         )
       downloaded_from = upload.url
@@ -1075,7 +1146,7 @@ def fix_missing_s3
           tempfile =
             FileHelper.download(
               upload.origin,
-              max_file_size: 30.megabyte,
+              max_file_size: 30.megabytes,
               tmp_file_name: "#{SecureRandom.hex}.#{upload.extension}",
             )
           downloaded_from = upload.origin
@@ -1100,6 +1171,7 @@ def fix_missing_s3
               tempfile,
               "temp.#{upload.extension}",
               skip_validations: true,
+              external_upload_too_big: true,
             ).create_for(Discourse.system_user.id)
         rescue => fix_error
           # invalid extension is the most common issue
@@ -1244,7 +1316,7 @@ task "uploads:downsize" => :environment do
       if upload.local?
         Discourse.store.path_for(upload)
       else
-        Discourse.store.download_safe(upload, max_file_size_kb: 100.megabytes)&.path
+        Discourse.store.download(upload, max_file_size_kb: 100.megabytes)
       end
 
     unless path

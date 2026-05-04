@@ -5,26 +5,44 @@
 # https://translate.discourse.org/
 
 tr_TR:
+  admin_js:
+    admin:
+      api:
+        scopes:
+          descriptions:
+            automation:
+              trigger_automation: "API aracılığıyla bir otomasyonu tetikle"
   js:
+    admin:
+      logs:
+        staff_actions:
+          actions:
+            create_automation: otomasyon oluştur
+            update_automation: otomasyonu güncelle
+            delete_automation: otomasyonu sil
     discourse_automation:
       title: Otomasyon
-      create: Oluştur
-      update: Güncelle
+      table_title: Otomasyonlar
+      create: Otomasyon ekle
+      update: Otomasyonu güncelle
+      back: Geri
+      edit: Düzenle
       select_script: Komut dosyası seçin
       select_trigger: Tetikleyici seçin
       confirm_automation_reset: Bu eylem komut dosyası ve tetikleyici seçeneklerini sıfırlar, yeni durum kaydedilir, devam etmek istiyor musunuz?
       confirm_automation_trigger: Bu eylem otomasyonu tetikler, devam etmek istiyor musunuz?
-      no_automation_yet: Henüz otomasyon oluşturmadınız.
+      no_automation_yet: Şu anda yapılandırılmış otomasyon yok.
+      filter_placeholder: Ada veya açıklamaya göre filtreleyin...
       edit_automation:
         trigger_section:
-          forced: Bu tetikleyici komut dosyası ile zorlanır.
+          forced: Bu tetikleyici, komut dosyası ile zorlanır.
           next_pending_automation: "Bir sonraki otomasyon şu saatte tetiklenecek: %{date}"
           trigger_now: "Şimdi tetikle"
           title: Ne zaman/Ne...
         fields_section:
           title: Komut dosyası seçenekleri
       destroy_automation:
-        confirm: "Şunu silmek istediğinizden emin misiniz: \"%{name}\"?"
+        confirm: "`%{name}` ögesini silmek istediğinizden emin misiniz?"
       fields:
         key_value:
           label_without_count: "Yapılandır"
@@ -39,24 +57,30 @@ tr_TR:
           raw:
             label: Gövde
         pms:
-          confirm_remove_pm: "Bu özel mesajı kaldırmak istediğinizden emin misiniz?"
-          placeholder_title: Özel mesaj başlığı
-          add_pm: Özel mesaj ekle
-          no_pm_created: Henüz özel mesaj oluşturmadınız. Otomasyonunuz tetiklendiğinde özel mesajlar gönderilecek.
+          confirm_remove_pm: "Bu kişisel mesajı kaldırmak istediğinizden emin misiniz?"
+          placeholder_title: Kişisel mesaj başlığı
+          add_pm: Kişisel mesaj ekle
+          no_pm_created: Henüz kişisel mesaj oluşturmadınız. Özel mesajlar otomasyonunuz tetiklendiğinde gönderilir.
           title:
             label: Başlık
           raw:
             label: Gövde
           delay:
             label: Gecikme (dakika)
-          prefers_encrypt:
-            label: Mümkünse özel mesajı şifreler
         group:
           label: Grup
         text:
           label: Metin
       triggerables:
-        not_found: '"%{automation}" otomasyonu için "%{trigger}" tetikleyicisi bulunamadı, ilişkili eklentinin yüklü olduğundan emin olun'
+        post_flag_created:
+          fields:
+            categories:
+              label: Kategoriler
+              description: Sadece işaretli konu bu kategorilerde olduğunda tetikleyin
+            tags:
+              label: Etiketler
+              description: Sadece işaretli konu bu etiketlerden herhangi birine sahip olduğunda tetikle
+        not_found: Otomasyon `%{automation}` için `%{trigger}` tetikleyicisi bulunamadı, ilgili eklentinin kurulu olduğundan emin olun
         user_badge_granted:
           fields:
             badge:
@@ -86,13 +110,13 @@ tr_TR:
             minute: dakika
             hour: saat
             day: gün
-            weekday: hafta içi günü
+            weekday: hafta içi gün
             week: hafta
             month: ay
             year: yıl
           fields:
             recurrence:
-              label: Tekrarlama
+              label: Yinelenme
             start_date:
               label: Başlangıç tarihi
         stalled_wiki:
@@ -110,10 +134,10 @@ tr_TR:
               label: Kategori ile sınırlı
             stalled_after:
               label: Tetikleyici gecikmesi
-              description: Son viki düzenlemesi ile otomasyonun tetiklenmesi arasındaki gecikmeyi tanımlar
+              description: Son wiki düzenlemesi ile otomasyon tetikleyicisi arasındaki gecikmeyi tanımlar
             retriggered_after:
               label: Yeniden tetikleyici gecikmesi
-              description: İlk tetiklemeden sonra viki hala düzenlenmemişse ilk tetikleyici ile sonraki tetikleyici arasındaki gecikmeyi tanımlar
+              description: İlk tetikleyiciden sonra wiki hâlâ düzenlenmemişse, ilk tetikleyici ile sonraki tetikleyici arasındaki gecikmeyi tanımlar
         user_added_to_group:
           fields:
             joined_group:
@@ -144,21 +168,36 @@ tr_TR:
               label: Konu kimliği
         post_created_edited:
           fields:
+            original_post_only:
+              label: Yalnızca orijinal gönderi
+              description: Yalnızca gönderi, konudaki orijinal gönderiyse tetiklenir
             action_type:
               label: Eylem türü
               description: "İsteğe bağlı, tetiklemeyi yalnızca oluşturulan veya düzenlenen etkinliklerle sınırlandırın"
             valid_trust_levels:
               label: Geçerli güven seviyeleri
               description: Yalnızca gönderi bu güven seviyelerindeki bir kullanıcı tarafından oluşturulduğunda tetiklenir, varsayılan olarak herhangi bir güven seviyesidir
-            restricted_category:
-              label: Kategori
-              description: İsteğe bağlı, yalnızca gönderinin konusu bu kategorideyse tetiklenir
-            restricted_group:
-              label: Grup
-              description: İsteğe bağlı, yalnızca gönderinin konusu bu grubun gelen kutusundaki bir özel mesajsa tetiklenir
-            ignore_group_members:
-              label: Grup üyelerini yok say
-              description: Gönderen yukarıda belirtilen Grubun bir üyesiyse tetikleyiciyi atla
+            restricted_tags:
+              label: Etiketler
+              description: 'İsteğe bağlı, yalnızca gönderide şu etiketlerden herhangi biri varsa tetiklenir:'
+            restricted_categories:
+              label: Kategoriler
+              description: İsteğe bağlı, yalnızca gönderinin konusu bu kategorilerdeyse tetiklenir
+            exclude_subcategories:
+              label: Alt kategorileri hariç tut
+              description: İsteğe bağlı, yalnızca gönderinin konusu yukarıda belirtilen kategorilerdeyse tetiklenir
+            restricted_archetype:
+              label: Konu Türü
+              description: İsteğe bağlı, yalnızca konularda veya kişisel mesajlarda tetiklenmesine izin verin
+            restricted_groups:
+              label: Kısıtlı gruplar
+              description: İsteğe bağlı, yalnızca gönderi kullanıcısı bu gruplardan herhangi birindeyse tetiklenir
+            restricted_inbox_groups:
+              label: Kısıtlı gelen kutusu grupları
+              description: İsteğe bağlı, yalnızca gönderinin konusu grup gelen kutularından birindeki kişisel bir mesajsa tetiklenir
+            excluded_groups:
+              label: Hariç tutulan gruplar
+              description: İsteğe bağlı, gönderi kullanıcısı bu gruplardan herhangi birine aitse tetikleyiciyi atlayın
             ignore_automated:
               label: Otomatikleştirmeyi yok say
               description: Gönderenin noreply e-postası varsa veya otomatik bir kaynaktan geliyorsa tetikleyiciyi atla. Yalnızca e-posta yoluyla oluşturulan gönderiler için geçerlidir
@@ -168,12 +207,32 @@ tr_TR:
             first_topic_only:
               label: Yalnızca ilk konu
               description: Yalnızca konu bir kullanıcının oluşturduğu ilk konuysa tetiklenir
+            skip_via_email:
+              label: "E-posta yoluyla atla"
+              description: "Gönderi e-posta yoluyla oluşturulmuşsa tetikleyiciyi atla"
+            post_features:
+              label: Gönderi özellikleri
+              description: "İsteğe bağlı, tetiklemeyi yalnızca bu özelliklere sahip gönderilerle sınırlayın"
           created: Oluşturulma
           edited: Düzenlendi
+          with_images: Görüntüler
+          with_links: Bağlantılar
+          with_code: Kod
+          with_uploads: Yüklemeler
         user_updated:
           fields:
             user_profile:
               label: Kullanıcı profili alanları
+              description: Yalnızca kullanıcı tüm bu alanları doldurmuşsa tetiklenir
+            custom_fields:
+              label: Kullanıcı özel alanları
+              description: Yalnızca kullanıcı tüm bu alanları doldurmuşsa tetiklenir
+            once_per_user:
+              label: Kullanıcı başına bir kez
+              description: Kullanıcı başına yalnızca bir kez tetiklenir
+            new_users_only:
+              label: Yalnızca yeni kullanıcılar
+              description: Yalnızca bu otomasyon etkinleştirildikten sonra katılan yeni kullanıcılar için tetiklenir
         category_created_edited:
           fields:
             restricted_category:
@@ -199,6 +258,23 @@ tr_TR:
             valid_trust_levels:
               label: Geçerli güven seviyeleri
               description: Yalnızca gönderi bu güven seviyelerindeki bir kullanıcı tarafından oluşturulduğunda tetiklenir, varsayılan olarak herhangi bir güven seviyesidir
+        topic_tags_changed:
+          trigger_on_modes:
+            tags_added_or_removed: Eklenen veya kaldırılan etiketler
+            tags_added: Eklenen etiketler
+            tags_removed: Kaldırılan etiketler
+          fields:
+            watching_categories:
+              label: Kategori izleme
+              description: Yalnızca konu bu kategorilerden birindeyse tetiklenir
+            watching_tags:
+              label: Etiket izleme
+              description: Yalnızca konu bu etiketlerden herhangi birine sahipse tetiklenir
+            trigger_on:
+              label: Tetikleyici açık
+            trigger_with_pms:
+              label: Kişisel mesajlarla tetikleyin
+              description: Etiketler bir kişisel mesajda değiştirilmiş olsa bile tetiklenir
         after_post_cook:
           fields:
             valid_trust_levels:
@@ -211,7 +287,15 @@ tr_TR:
               label: Etiketler
               description: 'İsteğe bağlı, yalnızca gönderide şu etiketlerden herhangi biri varsa tetiklenir:'
       scriptables:
-        not_found: '"%{automation}" otomasyonu için "%{script}" komut dosyası bulunamadı, ilişkili eklentinin yüklü olduğundan emin olun'
+        email_on_flagged_post:
+          fields:
+            email_template:
+              label: E-posta şablonu
+              description: Otomasyon yer tutucularını destekler
+            recipients:
+              label: Alıcılar
+              description: Bildirilecek kullanıcılar veya e-posta adresleri
+        not_found: Otomasyon `%{automation}` için `%{script}` komut dosyası bulunamadı, ilgili eklentinin kurulu olduğundan emin olun
         zapier_webhook:
           fields:
             webhook_url:
@@ -223,9 +307,10 @@ tr_TR:
               label: Bir kez
               description: Konuya göre yalnızca bir kez yanıt verir
             word_answer_list:
-              label: Kelime/yanıt çiftlerinin listesi
+              label: Kelime/cevap çiftlerinin listesi
+              description: "Key/value gruplarının bir listesini tanımlar; burada `key` aranan terim, `value` ise yanıt metnidir. İçeriğe bakılmaksızın tüm tetikleyicilere yanıt vermek için `key` boş bırakılabilir. `value` ifadesinin, yanıtta `key` değeriyle değiştirilecek bir yer tutucu olarak `{{key}}` ifadesini kabul ettiğini unutmayın. `key`in bir regex olarak değerlendirileceğini ve `.` gibi özel karakterlerin aslında bir noktayı kastediyorsanız kaçınılması gerektiğini unutmayın, ör.: `\\.`"
             answering_user:
-              label: Yanıtlayan kullanıcı
+              label: Cevaplayan kullanıcı
               description: Varsayılan olarak Sistem kullanıcısını ayarlar
         auto_tag_topic:
           fields:
@@ -236,10 +321,25 @@ tr_TR:
           fields:
             creator:
               label: Oluşturucu
+              post_creator_context: Gönderinin oluşturucusu
+              updated_user_context: Güncellenmiş kullanıcı
             topic:
               label: Konu kimliği
             post:
               label: Gönderi içeriği
+        topic:
+          fields:
+            creator:
+              label: Oluşturucu
+              updated_user_context: Güncellenmiş kullanıcı
+            body:
+              label: Konu gövdesi
+            title:
+              label: Konu başlığı
+            category:
+              label: Konu kategorisi
+            tags:
+              label: Konu etiketleri
         group_category_notification_default:
           fields:
             group:
@@ -247,7 +347,7 @@ tr_TR:
             notification_level:
               label: Bildirim seviyesi
             update_existing_members:
-              label: Mevcut üyeleri güncelleyin
+              label: Mevcut üyeleri güncelle
               description: Mevcut grup üyeleri için bildirim seviyesini günceller
         user_global_notice:
           fields:
@@ -269,11 +369,11 @@ tr_TR:
               label: Grup
               description: Hedef grup. Belirtilen rozete sahip kullanıcılar bu gruba eklenir
             update_user_title_and_flair:
-              label: Kullanıcı unvanını ve yeteneğini güncelle
-              description: İsteğe bağlı, Kullanıcı unvanını ve yeteneğini güncelle
+              label: Kullanıcı unvanını ve becerisini güncelle
+              description: İsteğe bağlı, Kullanıcı unvanını ve becerisini güncelle
             remove_members_without_badge:
               label: Rozeti olmayan mevcut üyeleri kaldır
-              description: İsteğe bağlı, Belirtilen rozete sahip olmayan mevcut grup üyelerini kaldır
+              description: İsteğe bağlı, Belirtilen rozete sahip olmayan mevcut grup üyeleri kaldır
             badge:
               label: Rozet
               description: Rozet seç
@@ -319,14 +419,15 @@ tr_TR:
               label: Hediye eden kişiye gönderilen mesajlar
         send_pms:
           add_a_pm_btn:
-            label: Özel mesaj ekle
+            label: Kişisel mesaj ekle
           fields:
             receiver:
-              label: Özel mesaj alıcısı
+              label: Kişisel mesaj alıcısı
             sendable_pms:
-              label: Özel mesajlar
+              label: Kişisel mesajlar
             sender:
-              label: Özel mesajı gönderen
+              label: Kişisel mesajı gönderen
+              description: "Gönderenin alıcıya kişisel mesaj göndermek için doğru izinlere sahip olduğundan emin olun"
         close_topic:
           fields:
             topic:
@@ -341,6 +442,14 @@ tr_TR:
           fields:
             custom_field_name:
               label: "Kullanıcı Özel Alan adı"
+        set_topic_timer:
+          title: Konu Zamanlayıcısını ayarla
+          fields:
+            type:
+              label: Zamanlayıcı Türü
+            duration:
+              label: Zamanlayıcı Süresi
+      unnamed_automation: "Adsız otomasyon"
       models:
         script:
           name:
@@ -349,6 +458,14 @@ tr_TR:
           name:
             label: Tetikleyici
         automation:
+          runs_today: "Bugün %{count}"
+          runs_this_week: "Bu hafta %{count}"
+          runs_this_month: "Bu ay %{count}"
+          recent_errors:
+            one: "Son zamanlarda %{count} hata"
+            other: "Son zamanlarda %{count} hata"
+          runs:
+            label: Çalıştırma sayısı
           name:
             label: Ad
           trigger:
@@ -357,13 +474,18 @@ tr_TR:
             label: Komut dosyası
           version:
             label: Sürüm
+          status:
+            label: Durum
           enabled:
-            label: Etkin mi
+            label: "Otomasyonu etkinleştirin"
           disabled:
             label: Devre Dışı
           placeholders:
             label: Yer Tutucular
           last_updated_at:
             label: Son güncelleme
+          last_run:
+            label: Son çalıştırma
           last_updated_by:
-            label: Güncelleyen
+            label: 'Güncelleyen:'
+          enable_toggle_disabled: "Gerekli tüm alanlar tamamlandıktan sonra bu otomasyonu etkinleştirebilirsiniz."

@@ -1,10 +1,8 @@
 # frozen_string_literal: true
 
-require "excon"
-
 module DiscourseNarrativeBot
   class QuoteGenerator
-    API_ENDPOINT = "http://api.forismatic.com/api/1.0/".freeze
+    API_ENDPOINT = "http://api.forismatic.com/api/1.0/"
 
     def self.format_quote(quote, author)
       I18n.t("discourse_narrative_bot.quote.results", quote: quote, author: author)

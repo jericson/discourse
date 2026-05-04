@@ -1,10 +1,10 @@
 # frozen_string_literal: true
 
 RSpec.describe Chat::Api::ChannelsInvitesController do
-  fab!(:current_user) { Fabricate(:user) }
-  fab!(:channel_1) { Fabricate(:chat_channel) }
-  fab!(:user_1) { Fabricate(:user) }
-  fab!(:user_2) { Fabricate(:user) }
+  fab!(:current_user, :user)
+  fab!(:channel_1, :chat_channel)
+  fab!(:user_1, :user)
+  fab!(:user_2, :user)
 
   before do
     SiteSetting.chat_enabled = true
@@ -50,13 +50,39 @@ RSpec.describe Chat::Api::ChannelsInvitesController do
       end
     end
 
-    describe "current user can't view channel" do
-      fab!(:channel_1) { Fabricate(:private_category_channel) }
+    describe "current user can't join channel" do
+      fab!(:channel_1, :private_category_channel)
 
       it "returns a 403" do
         post "/chat/api/channels/#{channel_1.id}/invites?user_ids=#{user_1.id},#{user_2.id}"
 
         expect(response.status).to eq(403)
+      end
+    end
+
+    describe "current user can view but not join channel" do
+      fab!(:group)
+
+      before do
+        channel_1.chatable.set_permissions(group => :readonly)
+        channel_1.chatable.save!
+        group.add(current_user)
+      end
+
+      it "returns a 403" do
+        post "/chat/api/channels/#{channel_1.id}/invites?user_ids=#{user_1.id},#{user_2.id}"
+
+        expect(response.status).to eq(403)
+      end
+    end
+
+    describe "rate limiting" do
+      it "rate limits invites" do
+        RateLimiter.enable
+
+        6.times { post "/chat/api/channels/#{channel_1.id}/invites?user_ids=#{user_1.id}" }
+
+        expect(response.status).to eq(429)
       end
     end
 

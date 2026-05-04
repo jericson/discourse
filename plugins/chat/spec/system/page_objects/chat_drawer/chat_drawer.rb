@@ -5,8 +5,12 @@ module PageObjects
     class ChatDrawer < PageObjects::Pages::Base
       VISIBLE_DRAWER = ".chat-drawer.is-expanded"
 
-      def channel_index
-        @channel_index ||= ::PageObjects::Components::Chat::ChannelIndex.new(VISIBLE_DRAWER)
+      def channels_index
+        @channels_index ||= ::PageObjects::Components::Chat::ChannelsIndex.new(VISIBLE_DRAWER)
+      end
+
+      def browse
+        @browse ||= ::PageObjects::Pages::ChatBrowse.new(".c-drawer-routes.--browse")
       end
 
       def open_browse
@@ -34,17 +38,54 @@ module PageObjects
         open_channel(channel)
       end
 
+      def visit_direct_messages
+        visit_index
+        click_direct_messages
+      end
+
+      def visit_user_threads
+        visit_index
+        click_user_threads
+      end
+
+      def visit_browse
+        visit_index
+        open_browse
+      end
+
+      def open_chat_search
+        find("#c-footer-search").click
+      end
+
       def open_channel(channel)
-        channel_index.open_channel(channel)
+        channels_index.open_channel(channel)
         has_no_css?(".chat-skeleton")
       end
 
+      def has_channel?(channel)
+        channels_index.has_channel?(channel)
+      end
+
+      def has_no_channel?(channel)
+        channels_index.has_no_channel?(channel)
+      end
+
+      def has_channel_at_position?(channel, position)
+        find(
+          "#{VISIBLE_DRAWER} .chat-channel-row:nth-child(#{position})[data-chat-channel-id='#{channel.id}']",
+        )
+      end
+
       def has_unread_channel?(channel)
-        channel_index.has_unread_channel?(channel)
+        channels_index.has_unread_channel?(channel)
       end
 
       def has_no_unread_channel?(channel)
-        channel_index.has_no_unread_channel?(channel)
+        channels_index.has_no_unread_channel?(channel)
+      end
+
+      def has_urgent_channel?(channel)
+        channels_index.has_unread_channel?(channel, urgent: true)
       end
 
       def has_user_threads_section?
@@ -56,11 +97,11 @@ module PageObjects
       end
 
       def has_unread_user_threads?
-        has_css?(".chat-channel-row.--threads .c-unread-indicator")
+        has_css?("#c-footer-threads .c-unread-indicator")
       end
 
       def has_no_unread_user_threads?
-        has_no_css?(".chat-channel-row.--threads .c-unread-indicator")
+        has_no_css?("#c-footer-threads .c-unread-indicator")
       end
 
       def click_channels
@@ -75,12 +116,18 @@ module PageObjects
         find("#c-footer-threads").click
       end
 
+      def click_starred_channels
+        find("#c-footer-starred").click
+      end
+
       def maximize
         mouseout
         find("#{VISIBLE_DRAWER} .c-navbar__full-page-button").click
       end
 
       def has_open_thread?(thread = nil)
+        has_css?("html.has-drawer-chat")
+
         if thread
           has_css?("#{VISIBLE_DRAWER} .chat-thread[data-id='#{thread.id}']")
         else
@@ -89,30 +136,47 @@ module PageObjects
       end
 
       def has_open_channel?(channel)
-        has_css?("#{VISIBLE_DRAWER} .chat-channel[data-id='#{channel.id}']")
+        has_css?("html.has-drawer-chat")
+        has_css?("#{VISIBLE_DRAWER} .chat-channel.--loaded[data-id='#{channel.id}']")
       end
 
       def has_channel_settings?
+        has_css?("html.has-drawer-chat")
         has_css?("#{VISIBLE_DRAWER} .c-channel-settings")
       end
 
       def has_channel_members?
+        has_css?("html.has-drawer-chat")
         has_css?("#{VISIBLE_DRAWER} .c-channel-members")
       end
 
       def has_open_channels?
+        has_css?("html.has-drawer-chat")
         has_css?("#{VISIBLE_DRAWER} .public-channels")
       end
 
+      def has_open_starred_channels?
+        has_css?("html.has-drawer-chat")
+        has_css?("#{VISIBLE_DRAWER} .starred-channels")
+      end
+
       def has_open_direct_messages?
+        has_css?("html.has-drawer-chat")
         has_css?("#{VISIBLE_DRAWER} .direct-message-channels")
       end
 
+      def has_open_chat_search?
+        has_css?("html.has-drawer-chat")
+        has_css?("#{VISIBLE_DRAWER} .c-search")
+      end
+
       def has_open_user_threads?
+        has_css?("html.has-drawer-chat")
         has_css?("#{VISIBLE_DRAWER} .c-user-threads")
       end
 
       def has_open_thread_list?
+        has_css?("html.has-drawer-chat")
         has_css?("#{VISIBLE_DRAWER} .chat-thread-list")
       end
 
@@ -136,6 +200,10 @@ module PageObjects
         has_no_css?("#{thread_list_button_selector}.has-unreads")
       end
 
+      def has_direct_message_channels_section?
+        has_css?(".direct-message-channels-section")
+      end
+
       private
 
       def mouseout
@@ -143,7 +211,7 @@ module PageObjects
         # and that the message actions menu is closed.
         # This check is essential because the message actions menu might partially
         # overlap with the header, making certain buttons inaccessible.
-        find("#site-logo").hover
+        PageObjects::Components::Logo.new.hover
       end
     end
   end

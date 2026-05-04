@@ -15,7 +15,7 @@ export default class ChatChannelPane extends Service {
   }
 
   get selectedMessageIds() {
-    return this.channel.messagesManager.selectedMessages.mapBy("id");
+    return this.channel.messagesManager.selectedMessages.map((item) => item.id);
   }
 
   @action
@@ -28,5 +28,6 @@ export default class ChatChannelPane extends Service {
   onSelectMessage(message) {
     this.lastSelectedMessage = message;
     this.selectingMessages = true;
+    this.chat.activeMessage = null;
   }
 }

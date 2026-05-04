@@ -11,6 +11,10 @@ class UserSilencer
     UserSilencer.new(user, by_user, opts).silence
   end
 
+  def self.auto_silence(user, by_user = nil, opts = {})
+    UserSilencer.new(user, by_user, opts).auto_silence
+  end
+
   def self.unsilence(user, by_user = nil, opts = {})
     UserSilencer.new(user, by_user, opts).unsilence
   end
@@ -33,7 +37,7 @@ class UserSilencer
       context = "#{message_type}: #{@opts[:reason]}"
 
       if @by_user
-        log_params = { context: context, details: details }
+        log_params = { context: context, details: details, reviewable_id: @opts[:reviewable_id] }
         log_params[:post_id] = @opts[:post_id].to_i if @opts[:post_id]
 
         @user_history = StaffActionLogger.new(@by_user).log_silence_user(@user, log_params)
@@ -56,6 +60,15 @@ class UserSilencer
       silence_message_params.merge!(post_alert_options: { skip_send_email: true })
       SystemMessage.create(@user, message_type, silence_message_params)
       true
+    end
+  end
+
+  def auto_silence
+    if silence
+      notify_moderators
+      true
+    else
+      false
     end
   end
 
@@ -84,7 +97,28 @@ class UserSilencer
     if @user.save
       DiscourseEvent.trigger(:user_unsilenced, user: @user, by_user: @by_user)
       SystemMessage.create(@user, :unsilenced)
-      StaffActionLogger.new(@by_user).log_unsilence_user(@user) if @by_user
+      if @by_user
+        StaffActionLogger.new(@by_user).log_unsilence_user(
+          @user,
+          reviewable_id: @opts[:reviewable_id],
+        )
+      end
     end
+  end
+
+  private
+
+  def notify_moderators
+    return if !SiteSetting.notify_mods_when_user_silenced
+
+    GroupMessage.create(
+      Group[:moderators].name,
+      @opts[:reason] ? :user_automatically_silenced_with_reason : :user_automatically_silenced,
+      user: @user,
+      limit_once_per: false,
+      message_params: {
+        reason: @opts[:reason],
+      },
+    )
   end
 end

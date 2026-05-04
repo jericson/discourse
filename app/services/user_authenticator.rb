@@ -9,7 +9,7 @@ class UserAuthenticator
   )
     @user = user
     @session = session
-    if session&.dig(:authentication) && session[:authentication].is_a?(Hash)
+    if session.try(:[], :authentication).is_a?(Hash)
       @auth_result = Auth::Result.from_session_data(session[:authentication], user: user)
     end
     @authenticator_finder = authenticator_finder
@@ -20,10 +20,9 @@ class UserAuthenticator
     if authenticated?
       @user.active = true
       @auth_result.apply_user_attributes!
-    elsif @require_password
-      @user.password_required!
     end
 
+    @user.password_required! if !@auth_result && @require_password
     @user.skip_email_validation = true if @auth_result && @auth_result.skip_email_validation
   end
 
@@ -36,7 +35,11 @@ class UserAuthenticator
       authenticator.after_create_account(@user, @auth_result)
       confirm_email
     end
-    @session[:authentication] = @auth_result = nil if @session&.dig(:authentication)
+    if @session.try(:[], :authentication)
+      @session.delete(:authentication)
+      @auth_result = nil
+      @session[:authenticated_with_oauth] = true
+    end
   end
 
   def email_valid?

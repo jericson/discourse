@@ -108,7 +108,7 @@ RSpec.describe Middleware::AnonymousCache do
 
     it "handles modern mobile browsers" do
       key1 = new_helper("HTTP_USER_AGENT" => "Safari (iPhone OS 7)").cache_key
-      key2 = new_helper("HTTP_USER_AGENT" => "Safari (iPhone OS 15)").cache_key
+      key2 = new_helper("HTTP_USER_AGENT" => "Safari (iPhone OS 16)").cache_key
       expect(key1).not_to eq(key2)
     end
 
@@ -122,6 +122,14 @@ RSpec.describe Middleware::AnonymousCache do
           ).cache_key
         expect(key1).to eq(key2)
       }.not_to raise_error
+    end
+
+    it "handles showing original content" do
+      show_orig_key =
+        new_helper("HTTP_COOKIE" => ContentLocalization::SHOW_ORIGINAL_COOKIE).cache_key
+      regular_key = new_helper.cache_key
+
+      expect(show_orig_key).not_to eq(regular_key)
     end
 
     context "when cached" do
@@ -169,6 +177,45 @@ RSpec.describe Middleware::AnonymousCache do
         expect(helper.cached).to eq(nil)
       end
 
+      it "includes the forced color mode in the cache key" do
+        dark_helper =
+          new_helper("ANON_CACHE_DURATION" => 10, "HTTP_COOKIE" => "forced_color_mode=dark")
+        dark_helper.cache([200, { "HELLO" => "WORLD" }, ["dark mode"]])
+
+        light_helper =
+          new_helper("ANON_CACHE_DURATION" => 10, "HTTP_COOKIE" => "forced_color_mode=light")
+        expect(light_helper.cached).to eq(nil)
+
+        light_helper.cache([200, { "HELLO" => "WORLD" }, ["light mode"]])
+
+        auto_helper = new_helper("ANON_CACHE_DURATION" => 10)
+        expect(auto_helper.cached).to eq(nil)
+
+        auto_helper.cache([200, { "HELLO" => "WORLD" }, ["auto color mode"]])
+
+        unknown_helper =
+          new_helper("ANON_CACHE_DURATION" => 10, "HTTP_COOKIE" => "forced_color_mode=blada")
+        expect(unknown_helper.cached).to eq(
+          [200, { "HELLO" => "WORLD", "X-Discourse-Cached" => "true" }, ["auto color mode"]],
+        )
+
+        dark_helper =
+          new_helper("ANON_CACHE_DURATION" => 10, "HTTP_COOKIE" => "forced_color_mode=dark")
+        light_helper =
+          new_helper("ANON_CACHE_DURATION" => 10, "HTTP_COOKIE" => "forced_color_mode=light")
+        auto_helper = new_helper("ANON_CACHE_DURATION" => 10)
+
+        expect(dark_helper.cached).to eq(
+          [200, { "HELLO" => "WORLD", "X-Discourse-Cached" => "true" }, ["dark mode"]],
+        )
+        expect(light_helper.cached).to eq(
+          [200, { "HELLO" => "WORLD", "X-Discourse-Cached" => "true" }, ["light mode"]],
+        )
+        expect(auto_helper.cached).to eq(
+          [200, { "HELLO" => "WORLD", "X-Discourse-Cached" => "true" }, ["auto color mode"]],
+        )
+      end
+
       it "returns cached data for cached requests" do
         helper.is_mobile = true
         expect(helper.cached).to eq(nil)
@@ -202,12 +249,12 @@ RSpec.describe Middleware::AnonymousCache do
           "HOST" => "site.com",
           "REQUEST_METHOD" => "GET",
           "REQUEST_URI" => "/somewhere/rainbow",
-          "REQUEST_QUEUE_SECONDS" => 2.1,
+          Middleware::ProcessingRequest::REQUEST_QUEUE_SECONDS_ENV_KEY => 2.1,
           "rack.input" => StringIO.new,
         )
 
       # non background ... long request
-      env["REQUEST_QUEUE_SECONDS"] = 2
+      env[Middleware::ProcessingRequest::REQUEST_QUEUE_SECONDS_ENV_KEY] = 2
 
       status, _ = app.call(env.dup)
       expect(status).to eq(200)
@@ -220,7 +267,7 @@ RSpec.describe Middleware::AnonymousCache do
       json = JSON.parse(body.join)
       expect(json["extras"]["wait_seconds"]).to be > 4.9
 
-      env["REQUEST_QUEUE_SECONDS"] = 0.4
+      env[Middleware::ProcessingRequest::REQUEST_QUEUE_SECONDS_ENV_KEY] = 0.4
 
       status, _ = app.call(env.dup)
       expect(status).to eq(200)
@@ -229,8 +276,6 @@ RSpec.describe Middleware::AnonymousCache do
 
   describe "#force_anonymous!" do
     before { RateLimiter.enable }
-
-    use_redis_snapshotting
 
     it "will revert to anonymous once we reach the limit" do
       is_anon = false
@@ -254,7 +299,7 @@ RSpec.describe Middleware::AnonymousCache do
           "HOST" => "site.com",
           "REQUEST_METHOD" => "GET",
           "REQUEST_URI" => "/somewhere/rainbow",
-          "REQUEST_QUEUE_SECONDS" => 2.1,
+          Middleware::ProcessingRequest::REQUEST_QUEUE_SECONDS_ENV_KEY => 2.1,
           "rack.input" => StringIO.new,
         )
 
@@ -278,14 +323,14 @@ RSpec.describe Middleware::AnonymousCache do
       # tricky change, a 50ms delay still will trigger protection
       # once it is tripped
 
-      env["REQUEST_QUEUE_SECONDS"] = 0.05
+      env[Middleware::ProcessingRequest::REQUEST_QUEUE_SECONDS_ENV_KEY] = 0.05
       is_anon = false
 
       app.call(env.dup)
       expect(is_anon).to eq(true)
 
       is_anon = false
-      env["REQUEST_QUEUE_SECONDS"] = 0.01
+      env[Middleware::ProcessingRequest::REQUEST_QUEUE_SECONDS_ENV_KEY] = 0.01
 
       app.call(env.dup)
       expect(is_anon).to eq(false)
@@ -295,7 +340,12 @@ RSpec.describe Middleware::AnonymousCache do
   describe "invalid request payload" do
     it "returns 413 for GET request with payload" do
       status, headers, _ =
-        middleware.call(env.tap { |environment| environment[Rack::RACK_INPUT].write("test") })
+        middleware.call(
+          env.tap do |environment|
+            environment[Rack::RACK_INPUT].write("test")
+            environment[Rack::RACK_INPUT].rewind
+          end,
+        )
 
       expect(status).to eq(413)
       expect(headers["Cache-Control"]).to eq("private, max-age=0, must-revalidate")

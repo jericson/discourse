@@ -7,7 +7,6 @@ class Admin::DashboardController < Admin::StaffController
     if SiteSetting.version_checks?
       data.merge!(version_check: DiscourseUpdates.check_version.as_json)
     end
-    data.merge!(has_unseen_features: DiscourseUpdates.has_unseen_features?(current_user.id))
 
     render json: data
   end
@@ -32,14 +31,30 @@ class Admin::DashboardController < Admin::StaffController
   end
 
   def new_features
-    new_features = DiscourseUpdates.new_features
+    force_refresh = params[:force_refresh] == "true"
 
-    if current_user.admin? && most_recent = new_features&.first
-      DiscourseUpdates.bump_last_viewed_feature_date(current_user.id, most_recent["created_at"])
+    if force_refresh
+      RateLimiter.new(
+        current_user,
+        "force-refresh-new-features",
+        5,
+        1.minute,
+        apply_limit_to_staff: true,
+      ).performed!
+    end
+
+    new_features = DiscourseUpdates.new_features(force_refresh:)
+    new_features_with_permanent_uc =
+      DiscourseUpdates.merge_new_features_with_upcoming_changes(
+        new_features&.map { |item| item.symbolize_keys } || [],
+      )
+
+    if current_user.admin? && most_recent = new_features_with_permanent_uc&.first
+      DiscourseUpdates.bump_last_viewed_feature_date(current_user.id, most_recent[:created_at])
     end
 
     data = {
-      new_features: new_features,
+      new_features: new_features_with_permanent_uc,
       has_unseen_features: DiscourseUpdates.has_unseen_features?(current_user.id),
       release_notes_link: AdminDashboardGeneralData.fetch_cached_stats["release_notes_link"],
     }
@@ -47,6 +62,18 @@ class Admin::DashboardController < Admin::StaffController
     mark_new_features_as_seen
 
     render json: data
+  end
+
+  def toggle_feature
+    UpcomingChanges::Toggle.call(service_params) do
+      on_success { render(json: success_json) }
+      on_failure { render(json: failed_json, status: :unprocessable_entity) }
+      on_failed_policy(:current_user_is_admin) { raise Discourse::InvalidAccess }
+      on_failed_policy(:setting_is_available) { raise Discourse::InvalidAccess }
+      on_failed_contract do |contract|
+        render(json: failed_json.merge(errors: contract.errors.full_messages), status: :bad_request)
+      end
+    end
   end
 
   private

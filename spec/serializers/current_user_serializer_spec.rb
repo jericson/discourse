@@ -30,9 +30,9 @@ RSpec.describe CurrentUserSerializer do
   end
 
   describe "#top_category_ids" do
-    fab!(:category1) { Fabricate(:category) }
-    fab!(:category2) { Fabricate(:category) }
-    fab!(:category3) { Fabricate(:category) }
+    fab!(:category1, :category)
+    fab!(:category2, :category)
+    fab!(:category3, :category)
 
     it "should include empty top_category_ids array" do
       payload = serializer.as_json
@@ -75,9 +75,9 @@ RSpec.describe CurrentUserSerializer do
       )
     end
 
-    it "includes muted tag names" do
+    it "includes muted tags" do
       payload = serializer.as_json
-      expect(payload[:muted_tags]).to eq([tag.name])
+      expect(payload[:muted_tags]).to eq([{ id: tag.id, name: tag.name, slug: tag.slug }])
     end
   end
 
@@ -108,45 +108,21 @@ RSpec.describe CurrentUserSerializer do
 
   describe "#groups" do
     it "should only show visible groups" do
-      Fabricate.build(:group, visibility_level: Group.visibility_levels[:public])
-      hidden_group = Fabricate.build(:group, visibility_level: Group.visibility_levels[:owners])
+      Fabricate(:group, visibility_level: Group.visibility_levels[:public])
+      hidden_group = Fabricate(:group, visibility_level: Group.visibility_levels[:owners])
       public_group =
-        Fabricate.build(
+        Fabricate(
           :group,
           visibility_level: Group.visibility_levels[:public],
           name: "UppercaseGroupName",
         )
       hidden_group.add(user)
-      hidden_group.save!
       public_group.add(user)
-      public_group.save!
       payload = serializer.as_json
 
       expect(payload[:groups]).to contain_exactly(
         { id: public_group.id, name: public_group.name, has_messages: false },
       )
-    end
-  end
-
-  describe "#has_topic_draft" do
-    it "is not included by default" do
-      payload = serializer.as_json
-      expect(payload).not_to have_key(:has_topic_draft)
-    end
-
-    it "returns true when user has a draft" do
-      Draft.set(user, Draft::NEW_TOPIC, 0, "test1")
-
-      payload = serializer.as_json
-      expect(payload[:has_topic_draft]).to eq(true)
-    end
-
-    it "clearing a draft removes has_topic_draft from payload" do
-      sequence = Draft.set(user, Draft::NEW_TOPIC, 0, "test1")
-      Draft.clear(user, Draft::NEW_TOPIC, sequence)
-
-      payload = serializer.as_json
-      expect(payload).not_to have_key(:has_topic_draft)
     end
   end
 
@@ -229,7 +205,7 @@ RSpec.describe CurrentUserSerializer do
     it "doesn't add expired user status" do
       SiteSetting.enable_user_status = true
 
-      user.user_status.ends_at = 1.minutes.ago
+      user.user_status.ends_at = 1.minute.ago
       serializer = described_class.new(user, scope: Guardian.new(user), root: false)
       json = serializer.as_json
 
@@ -350,6 +326,161 @@ RSpec.describe CurrentUserSerializer do
         end.count
 
       expect(initial_count).to eq(final_count)
+    end
+  end
+
+  describe "#can_create_category" do
+    let(:payload) { serializer.as_json }
+
+    context "when user is an admin" do
+      let(:user) { Fabricate(:admin) }
+
+      it "returns true" do
+        expect(payload[:can_create_category]).to eq(true)
+      end
+    end
+
+    context "when user is a moderator and moderators_manage_categories is enabled" do
+      let(:user) { Fabricate(:moderator) }
+
+      before { SiteSetting.moderators_manage_categories = true }
+
+      it "returns true" do
+        expect(payload[:can_create_category]).to eq(true)
+      end
+    end
+
+    context "when user is a moderator and moderators_manage_categories is disabled" do
+      let(:user) { Fabricate(:moderator) }
+
+      before { SiteSetting.moderators_manage_categories = false }
+
+      it "is not included" do
+        expect(payload).not_to have_key(:can_create_category)
+      end
+    end
+
+    context "when user is a regular user" do
+      it "is not included" do
+        expect(payload).not_to have_key(:can_create_category)
+      end
+    end
+  end
+
+  describe "#can_see_ip" do
+    let(:payload) { serializer.as_json }
+
+    context "when user is an admin" do
+      let(:user) { Fabricate(:admin) }
+
+      it "includes can_see_ip as true" do
+        expect(payload[:can_see_ip]).to eq(true)
+      end
+    end
+
+    context "when user is a moderator and moderators_view_ips is enabled" do
+      let(:user) { Fabricate(:moderator) }
+
+      before { SiteSetting.moderators_view_ips = true }
+
+      it "includes can_see_ip as true" do
+        expect(payload[:can_see_ip]).to eq(true)
+      end
+    end
+
+    context "when user is a moderator and moderators_view_ips is disabled" do
+      let(:user) { Fabricate(:moderator) }
+
+      before { SiteSetting.moderators_view_ips = false }
+
+      it "does not include can_see_ip" do
+        expect(payload).not_to have_key(:can_see_ip)
+      end
+    end
+  end
+
+  describe "#featured_topic" do
+    fab!(:featured_topic, :topic)
+
+    before { user.user_profile.update!(featured_topic_id: featured_topic.id) }
+
+    it "includes the featured topic" do
+      payload = serializer.as_json
+
+      expect(payload[:featured_topic]).to_not be_nil
+      expect(payload[:featured_topic][:id]).to eq(featured_topic.id)
+      expect(payload[:featured_topic][:title]).to eq(featured_topic.title)
+      expect(payload[:featured_topic].keys).to contain_exactly(
+        :id,
+        :title,
+        :fancy_title,
+        :slug,
+        :posts_count,
+      )
+    end
+  end
+
+  describe "#show_site_owner_onboarding" do
+    fab!(:admin)
+    fab!(:topic)
+    fab!(:another_admin, :admin)
+
+    let(:admin_serializer) { described_class.new(admin, scope: Guardian.new(admin), root: false) }
+
+    before { SiteSetting.enable_site_owner_onboarding = true }
+
+    it "is not included for non-admin users" do
+      payload = serializer.as_json
+      expect(payload).not_to have_key(:show_site_owner_onboarding)
+    end
+
+    it "is not included when setting is disabled" do
+      SiteSetting.enable_site_owner_onboarding = false
+      payload = admin_serializer.as_json
+      expect(payload).not_to have_key(:show_site_owner_onboarding)
+    end
+
+    it "is true for the first admin on a new site" do
+      payload = admin_serializer.as_json
+      expect(payload[:show_site_owner_onboarding]).to eq(true)
+    end
+
+    it "is not included for a second admin" do
+      serializer2 =
+        described_class.new(another_admin, scope: Guardian.new(another_admin), root: false)
+      payload = serializer2.as_json
+      expect(payload).not_to have_key(:show_site_owner_onboarding)
+    end
+
+    it "is not included when the site is older than the max days setting" do
+      SiteSetting.site_owner_onboarding_max_days = 5
+      Topic.update_all(created_at: 6.days.ago)
+      payload = admin_serializer.as_json
+      expect(payload).not_to have_key(:show_site_owner_onboarding)
+    end
+  end
+
+  describe "#can_toggle_nested_mode" do
+    it "is not included when nested replies is disabled" do
+      SiteSetting.nested_replies_enabled = false
+      expect(serializer.as_json).not_to have_key(:can_toggle_nested_mode)
+    end
+
+    context "when nested replies is enabled" do
+      before { SiteSetting.nested_replies_enabled = true }
+
+      it "is true when user is in an allowed group" do
+        SiteSetting.nested_replies_toggle_mode_groups = Group::AUTO_GROUPS[:staff].to_s
+        user.update!(admin: true)
+        Group.refresh_automatic_groups!
+        user.reload
+        expect(serializer.as_json[:can_toggle_nested_mode]).to eq(true)
+      end
+
+      it "is false when user is not in an allowed group" do
+        SiteSetting.nested_replies_toggle_mode_groups = Group::AUTO_GROUPS[:staff].to_s
+        expect(serializer.as_json[:can_toggle_nested_mode]).to eq(false)
+      end
     end
   end
 end

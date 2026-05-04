@@ -14,7 +14,7 @@ export default class ChatRoutesChannelThread extends Component {
   }
 
   <template>
-    <div class="c-routes-channel-thread">
+    <div class="c-routes --channel-thread">
       {{#each (array @thread) as |thread|}}
         <ThreadHeader
           @thread={{thread}}
@@ -24,7 +24,6 @@ export default class ChatRoutesChannelThread extends Component {
         <Thread
           @thread={{thread}}
           @targetMessageId={{@targetMessageId}}
-          @includeHeader={{true}}
           @setFullTitle={{this.setFullTitle}}
         />
       {{/each}}

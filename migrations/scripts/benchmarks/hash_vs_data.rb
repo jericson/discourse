@@ -6,7 +6,7 @@ require "bundler/inline"
 gemfile(true) do
   source "https://rubygems.org"
   gem "benchmark-ips"
-  gem "extralite-bundle", github: "digital-fabric/extralite"
+  gem "extralite-bundle"
   gem "sqlite3"
 end
 
@@ -20,7 +20,7 @@ User = Data.define(:id, :name, :email, :created_at)
 USER_HASH =
   begin
     name = SecureRandom.hex(10)
-    { id: 1, name: name, email: "#{name}@example.com", created_at: Time.now.utc.iso8601 }
+    { id: 1, name:, email: "#{name}@example.com", created_at: Time.now.utc.iso8601 }
   end
 
 USER_DATA =

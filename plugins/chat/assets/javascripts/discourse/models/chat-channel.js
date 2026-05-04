@@ -1,8 +1,8 @@
 import { tracked } from "@glimmer/tracking";
 import guid from "pretty-text/guid";
+import { getOwnerWithFallback } from "discourse/lib/get-owner";
 import { escapeExpression } from "discourse/lib/utilities";
 import Category from "discourse/models/category";
-import { getOwnerWithFallback } from "discourse-common/lib/get-owner";
 import ChatMessagesManager from "discourse/plugins/chat/discourse/lib/chat-messages-manager";
 import ChatThreadsManager from "discourse/plugins/chat/discourse/lib/chat-threads-manager";
 import slugifyChannel from "discourse/plugins/chat/discourse/lib/slugify-channel";
@@ -35,7 +35,7 @@ export function channelStatusIcon(channelStatus) {
     case CHANNEL_STATUSES.readOnly:
       return "comment-slash";
     case CHANNEL_STATUSES.archived:
-      return "archive";
+      return "box-archive";
   }
 }
 
@@ -71,9 +71,13 @@ export default class ChatChannel {
   @tracked tracking;
   @tracked threadingEnabled;
   @tracked draft;
+  @tracked newestMessage;
+  @tracked pinnedMessagesCount;
 
   threadsManager = new ChatThreadsManager(getOwnerWithFallback(this));
   messagesManager = new ChatMessagesManager(getOwnerWithFallback(this));
+  pendingOptimisticPins = new Set();
+  pendingOptimisticUnpins = new Set();
 
   @tracked _currentUserMembership;
   @tracked _lastMessage;
@@ -86,6 +90,8 @@ export default class ChatChannel {
     this.membershipsCount = args.memberships_count;
     this.slug = args.slug;
     this.title = args.title;
+    this.emoji = args.emoji;
+    this.unicodeTitle = args.unicode_title;
     this.status = args.status;
     this.description = args.description;
     this.threadingEnabled = args.threading_enabled;
@@ -97,6 +103,7 @@ export default class ChatChannel {
 
     this.chatable = this.#initChatable(args.chatable ?? []);
     this.tracking = new ChatTrackingState(getOwnerWithFallback(this));
+    this.pinnedMessagesCount = args.pinned_messages_count ?? 0;
 
     if (args.archive_completed || args.archive_failed) {
       this.archive = ChatChannelArchive.create(args);
@@ -104,6 +111,10 @@ export default class ChatChannel {
   }
 
   get unreadThreadsCountSinceLastViewed() {
+    if (!this.threadingEnabled) {
+      return 0;
+    }
+
     return Array.from(this.threadsManager.unreadThreadOverview.values()).filter(
       (lastReplyCreatedAt) =>
         lastReplyCreatedAt >= this.currentUserMembership.lastViewedAt
@@ -111,7 +122,27 @@ export default class ChatChannel {
   }
 
   get unreadThreadsCount() {
-    return Array.from(this.threadsManager.unreadThreadOverview.values()).length;
+    return this.threadingEnabled ? this.threadsManager.unreadThreadCount : 0;
+  }
+
+  get lastUnreadThreadDate() {
+    if (this.unreadThreadsCount === 0) {
+      return this.lastMessage.createdAt;
+    }
+
+    return Array.from(this.threadsManager.unreadThreadOverview.values())
+      .sort((a, b) => b - a)
+      .pop();
+  }
+
+  get watchedThreadsUnreadCount() {
+    if (!this.threadingEnabled) {
+      return 0;
+    }
+
+    return this.threadsManager.threads.reduce((unreadCount, thread) => {
+      return unreadCount + thread.tracking.watchedThreadsUnreadCount;
+    }, 0);
   }
 
   updateLastViewedAt() {
@@ -119,31 +150,43 @@ export default class ChatChannel {
   }
 
   get canDeleteSelf() {
-    return this.meta.can_delete_self;
+    return this.meta?.can_delete_self;
   }
 
   get canDeleteOthers() {
-    return this.meta.can_delete_others;
+    return this.meta?.can_delete_others;
   }
 
   get canFlag() {
-    return this.meta.can_flag;
+    return this.meta?.can_flag;
   }
 
   get userSilenced() {
-    return this.meta.user_silenced;
+    return this.meta?.user_silenced;
   }
 
   get canModerate() {
-    return this.meta.can_moderate;
+    return this.meta?.can_moderate;
+  }
+
+  get canRemoveMembers() {
+    return this.meta?.can_remove_members;
+  }
+
+  get canManagePins() {
+    return this.meta?.can_manage_pins;
   }
 
   get escapedTitle() {
     return escapeExpression(this.title);
   }
 
+  get displayTitle() {
+    return this.unicodeTitle ?? this.title;
+  }
+
   get escapedDescription() {
-    return escapeExpression(this.description);
+    return escapeExpression(this.description?.trim());
   }
 
   get slugifiedTitle() {
@@ -188,6 +231,24 @@ export default class ChatChannel {
 
   get canJoin() {
     return this.meta.can_join_chat_channel;
+  }
+
+  get hasUnread() {
+    return (
+      this.tracking.unreadCount +
+        this.tracking.mentionCount +
+        this.tracking.watchedThreadsUnreadCount +
+        this.threadsManager.unreadThreadCount >
+      0
+    );
+  }
+
+  get hasPinnedMessages() {
+    return this.pinnedMessagesCount > 0;
+  }
+
+  get hasUnseenPins() {
+    return this.currentUserMembership?.hasUnseenPins ?? false;
   }
 
   async stageMessage(message) {

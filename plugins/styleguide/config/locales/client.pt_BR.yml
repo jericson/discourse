@@ -5,6 +5,11 @@
 # https://translate.discourse.org/
 
 pt_BR:
+  admin_js:
+    admin:
+      site_settings:
+        categories:
+          styleguide: "Guia de estilo do Discourse"
   js:
     styleguide:
       title: "Guia de estilo"
@@ -25,17 +30,21 @@ pt_BR:
           title: "Entradas de data/hora"
         menus:
           title: "Menus"
+        multi_select:
+          title: "Múltipla escolha"
         toasts:
           title: "Barra de notificação"
         font_scale:
           title: "Sistema da fonte"
         colors:
           title: "Cores"
+        dialog:
+          title: "Diálogo"
         icons:
           title: "Ícones"
           full_list: "Exibir a lista completa de ícones incríveis de fonte"
-        input_fields:
-          title: "Campos de entrada"
+        forms:
+          title: "Formulários"
         buttons:
           title: "Botões"
         dropdowns:
@@ -53,7 +62,7 @@ pt_BR:
         categories_list:
           title: "Lista de categorias"
         topic_link:
-          title: "Link de tópico"
+          title: "Link e status do tópico"
         topic_list_item:
           title: "Item de lista de tópicos"
         topic_statuses:
@@ -62,8 +71,6 @@ pt_BR:
           title: "Lista de tópicos"
         basic_topic_list:
           title: "Lista de tópicos básicos"
-        footer_message:
-          title: "Mensagem de rodapé"
         signup_cta:
           title: "CTA de cadastro"
         topic_timer_info:
@@ -74,12 +81,18 @@ pt_BR:
           title: "Notificações de tópico"
         post:
           title: "Postagem"
+        post_list:
+          title: "Lista de postagens"
+          empty_example: "<PostList /> estado vazio"
+          populated_example: "<PostList /> estado preenchido"
+        post_oneboxes:
+          title: "Publicar Oneboxes"
         topic_map:
           title: "Mapa do tópico"
         site_header:
           title: "Cabeçalho do site"
-        suggested_topics:
-          title: "Tópicos sugeridos"
+        more_topics:
+          title: "Mais tópicos"
         post_menu:
           title: "Menu de postagem"
         modal:
@@ -92,6 +105,8 @@ pt_BR:
           title: "Ícones no cabeçalho"
         spinners:
           title: "Controle giratório"
+        otp:
+          title: "OTP"
         empty_state:
           title: "Estado vazio"
         tooltips:

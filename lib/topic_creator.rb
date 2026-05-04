@@ -27,7 +27,19 @@ class TopicCreator
 
     category = find_category
     if category.present? && guardian.can_tag?(topic)
-      tags = @opts[:tags].presence || []
+      tags =
+        if @opts[:tags].present?
+          input = @opts[:tags]
+          if input.first.is_a?(String)
+            input
+          else
+            ids = input.filter_map { |t| t[:id]&.to_i }
+            names = input.filter_map { |t| t[:id].blank? && t[:name].presence }
+            Tag.where(id: ids).pluck(:name) + names
+          end
+        else
+          []
+        end
 
       # adds topic.errors
       DiscourseTagging.validate_category_tags(guardian, topic, category, tags)
@@ -82,8 +94,7 @@ class TopicCreator
   def create_shared_draft(topic)
     return if @opts[:shared_draft].blank? || @opts[:shared_draft] == "false"
 
-    category_id =
-      @opts[:category].blank? ? SiteSetting.shared_drafts_category.to_i : @opts[:category]
+    category_id = @opts[:category].presence || SiteSetting.shared_drafts_category.to_i
     SharedDraft.create(topic_id: topic.id, category_id: category_id)
   end
 
@@ -109,7 +120,18 @@ class TopicCreator
     end
 
     topic.reload.topic_allowed_groups.each do |topic_allowed_group|
-      topic_allowed_group.group.set_message_default_notification_levels!(topic)
+      group = topic_allowed_group.group
+
+      begin
+        group.set_message_default_notification_levels!(topic)
+      rescue Group::GroupPmUserLimitExceededError
+        rollback_with!(
+          topic,
+          :too_large_group,
+          group_name: group.name,
+          limit: SiteSetting.group_pm_user_limit,
+        )
+      end
     end
   end
 
@@ -123,7 +145,7 @@ class TopicCreator
       visible: @opts[:visible],
     }
 
-    %i[subtype archetype import_mode advance_draft].each do |key|
+    %i[subtype archetype import_mode advance_draft locale].each do |key|
       topic_params[key] = @opts[key] if @opts[key].present?
     end
 
@@ -181,11 +203,15 @@ class TopicCreator
 
   def setup_tags(topic)
     if @opts[:tags].present?
-      if @opts[:skip_validations]
-        DiscourseTagging.add_or_create_tags_by_name(topic, @opts[:tags])
-      else
-        valid_tags = DiscourseTagging.tag_topic_by_names(topic, @guardian, @opts[:tags])
-        unless valid_tags
+      tags = @opts[:tags]
+
+      valid_tags = DiscourseTagging.tag_topic(topic, @guardian, tags)
+
+      if !valid_tags
+        if @opts[:skip_validations]
+          all_names = tags.filter_map { |t| t.is_a?(String) ? t : t[:name] }
+          DiscourseTagging.add_or_create_tags_by_name(topic, all_names)
+        else
           topic.errors.add(:base, :unable_to_tag)
           rollback_from_errors!(topic)
         end
@@ -215,8 +241,12 @@ class TopicCreator
     return unless @opts[:archetype] == Archetype.private_message
     topic.subtype = TopicSubtype.user_to_user unless topic.subtype
 
-    if @opts[:target_usernames].blank? && @opts[:target_emails].blank? &&
-         @opts[:target_group_names].blank?
+    if @opts[:target_usernames].present? && @opts[:target_user_ids].present?
+      raise ArgumentError, "Cannot specify both target_usernames and target_user_ids"
+    end
+
+    if @opts[:target_usernames].blank? && @opts[:target_user_ids].blank? &&
+         @opts[:target_emails].blank? && @opts[:target_group_names].blank?
       rollback_with!(topic, :no_user_selected)
     end
 
@@ -224,7 +254,11 @@ class TopicCreator
       rollback_with!(topic, :send_to_email_disabled)
     end
 
-    add_users(topic, @opts[:target_usernames])
+    if @opts[:target_user_ids].present?
+      add_users_by_id(topic, @opts[:target_user_ids])
+    else
+      add_users(topic, @opts[:target_usernames])
+    end
     add_emails(topic, @opts[:target_emails])
     add_groups(topic, @opts[:target_group_names])
 
@@ -241,11 +275,21 @@ class TopicCreator
     return unless usernames
 
     names = usernames.split(",").flatten.map(&:downcase)
+    add_users_from_scope(topic, User.where("username_lower in (?)", names), names.length)
+  end
+
+  def add_users_by_id(topic, user_ids)
+    return unless user_ids
+
+    ids = Array.wrap(user_ids)
+    add_users_from_scope(topic, User.where(id: ids), ids.length)
+  end
+
+  def add_users_from_scope(topic, scope, expected_count)
     len = 0
 
-    User
+    scope
       .includes(:user_option)
-      .where("username_lower in (?)", names)
       .find_each do |user|
         check_can_send_permission!(topic, user)
         @added_users << user
@@ -253,7 +297,7 @@ class TopicCreator
         len += 1
       end
 
-    rollback_with!(topic, :target_user_not_found) unless len == names.length
+    rollback_with!(topic, :target_user_not_found) unless len == expected_count
   end
 
   def add_emails(topic, emails)

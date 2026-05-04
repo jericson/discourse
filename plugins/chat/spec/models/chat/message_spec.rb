@@ -4,11 +4,167 @@ describe Chat::Message do
   fab!(:message) { Fabricate(:chat_message, message: "hey friend, what's up?!") }
 
   it { is_expected.to have_many(:chat_mentions).dependent(:destroy) }
+  it { is_expected.to have_one(:message_search_data).dependent(:destroy) }
+
+  it "supports custom fields" do
+    message.custom_fields["test"] = "test"
+    message.save_custom_fields
+    loaded_message = Chat::Message.find(message.id)
+    expect(loaded_message.custom_fields["test"]).to eq("test")
+    expect(Chat::MessageCustomField.first.message.id).to eq(message.id)
+  end
+
+  describe "normalization" do
+    context "when normalizing blocks" do
+      it "adds a schema version to the blocks" do
+        message.update!(
+          blocks: [
+            {
+              type: "actions",
+              elements: [{ text: { text: "Foo", type: "plain_text" }, type: "button" }],
+            },
+          ],
+        )
+
+        expect(message.blocks[0]["schema_version"]).to eq(1)
+      end
+
+      it "adds a schema version to the elements" do
+        message.update!(
+          blocks: [
+            {
+              type: "actions",
+              elements: [{ text: { text: "Foo", type: "plain_text" }, type: "button" }],
+            },
+          ],
+        )
+
+        expect(message.blocks[0]["elements"][0]["schema_version"]).to eq(1)
+      end
+
+      it "adds a block_id if not present" do
+        message.update!(
+          blocks: [
+            {
+              type: "actions",
+              elements: [{ text: { text: "Foo", type: "plain_text" }, type: "button" }],
+            },
+          ],
+        )
+
+        expect(message.blocks[0]["block_id"]).to be_present
+      end
+
+      it "adds an action_id if not present" do
+        message.update!(
+          blocks: [
+            {
+              type: "actions",
+              elements: [{ text: { text: "Foo", type: "plain_text" }, type: "button" }],
+            },
+          ],
+        )
+
+        expect(message.blocks[0]["elements"][0]["action_id"]).to be_present
+      end
+    end
+  end
 
   describe "validations" do
     subject(:message) { described_class.new(message: "") }
 
+    let(:blocks) { nil }
+
     it { is_expected.to validate_length_of(:cooked).is_at_most(20_000) }
+
+    context "when blocks format is invalid" do
+      let(:blocks) { [{ type: "actions", elements: [{ type: "buttoxn" }] }] }
+
+      it do
+        is_expected.to_not allow_value(blocks).for(:blocks).with_message(
+          [
+            "value at `/0/elements/0/type` is not one of: [\"button\"]",
+            "object at `/0/elements/0` is missing required properties: text",
+            "value at `/0/type` is not one of: [\"informative\"]",
+            "value at `/0/elements/0/type` is not one of: [\"category\"]",
+            "object at `/0/elements/0` is missing required properties: title, color",
+          ],
+        )
+      end
+    end
+
+    context "when action_id is duplicated" do
+      let(:blocks) do
+        [
+          {
+            type: "actions",
+            elements: [
+              { type: "button", text: { text: "Foo", type: "plain_text" }, action_id: "foo" },
+              { type: "button", text: { text: "Foo", type: "plain_text" }, action_id: "foo" },
+            ],
+          },
+        ]
+      end
+
+      it do
+        is_expected.to_not allow_value(blocks).for(:blocks).with_message(
+          "have duplicated action_id: foo",
+        )
+      end
+    end
+
+    context "when block_id is duplicated" do
+      let(:blocks) do
+        [
+          {
+            type: "actions",
+            block_id: "foo",
+            elements: [{ type: "button", text: { text: "Foo", type: "plain_text" } }],
+          },
+          {
+            type: "actions",
+            block_id: "foo",
+            elements: [{ type: "button", text: { text: "Foo", type: "plain_text" } }],
+          },
+        ]
+      end
+
+      it do
+        is_expected.to_not allow_value(blocks).for(:blocks).with_message(
+          "have duplicated block_id: foo",
+        )
+      end
+    end
+
+    context "with watched words" do
+      fab!(:watched_word) do
+        Fabricate(:watched_word, word: "badword", action: WatchedWord.actions[:block])
+      end
+
+      let(:text) { "this message contains badword and should be blocked" }
+
+      it "validates watched words for regular users" do
+        regular_user = Fabricate(:user)
+        message =
+          Chat::Message.new(
+            chat_channel: Fabricate(:chat_channel),
+            user: regular_user,
+            message: text,
+          )
+
+        expect(message).not_to be_valid
+      end
+
+      it "skips watched words validation for bot users" do
+        bot_user = Fabricate(:user, id: -999)
+        message =
+          Chat::Message.new(chat_channel: Fabricate(:chat_channel), user: bot_user, message: text)
+
+        message.validate_message
+
+        expect(message).to be_valid
+      end
+    end
   end
 
   describe ".in_thread?" do
@@ -46,6 +202,34 @@ describe Chat::Message do
   end
 
   describe ".cook" do
+    context "with enable_emoji_shortcuts site setting" do
+      context "when enabled" do
+        before { SiteSetting.enable_emoji_shortcuts = true }
+
+        it "converts emoji shortcuts to emoji" do
+          cooked = described_class.cook <<~MD
+            emoji shortcut :)
+          MD
+
+          expected =
+            "<p>emoji shortcut <img src=\"/images/emoji/twitter/slight_smile.png?v=#{Emoji::EMOJI_VERSION}\" title=\":slight_smile:\" class=\"emoji\" alt=\":slight_smile:\" loading=\"lazy\" width=\"20\" height=\"20\"></p>"
+          expect(cooked).to match(expected)
+        end
+      end
+
+      context "when disabled" do
+        before { SiteSetting.enable_emoji_shortcuts = false }
+
+        it "does not convert emoji shortcuts" do
+          cooked = described_class.cook <<~MD
+            emoji shortcut :)
+          MD
+
+          expect(cooked).to match("<p>emoji shortcut :)</p>")
+        end
+      end
+    end
+
     it "does not support HTML tags" do
       cooked = described_class.cook("<h1>test</h1>")
 
@@ -61,16 +245,74 @@ describe Chat::Message do
       )
     end
 
-    it "does not support headings" do
-      cooked = described_class.cook("## heading 2")
+    it "supports kbd" do
+      cooked = described_class.cook <<~MD
+      <kbd>Esc</kbd> is pressed
+      MD
 
-      expect(cooked).to eq("<p>## heading 2</p>")
+      expect(cooked).to match_html <<~HTML
+      <p><kbd>Esc</kbd> is pressed</p>
+      HTML
+    end
+
+    context "when message is made by a bot user" do
+      it "supports headings" do
+        cooked = described_class.cook(<<~MD, user_id: -1)
+        # h1
+        ## h2
+        ### h3
+        #### h4
+        ##### h5
+        ###### h6
+        MD
+
+        expect(cooked).to match_html <<~HTML
+        <h1><a name="h1-1" class="anchor" href="#h1-1" aria-label="Heading link"></a>h1</h1>
+        <h2><a name="h2-2" class="anchor" href="#h2-2" aria-label="Heading link"></a>h2</h2>
+        <h3><a name="h3-3" class="anchor" href="#h3-3" aria-label="Heading link"></a>h3</h3>
+        <h4><a name="h4-4" class="anchor" href="#h4-4" aria-label="Heading link"></a>h4</h4>
+        <h5><a name="h5-5" class="anchor" href="#h5-5" aria-label="Heading link"></a>h5</h5>
+        <h6><a name="h6-6" class="anchor" href="#h6-6" aria-label="Heading link"></a>h6</h6>
+        HTML
+      end
+
+      it "cooks the grid bbcode" do
+        cooked = described_class.cook("[grid]\ntest\n[/grid]", user_id: -1)
+
+        expect(cooked).to match_html <<~HTML
+        <div class="d-image-grid">
+        <p>test</p>
+        </div>
+        HTML
+      end
+    end
+
+    it "doesn't support headings" do
+      cooked = described_class.cook("# test")
+
+      expect(cooked).to match_html <<~HTML
+      <p># test</p>
+      HTML
+    end
+
+    it "doesn't support grid" do
+      cooked = described_class.cook("[grid]\ntest\n[/grid]")
+
+      expect(cooked).to match_html <<~HTML
+      <p>[grid]<br>test<br>[/grid]</p>
+      HTML
     end
 
     it "supports horizontal replacement" do
       cooked = described_class.cook("---")
 
       expect(cooked).to eq("<p>—</p>")
+    end
+
+    it "supports escape sequence" do
+      cooked = described_class.cook('\*test\*')
+
+      expect(cooked).to eq("<p>*test*</p>")
     end
 
     it "supports backticks rule" do
@@ -120,7 +362,7 @@ describe Chat::Message do
     it "supports quote bbcode" do
       topic = Fabricate(:topic, title: "Some quotable topic")
       post = Fabricate(:post, topic: topic)
-      SiteSetting.external_system_avatars_enabled = false
+      SiteSetting.external_system_avatars_url = ""
       avatar_src =
         "//test.localhost#{User.system_avatar_template(post.user.username).gsub("{size}", "48")}"
 
@@ -134,7 +376,7 @@ describe Chat::Message do
       <aside class="quote no-group" data-username="#{post.user.username}" data-post="#{post.post_number}" data-topic="#{topic.id}">
       <div class="title">
       <div class="quote-controls"></div>
-      <img loading="lazy" alt="" width="24" height="24" src="#{avatar_src}" class="avatar"><a href="http://test.localhost/t/some-quotable-topic/#{topic.id}/#{post.post_number}">#{topic.title}</a></div>
+      <img alt="" width="24" height="24" src="#{avatar_src}" class="avatar"><a href="http://test.localhost/t/some-quotable-topic/#{topic.id}/#{post.post_number}">#{topic.title}</a></div>
       <blockquote>
       <p>Mark me…this will go down in history.</p>
       </blockquote>
@@ -142,7 +384,7 @@ describe Chat::Message do
       COOKED
     end
 
-    it "supports chat quote bbcode" do
+    it "supports chat transcripts" do
       chat_channel = Fabricate(:category_channel, name: "testchannel")
       user = Fabricate(:user, username: "chatbbcodeuser")
       user2 = Fabricate(:user, username: "otherbbcodeuser")
@@ -175,12 +417,12 @@ describe Chat::Message do
         )
 
       expect(cooked).to eq(<<~COOKED.chomp)
-        <div class="chat-transcript chat-transcript-chained" data-message-id="#{msg1.id}" data-username="chatbbcodeuser" data-datetime="#{msg1.created_at.iso8601}" data-channel-name="testchannel" data-channel-id="#{chat_channel.id}">
+        <div class="chat-transcript chat-transcript-chained" data-message-id="#{msg1.id}" data-username="chatbbcodeuser" data-datetime="#{msg1.created_at.iso8601}" data-chained="true" data-channel-name="testchannel" data-channel-id="#{chat_channel.id}" data-multiquote="true">
         <div class="chat-transcript-meta">
         Originally sent in <a href="/chat/c/-/#{chat_channel.id}">testchannel</a></div>
         <div class="chat-transcript-user">
         <div class="chat-transcript-user-avatar">
-        <img loading="lazy" alt="" width="24" height="24" src="#{avatar_src}" class="avatar"></div>
+        <img alt="" width="24" height="24" src="#{avatar_src}" class="avatar"></div>
         <div class="chat-transcript-username">
         chatbbcodeuser</div>
         <div class="chat-transcript-datetime">
@@ -189,10 +431,10 @@ describe Chat::Message do
         <div class="chat-transcript-messages">
         <p>this is the first message</p></div>
         </div>
-        <div class="chat-transcript chat-transcript-chained" data-message-id="#{msg2.id}" data-username="otherbbcodeuser" data-datetime="#{msg2.created_at.iso8601}">
+        <div class="chat-transcript chat-transcript-chained" data-message-id="#{msg2.id}" data-username="otherbbcodeuser" data-datetime="#{msg2.created_at.iso8601}" data-chained="true">
         <div class="chat-transcript-user">
         <div class="chat-transcript-user-avatar">
-        <img loading="lazy" alt="" width="24" height="24" src="#{avatar_src2}" class="avatar"></div>
+        <img alt="" width="24" height="24" src="#{avatar_src2}" class="avatar"></div>
         <div class="chat-transcript-username">
         otherbbcodeuser</div>
         <div class="chat-transcript-datetime">
@@ -265,7 +507,7 @@ describe Chat::Message do
       cooked = described_class.cook(":grin:")
 
       expect(cooked).to eq(
-        "<p><img src=\"/images/emoji/twitter/grin.png?v=12\" title=\":grin:\" class=\"emoji only-emoji\" alt=\":grin:\" loading=\"lazy\" width=\"20\" height=\"20\"></p>",
+        "<p><img src=\"/images/emoji/twitter/grin.png?v=#{Emoji::EMOJI_VERSION}\" title=\":grin:\" class=\"emoji only-emoji\" alt=\":grin:\" loading=\"lazy\" width=\"20\" height=\"20\"></p>",
       )
     end
 
@@ -363,14 +605,14 @@ describe Chat::Message do
     it "supports inline emoji" do
       cooked = described_class.cook(":D")
       expect(cooked).to eq(<<~HTML.chomp)
-      <p><img src="/images/emoji/twitter/smiley.png?v=12" title=":smiley:" class="emoji only-emoji" alt=":smiley:" loading=\"lazy\" width=\"20\" height=\"20\"></p>
+      <p><img src="/images/emoji/twitter/smiley.png?v=#{Emoji::EMOJI_VERSION}" title=":smiley:" class="emoji only-emoji" alt=":smiley:" loading=\"lazy\" width=\"20\" height=\"20\"></p>
       HTML
     end
 
     it "supports emoji shortcuts" do
       cooked = described_class.cook("this is a replace test :P :|")
       expect(cooked).to eq(<<~HTML.chomp)
-        <p>this is a replace test <img src="/images/emoji/twitter/stuck_out_tongue.png?v=12" title=":stuck_out_tongue:" class="emoji" alt=":stuck_out_tongue:" loading=\"lazy\" width=\"20\" height=\"20\"> <img src="/images/emoji/twitter/expressionless.png?v=12" title=":expressionless:" class="emoji" alt=":expressionless:" loading=\"lazy\" width=\"20\" height=\"20\"></p>
+        <p>this is a replace test <img src="/images/emoji/twitter/stuck_out_tongue.png?v=#{Emoji::EMOJI_VERSION}" title=":stuck_out_tongue:" class="emoji" alt=":stuck_out_tongue:" loading=\"lazy\" width=\"20\" height=\"20\"> <img src="/images/emoji/twitter/expressionless.png?v=#{Emoji::EMOJI_VERSION}" title=":expressionless:" class="emoji" alt=":expressionless:" loading=\"lazy\" width=\"20\" height=\"20\"></p>
       HTML
     end
 
@@ -392,7 +634,9 @@ describe Chat::Message do
         user = Fabricate(:unicode_user)
         cooked = described_class.cook("<h1>@#{user.username}</h1>")
 
-        expect(cooked).to eq("<p>&lt;h1&gt;@#{user.username}&lt;/h1&gt;</p>")
+        expect(cooked).to eq(
+          "<p>&lt;h1&gt;<a class=\"mention\" href=\"/u/#{user.encoded_username(lower: true)}\">@#{user.username}</a>&lt;/h1&gt;</p>",
+        )
       end
     end
   end
@@ -417,7 +661,7 @@ describe Chat::Message do
       expect(message.to_markdown).to eq(<<~MSG.chomp)
       hey friend, what's up?!
 
-      ![test_image.jpg|400x300](#{image.short_url})
+      ![test\\_image.jpg|400x300](#{image.short_url})
       ![meme.jpg|10x10](#{image2.short_url})
       MSG
     end
@@ -436,18 +680,15 @@ describe Chat::Message do
   end
 
   describe "blocking duplicate messages" do
-    fab!(:channel) { Fabricate(:chat_channel, user_count: 10) }
-    fab!(:user1) { Fabricate(:user) }
-    fab!(:user2) { Fabricate(:user) }
+    let(:message) { "this is duplicate" }
+    fab!(:chat_channel)
+    fab!(:user)
 
-    before { SiteSetting.chat_duplicate_message_sensitivity = 1 }
-
-    it "blocks duplicate messages for the message, channel user, and message age requirements" do
-      Fabricate(:chat_message, message: "this is duplicate", chat_channel: channel, user: user1)
-      message =
-        described_class.new(message: "this is duplicate", chat_channel: channel, user: user2)
-      message.valid?
-      expect(message.errors.full_messages).to include(I18n.t("chat.errors.duplicate_message"))
+    it "blocks duplicate messages" do
+      Fabricate(:chat_message, message:, chat_channel:, user:)
+      msg = described_class.new(message:, chat_channel:, user:)
+      msg.valid?
+      expect(msg.errors.full_messages).to include(I18n.t("chat.errors.duplicate_message"))
     end
   end
 
@@ -509,11 +750,25 @@ describe Chat::Message do
     it "destroys upload_references" do
       message_1 = Fabricate(:chat_message)
       upload_reference_1 = Fabricate(:upload_reference, target: message_1)
-      upload_1 = Fabricate(:upload)
+      _upload_1 = Fabricate(:upload)
 
       message_1.destroy!
 
       expect { upload_reference_1.reload }.to raise_error(ActiveRecord::RecordNotFound)
+    end
+
+    it "destroys message_search_data" do
+      message_1 = Fabricate(:chat_message)
+      search_data_1 =
+        Chat::MessageSearchData.create!(
+          chat_message_id: message_1.id,
+          search_data: "test search data",
+          raw_data: "test",
+        )
+
+      message_1.destroy!
+
+      expect { search_data_1.reload }.to raise_error(ActiveRecord::RecordNotFound)
     end
 
     describe "bookmarks" do
@@ -567,10 +822,10 @@ describe Chat::Message do
 
   describe "#upsert_mentions" do
     context "with direct mentions" do
-      fab!(:user1) { Fabricate(:user) }
-      fab!(:user2) { Fabricate(:user) }
-      fab!(:user3) { Fabricate(:user) }
-      fab!(:user4) { Fabricate(:user) }
+      fab!(:user1, :user)
+      fab!(:user2, :user)
+      fab!(:user3, :user)
+      fab!(:user4, :user)
       fab!(:message) do
         Fabricate(:chat_message, message: "Hey @#{user1.username} and @#{user2.username}")
       end
@@ -606,6 +861,22 @@ describe Chat::Message do
 
         expect(message.user_mentions.pluck(:target_id)).to match_array(already_mentioned)
         expect(message.user_mentions.pluck(:id)).to include(*existing_mention_ids) # the mentions weren't recreated
+      end
+
+      it "creates thread memberships for mentioned users when replying to a thread" do
+        thread = Fabricate(:chat_thread)
+        thread_message =
+          Fabricate(
+            :chat_message,
+            chat_channel: thread.channel,
+            thread: thread,
+            message: "cc @#{user3.username} and @#{user4.username}",
+          )
+
+        thread_message.cook
+        thread_message.upsert_mentions
+
+        expect(thread.user_chat_thread_memberships.pluck(:user_id)).to include(user3.id, user4.id)
       end
     end
 

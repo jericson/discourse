@@ -10,14 +10,14 @@ _The pricing information is included as a courtesy, and may be out of date. Disc
 
 Enter these values when prompted by `./discourse-setup` per the [install guide](https://github.com/discourse/discourse/blob/main/docs/INSTALL-cloud.md#edit-discourse-configuration). To change the current email service, run `./discourse-setup` as well (this will bring the forum offline for a few minutes while it gets rebuilt).
 
-#### [Brevo, previously SendInBlue, GDPR][sb] &mdash; 9,000 email per month free
+#### [Brevo, previously SendInBlue, GDPR][sb] &mdash; 300 email per day free
 
     SMTP server address? smtp-relay.brevo.com
-    SMTP user name?      [SMTP credentials for your domain under [SMTP-Key tab](https://app.brevo.com/settings/keys/smtp)]
-    SMTP password?       [SMTP credentials for your domain under [SMTP-Key tab](https://app.brevo.com/settings/keys/smtp)]
+    SMTP user name?      [SMTP credentials in [SMTP & API page](https://app.brevo.com/settings/keys/smtp)]
+    SMTP password?       [SMTP credentials in [SMTP & API page](https://app.brevo.com/settings/keys/smtp)]
     Port:                587
     
-#### [Mailgun][gun] &mdash; 5k emails/month on a 3 month trial
+#### [Mailgun][gun] &mdash; 50k emails/month on a 30 day trial OR 10k emails/month with no trial
 
     SMTP server address? smtp.mailgun.org
     SMTP user name?      [SMTP credentials for your domain under domains tab]

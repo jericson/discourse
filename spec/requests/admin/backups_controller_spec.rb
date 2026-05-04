@@ -22,8 +22,8 @@ RSpec.describe Admin::BackupsController do
   end
 
   def map_preloaded
-    controller
-      .instance_variable_get("@preloaded")
+    JSON
+      .parse(Nokogiri.HTML5(response.body).at_css("[data-preloaded]")["data-preloaded"])
       .map { |key, value| [key, JSON.parse(value)] }
       .to_h
   end
@@ -41,10 +41,10 @@ RSpec.describe Admin::BackupsController do
     context "when logged in as an admin" do
       before { sign_in(admin) }
 
-      it "raises an error when backups are disabled" do
+      it "works even when backups are disabled" do
         SiteSetting.enable_backups = false
         get "/admin/backups.json"
-        expect(response.status).to eq(403)
+        expect(response.status).to eq(200)
       end
 
       context "with html format" do
@@ -53,9 +53,11 @@ RSpec.describe Admin::BackupsController do
           expect(response.status).to eq(200)
 
           preloaded = map_preloaded
+
           expect(preloaded["operations_status"].symbolize_keys).to eq(
             BackupRestore.operations_status,
           )
+
           expect(preloaded["logs"].size).to eq(BackupRestore.logs.size)
         end
       end
@@ -153,10 +155,18 @@ RSpec.describe Admin::BackupsController do
         expect(response.status).to eq(200)
       end
 
+      context "when readonly mode is enabled" do
+        before { Discourse.enable_readonly_mode }
+
+        it "starts a backup" do
+          BackupRestore.expects(:backup!)
+          post "/admin/backups.json", params: { with_uploads: false, client_id: "foo" }
+          expect(response.status).to eq(200)
+        end
+      end
+
       context "with rate limiting enabled" do
         before { RateLimiter.enable }
-
-        use_redis_snapshotting
 
         after { RateLimiter.disable }
 
@@ -284,6 +294,18 @@ RSpec.describe Admin::BackupsController do
         delete "/admin/backups/#{backup_filename}.json"
         expect(response.status).to eq(404)
       end
+
+      context "when readonly mode is enabled" do
+        before { Discourse.enable_readonly_mode }
+
+        it "removes the backup if found" do
+          create_backup_files(backup_filename)
+
+          expect { delete "/admin/backups/#{backup_filename}.json" }.to change {
+            UserHistory.where(action: UserHistory.actions[:backup_destroy]).count
+          }.by(1)
+        end
+      end
     end
 
     shared_examples "backup deletion not allowed" do
@@ -366,6 +388,16 @@ RSpec.describe Admin::BackupsController do
         post "/admin/backups/#{backup_filename}/restore.json", params: { client_id: "foo" }
 
         expect(response.status).to eq(200)
+      end
+
+      context "when readonly mode is enabled" do
+        before { Discourse.enable_readonly_mode }
+
+        it "starts a restore" do
+          BackupRestore.expects(:restore!)
+          post "/admin/backups/#{backup_filename}/restore.json", params: { client_id: "foo" }
+          expect(response.status).to eq(200)
+        end
       end
     end
 
@@ -526,6 +558,29 @@ RSpec.describe Admin::BackupsController do
 
           expect(response.status).to eq(200)
           expect(response.body).to eq("")
+        end
+
+        context "when readonly mode is enabled" do
+          before { Discourse.enable_readonly_mode }
+
+          it "uploads the file successfully" do
+            described_class.any_instance.expects(:has_enough_space_on_disk?).returns(true)
+
+            post "/admin/backups/upload.json",
+                 params: {
+                   resumableFilename: "foo-1234.tar.gz",
+                   resumableTotalSize: 1,
+                   resumableIdentifier: "test",
+                   resumableChunkNumber: "1",
+                   resumableChunkSize: "1",
+                   resumableCurrentChunkSize: "1",
+                   file: fixture_file_upload(Tempfile.new),
+                 }
+
+            expect_job_enqueued(job: :backup_chunks_merger)
+
+            expect(response.status).to eq(200)
+          end
         end
       end
 
@@ -748,6 +803,16 @@ RSpec.describe Admin::BackupsController do
         get "/admin/backups/rollback.json"
         expect(response.status).to eq(404)
       end
+
+      context "when readonly mode is enabled" do
+        before { Discourse.enable_readonly_mode }
+
+        it "should rollback the restore" do
+          BackupRestore.expects(:rollback!)
+          post "/admin/backups/rollback.json"
+          expect(response.status).to eq(200)
+        end
+      end
     end
 
     shared_examples "backup rollback not allowed" do
@@ -787,6 +852,18 @@ RSpec.describe Admin::BackupsController do
       it "should not allow cancel via a GET request" do
         get "/admin/backups/cancel.json"
         expect(response.status).to eq(404)
+      end
+
+      context "when readonly mode is enabled" do
+        before { Discourse.enable_readonly_mode }
+
+        it "should cancel an backup" do
+          BackupRestore.expects(:cancel!)
+
+          delete "/admin/backups/cancel.json"
+
+          expect(response.status).to eq(200)
+        end
       end
     end
 
@@ -833,6 +910,28 @@ RSpec.describe Admin::BackupsController do
         )
 
         expect(response.status).to eq(200)
+      end
+
+      it "works even when backups are disabled" do
+        SiteSetting.enable_backups = false
+        create_backup_files(backup_filename)
+
+        expect { put "/admin/backups/#{backup_filename}.json" }.to change {
+          Jobs::DownloadBackupEmail.jobs.size
+        }.by(1)
+        expect(response.status).to eq(200)
+      end
+
+      context "when readonly mode is enabled" do
+        before { Discourse.enable_readonly_mode }
+
+        it "enqueues email job" do
+          create_backup_files(backup_filename)
+
+          expect { put "/admin/backups/#{backup_filename}.json" }.to change {
+            Jobs::DownloadBackupEmail.jobs.size
+          }.by(1)
+        end
       end
 
       it "returns 404 when the backup does not exist" do
@@ -882,15 +981,13 @@ RSpec.describe Admin::BackupsController do
       SiteSetting.enable_direct_s3_uploads = true
       SiteSetting.s3_backup_bucket = "s3-backup-bucket"
       SiteSetting.backup_location = BackupLocationSiteSetting::S3
-      stub_request(:head, "https://s3-backup-bucket.s3.us-west-1.amazonaws.com/").to_return(
-        status: 200,
-        body: "",
-        headers: {
-        },
-      )
       stub_request(
         :head,
-        "https://s3-backup-bucket.s3.us-west-1.amazonaws.com/default/test.tar.gz",
+        "https://s3-backup-bucket.s3.dualstack.us-west-1.amazonaws.com/",
+      ).to_return(status: 200, body: "", headers: {})
+      stub_request(
+        :head,
+        "https://s3-backup-bucket.s3.dualstack.us-west-1.amazonaws.com/default/test.tar.gz",
       ).to_return(backup_file_exists_response)
     end
 
@@ -938,7 +1035,7 @@ RSpec.describe Admin::BackupsController do
         XML
         stub_request(
           :post,
-          "https://s3-backup-bucket.s3.us-west-1.amazonaws.com/temp/default/#{test_bucket_prefix}/28fccf8259bbe75b873a2bd2564b778c/2u98j832nx93272x947823.gz?uploads",
+          "https://s3-backup-bucket.s3.dualstack.us-west-1.amazonaws.com/temp/default/#{test_bucket_prefix}/28fccf8259bbe75b873a2bd2564b778c/2u98j832nx93272x947823.gz?uploads",
         ).to_return(status: 200, body: create_multipart_result)
       end
 
@@ -963,6 +1060,23 @@ RSpec.describe Admin::BackupsController do
             multipart: true,
           )
         expect(external_upload_stub.exists?).to eq(true)
+      end
+
+      context "when readonly mode is enabled" do
+        before { Discourse.enable_readonly_mode }
+
+        it "creates the multipart upload" do
+          stub_create_multipart_backup_request
+
+          post "/admin/backups/create-multipart.json",
+               params: {
+                 file_name: "test.tar.gz",
+                 upload_type: upload_type,
+                 file_size: 4098,
+               }
+
+          expect(response.status).to eq(200)
+        end
       end
 
       context "when backup of same filename already exists" do

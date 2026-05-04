@@ -102,7 +102,7 @@ class PostAction < ActiveRecord::Base
     message_key << "_and_deleted" if delete_post
 
     I18n.with_locale(SiteSetting.default_locale) do
-      related_post.topic.add_moderator_post(moderator, I18n.t(message_key))
+      related_post.topic.add_moderator_post(moderator, I18n.t(message_key), bump: true)
     end
 
     # archive message for moderators
@@ -144,17 +144,21 @@ class PostAction < ActiveRecord::Base
     save
   end
 
+  def post_action_type_view
+    @post_action_type_view ||= PostActionTypeView.new
+  end
+
   def is_like?
-    post_action_type_id == PostActionType.types[:like]
+    post_action_type_id == post_action_type_view.types[:like]
   end
 
   def is_flag?
-    !!PostActionType.notify_flag_types[post_action_type_id]
+    !!post_action_type_view.notify_flag_types[post_action_type_id]
   end
 
   def is_private_message?
-    post_action_type_id == PostActionType.types[:notify_user] ||
-      post_action_type_id == PostActionType.types[:notify_moderators]
+    post_action_type_id == post_action_type_view.types[:notify_user] ||
+      post_action_type_id == post_action_type_view.types[:notify_moderators]
   end
 
   # A custom rate limiter for this model
@@ -182,7 +186,8 @@ class PostAction < ActiveRecord::Base
   end
 
   def ensure_unique_actions
-    post_action_type_ids = is_flag? ? PostActionType.notify_flag_types.values : post_action_type_id
+    post_action_type_ids =
+      is_flag? ? post_action_type_view.notify_flag_types.values : post_action_type_id
 
     acted =
       PostAction
@@ -198,7 +203,7 @@ class PostAction < ActiveRecord::Base
   end
 
   def post_action_type_key
-    PostActionType.types[post_action_type_id]
+    post_action_type_view.types[post_action_type_id]
   end
 
   def update_counters
@@ -269,6 +274,11 @@ end
 #
 #  idx_unique_actions                                          (user_id,post_action_type_id,post_id,targets_topic) UNIQUE WHERE ((deleted_at IS NULL) AND (disagreed_at IS NULL) AND (deferred_at IS NULL))
 #  idx_unique_flags                                            (user_id,post_id,targets_topic) UNIQUE WHERE ((deleted_at IS NULL) AND (disagreed_at IS NULL) AND (deferred_at IS NULL) AND (post_action_type_id = ANY (ARRAY[3, 4, 7, 8])))
+#  index_post_actions_on_agreed_by_id                          (agreed_by_id) WHERE (agreed_by_id IS NOT NULL)
+#  index_post_actions_on_deferred_by_id                        (deferred_by_id) WHERE (deferred_by_id IS NOT NULL)
+#  index_post_actions_on_deleted_by_id                         (deleted_by_id) WHERE (deleted_by_id IS NOT NULL)
+#  index_post_actions_on_disagreed_by_id                       (disagreed_by_id) WHERE (disagreed_by_id IS NOT NULL)
+#  index_post_actions_on_post_action_type_id                   (post_action_type_id)
 #  index_post_actions_on_post_action_type_id_and_disagreed_at  (post_action_type_id,disagreed_at) WHERE (disagreed_at IS NULL)
 #  index_post_actions_on_post_id                               (post_id)
 #  index_post_actions_on_user_id                               (user_id)

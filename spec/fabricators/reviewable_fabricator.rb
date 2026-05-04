@@ -96,10 +96,11 @@ Fabricator(:reviewable_flagged_post) do
   reviewable_by_moderator true
   type "ReviewableFlaggedPost"
   created_by { Fabricate(:user) }
+  target_created_by { Fabricate(:user) }
   topic
   target_type "Post"
-  target { Fabricate(:post) }
-  reviewable_scores { |p| [Fabricate.build(:reviewable_score, reviewable_id: p[:id])] }
+  target { |attrs| Fabricate(:post, topic: attrs[:topic]) }
+  reviewable_scores { |attrs| [Fabricate.build(:reviewable_score, reviewable_id: attrs[:id])] }
 end
 
 Fabricator(:reviewable_user) do

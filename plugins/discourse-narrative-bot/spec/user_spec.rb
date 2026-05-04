@@ -16,6 +16,7 @@ RSpec.describe User do
     stub_image_size
     Jobs.run_immediately!
     SiteSetting.discourse_narrative_bot_enabled = true
+    SiteSetting.disable_discourse_narrative_bot_welcome_post = false
   end
 
   describe "when a user is created" do
@@ -111,20 +112,10 @@ RSpec.describe User do
         SiteSetting.default_other_skip_new_user_tips = true
         expect { user }.to_not change { Post.count }
       end
-
-      it "should delete the existing PM" do
-        user.user_option.skip_new_user_tips = true
-
-        expect { user.user_option.save! }.to change { Topic.count }.by(-1).and not_change {
-                UserHistory.count
-              }.and change { user.unread_high_priority_notifications }.by(-1).and change {
-                            user.notifications.count
-                          }.by(-1)
-      end
     end
 
     context "when user is anonymous?" do
-      before { SiteSetting.allow_anonymous_posting = true }
+      before { SiteSetting.allow_anonymous_mode = true }
 
       it "should initiate bot for real user only" do
         user = Fabricate(:user, trust_level: 1)

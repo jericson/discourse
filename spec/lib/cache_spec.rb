@@ -58,7 +58,7 @@ RSpec.describe Cache do
 
     expect(Discourse.redis.ttl(key)).to be_within(2.seconds).of(1.minute)
 
-    # we always expire withing a day
+    # we always expire within a day
     cache.fetch("bla") { "hi" }
 
     key = cache.normalize_key("bla")
@@ -119,6 +119,18 @@ RSpec.describe Cache do
       it "generates a new cache entry" do
         fetch_value
         expect(cache.read("my_key")).to eq("bob")
+      end
+    end
+
+    context "when there is a race condition due to key expiring between GET calls" do
+      before do
+        allow(Discourse.redis).to receive(:get).and_wrap_original do |original_method, *args|
+          original_method.call(*args).tap { Discourse.redis.del(*args) }
+        end
+      end
+
+      it "isn't prone to that race condition" do
+        expect(fetch_value).to eq("bob")
       end
     end
   end

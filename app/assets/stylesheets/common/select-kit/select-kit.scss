@@ -1,3 +1,5 @@
+@use "lib/viewport";
+
 .select-kit {
   @include unselectable;
   border: none;
@@ -15,7 +17,7 @@
     list-style-type: none;
     display: block;
 
-    &:before {
+    &::before {
       content: none !important;
       margin: 0;
     }
@@ -37,12 +39,12 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      border-radius: 0;
-      border: none;
-      border: 1px solid var(--primary-low);
+      border-radius: var(--d-border-radius);
+      border: 1px solid var(--content-border-color);
       box-shadow: var(--shadow-dropdown);
       background: var(--secondary);
       max-width: 600px;
+      overflow: hidden;
     }
 
     .select-kit-collection {
@@ -65,6 +67,17 @@
   }
 
   &.is-loading {
+    .select-kit-filter::after {
+      content: "";
+      position: absolute;
+      background: var(--tertiary);
+      width: 100%;
+      height: 2px;
+      left: 0;
+      bottom: 0;
+      animation: lineDrawToRight 0.5s ease-in;
+    }
+
     .select-kit-collection {
       overflow: hidden;
     }
@@ -82,6 +95,7 @@
     display: flex;
     align-items: stretch;
     height: 100%;
+
     &:not(.btn) {
       border-radius: var(--d-input-border-radius);
       padding-left: 0.5em;
@@ -101,7 +115,6 @@
     }
 
     .d-icon-spinner {
-      -webkit-animation: rotate-forever 1s infinite linear;
       animation: rotate-forever 1s infinite linear;
     }
 
@@ -112,8 +125,9 @@
       color: inherit;
       display: flex;
       outline: none;
+      min-width: 0;
 
-      &:focus .d-icon-times {
+      &:focus .d-icon-xmark {
         color: var(--danger);
       }
 
@@ -124,6 +138,8 @@
       .name {
         display: inline-flex;
         gap: 0.5em;
+        min-width: 0;
+
         > .d-icon {
           margin-left: 0.5em;
           margin-right: 0;
@@ -152,7 +168,7 @@
       margin-right: 5px;
     }
 
-    .caret-icon {
+    .angle-icon {
       margin-left: auto;
       margin-right: 0;
       padding-left: 5px;
@@ -178,17 +194,11 @@
     display: none;
     background: var(--secondary);
     box-sizing: border-box;
+    width: max-content;
 
     .selected-content {
       max-height: 300px;
       overflow-y: auto;
-    }
-
-    &[data-popper-reference-hidden] {
-      html:not(.ios-device) & {
-        visibility: hidden;
-        pointer-events: none;
-      }
     }
   }
 
@@ -201,6 +211,15 @@
     align-items: center;
     justify-content: flex-start;
     padding: 0.5em;
+
+    @include viewport.until(sm) {
+      padding-block: 0.75em;
+    }
+
+    &.disabled {
+      pointer-events: none;
+      opacity: 0.4;
+    }
 
     > * {
       pointer-events: none;
@@ -222,12 +241,10 @@
       background: var(--d-hover);
     }
 
-    &.is-selected {
-      background: var(--d-selected);
-    }
-
+    &.is-selected,
     &.is-selected.is-highlighted {
-      background: var(--d-hover);
+      background: var(--d-selected);
+      color: var(--d-selected-text-color);
     }
 
     .discourse-tag,
@@ -245,13 +262,16 @@
   .select-kit-collection {
     overflow-x: hidden;
     overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
     margin: 0;
     max-height: 250px;
     width: 100%;
 
     &:hover .select-kit-row.is-highlighted:hover {
       background: var(--d-hover);
+    }
+
+    &:hover .select-kit-row.is-selected.is-highlighted:hover {
+      background: var(--d-selected-hover);
     }
 
     .validation-message {
@@ -263,7 +283,7 @@
     }
 
     &::-webkit-scrollbar {
-      -webkit-appearance: none;
+      appearance: none;
       width: 10px;
     }
 
@@ -298,6 +318,10 @@
       width: 100%;
       box-sizing: border-box;
       min-height: 30px;
+
+      @include viewport.until(sm) {
+        font-size: var(--font-0);
+      }
     }
 
     &.is-hidden {
@@ -341,7 +365,6 @@
     font-size: var(--font-down-1);
     color: var(--primary-med-or-secondary-med);
     position: absolute;
-    clip: rect(1px, 1px, 1px, 1px);
     clip-path: inset(50%);
     padding: 0;
     border: 0;
@@ -355,21 +378,9 @@
     0% {
       width: 0;
     }
+
     100% {
       width: 100%;
-    }
-  }
-
-  &.is-loading {
-    .select-kit-filter::after {
-      content: "";
-      position: absolute;
-      background: var(--tertiary);
-      width: 100%;
-      height: 2px;
-      left: 0;
-      bottom: 0;
-      animation: lineDrawToRight 0.5s ease-in;
     }
   }
 }

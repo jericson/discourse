@@ -3,6 +3,7 @@
 class UserAvatarsController < ApplicationController
   skip_before_action :preload_json,
                      :redirect_to_login_if_required,
+                     :redirect_to_profile_if_required,
                      :check_xhr,
                      :verify_authenticity_token,
                      only: %i[show show_letter show_proxy_letter]
@@ -162,6 +163,9 @@ class UserAvatarsController < ApplicationController
   end
 
   PROXY_PATH = Rails.root + "tmp/avatar_proxy"
+  PROXY_CACHE_MAX_ENTRIES = 10_000
+  PROXY_CACHE_EVICT_COUNT = 1000
+
   def proxy_avatar(url, last_modified)
     url = (SiteSetting.force_https ? "https:" : "http:") + url if url[0..1] == "//"
 
@@ -183,12 +187,19 @@ class UserAvatarsController < ApplicationController
       return render_blank if tmp.nil?
 
       FileUtils.mv tmp.path, path
+      DiskCacheEviction.evict(
+        dir: PROXY_PATH,
+        max_entries: PROXY_CACHE_MAX_ENTRIES,
+        evict_count: PROXY_CACHE_EVICT_COUNT,
+      )
     end
 
     response.headers["Last-Modified"] = last_modified.httpdate
     response.headers["Content-Length"] = File.size(path).to_s
     immutable_for(1.year)
     send_file path, disposition: nil
+  rescue Errno::ENOENT, ActionController::MissingFile
+    render_blank
   end
 
   def redirect_s3_avatar(url)

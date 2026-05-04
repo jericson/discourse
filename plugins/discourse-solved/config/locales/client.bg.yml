@@ -1,0 +1,26 @@
+# WARNING: Never edit this file.
+# It will be overwritten when translations are pulled from Crowdin.
+#
+# To work with us on translations, join this project:
+# https://translate.discourse.org/
+
+bg:
+  js:
+    notifications:
+      alt:
+        solved:
+          accepted_notification: "прието"
+    solved:
+      accepted_answer: "Решение"
+      solution: "Решение"
+      accepted_answer_post_number: "публикация %{post_number} "
+      topic_status_filter:
+        all: "всички подкатегории"
+      move_post_cancel: "Отмени"
+      confirm_solved_removal_cancel: "Отмени"
+    discourse_automation:
+      triggerables:
+        first_accepted_solution:
+          fields:
+            maximum_trust_level:
+              label: Ниво на Доверие

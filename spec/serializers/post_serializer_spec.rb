@@ -224,32 +224,102 @@ RSpec.describe PostSerializer do
     fab!(:user) { Fabricate(:user, trust_level: 1) }
     fab!(:user_tl1) { Fabricate(:user, trust_level: 1) }
     fab!(:user_tl2) { Fabricate(:user, trust_level: 2) }
+    fab!(:post) { Fabricate(:post, user: user) }
 
-    let(:post) do
-      post = Fabricate(:post, user: user)
-      post.custom_fields[Post::NOTICE] = {
-        type: Post.notices[:returning_user],
-        last_posted_at: 1.day.ago,
-      }
-      post.save_custom_fields
-      post
+    def json_for_user(user, serializer_opts = {})
+      serializer = PostSerializer.new(post, scope: Guardian.new(user), root: false)
+
+      if serializer_opts[:notice_created_by_users]
+        serializer.notice_created_by_users = serializer_opts[:notice_created_by_users]
+      end
+
+      serializer.as_json(serializer_opts)
     end
 
-    def json_for_user(user)
-      PostSerializer.new(post, scope: Guardian.new(user), root: false).as_json
+    describe "returning_user notice" do
+      before do
+        post.custom_fields[Post::NOTICE] = {
+          type: Post.notices[:returning_user],
+          last_posted_at: 1.day.ago,
+        }
+        post.save_custom_fields
+      end
+
+      it "is visible for TL2+ users (except poster)" do
+        expect(json_for_user(nil)[:notice]).to eq(nil)
+        expect(json_for_user(user)[:notice]).to eq(nil)
+
+        SiteSetting.returning_user_notice_tl = 2
+        expect(json_for_user(user_tl1)[:notice]).to eq(nil)
+        expect(json_for_user(user_tl2)[:notice][:type]).to eq(Post.notices[:returning_user])
+
+        SiteSetting.returning_user_notice_tl = 1
+        expect(json_for_user(user_tl1)[:notice][:type]).to eq(Post.notices[:returning_user])
+        expect(json_for_user(user_tl2)[:notice][:type]).to eq(Post.notices[:returning_user])
+      end
     end
 
-    it "is visible for TL2+ users (except poster)" do
-      expect(json_for_user(nil)[:notice]).to eq(nil)
-      expect(json_for_user(user)[:notice]).to eq(nil)
+    describe "custom notice" do
+      fab!(:moderator)
 
-      SiteSetting.returning_user_notice_tl = 2
-      expect(json_for_user(user_tl1)[:notice]).to eq(nil)
-      expect(json_for_user(user_tl2)[:notice][:type]).to eq(Post.notices[:returning_user])
+      before do
+        post.custom_fields[Post::NOTICE] = {
+          type: Post.notices[:custom],
+          raw: "This is a notice",
+          cooked: "<p>This is a notice</p>",
+          created_by_user_id: moderator.id,
+        }
+        post.save_custom_fields
+      end
 
-      SiteSetting.returning_user_notice_tl = 1
-      expect(json_for_user(user_tl1)[:notice][:type]).to eq(Post.notices[:returning_user])
-      expect(json_for_user(user_tl2)[:notice][:type]).to eq(Post.notices[:returning_user])
+      it "displays for all trust levels" do
+        expect(json_for_user(user)[:notice]).to eq(
+          {
+            cooked: "<p>This is a notice</p>",
+            created_by_user_id: moderator.id,
+            raw: "This is a notice",
+            type: Post.notices[:custom],
+          }.with_indifferent_access,
+        )
+        expect(json_for_user(user_tl1)[:notice]).to eq(
+          {
+            cooked: "<p>This is a notice</p>",
+            created_by_user_id: moderator.id,
+            raw: "This is a notice",
+            type: Post.notices[:custom],
+          }.with_indifferent_access,
+        )
+        expect(json_for_user(user_tl2)[:notice]).to eq(
+          {
+            cooked: "<p>This is a notice</p>",
+            created_by_user_id: moderator.id,
+            raw: "This is a notice",
+            type: Post.notices[:custom],
+          }.with_indifferent_access,
+        )
+      end
+
+      it "only displays the created_by_user for staff" do
+        expect(
+          json_for_user(user, notice_created_by_users: [moderator])[:notice_created_by_user],
+        ).to eq(nil)
+        expect(
+          json_for_user(user_tl1, notice_created_by_users: [moderator])[:notice_created_by_user],
+        ).to eq(nil)
+        expect(
+          json_for_user(user_tl2, notice_created_by_users: [moderator])[:notice_created_by_user],
+        ).to eq(nil)
+        expect(
+          json_for_user(moderator, notice_created_by_users: [moderator])[:notice_created_by_user],
+        ).to eq(
+          {
+            id: moderator.id,
+            username: moderator.username,
+            name: moderator.name,
+            avatar_template: moderator.avatar_template,
+          },
+        )
+      end
     end
   end
 
@@ -284,11 +354,11 @@ RSpec.describe PostSerializer do
     fab!(:topic)
     fab!(:group_user)
     fab!(:post) { Fabricate(:post, topic: topic) }
-
-    before do
-      SiteSetting.enable_category_group_moderation = true
-      topic.category.update!(reviewable_by_group_id: group_user.group.id)
+    fab!(:category_moderation_group) do
+      Fabricate(:category_moderation_group, category: topic.category, group: group_user.group)
     end
+
+    before { SiteSetting.enable_category_group_moderation = true }
 
     it "does nothing for regular users" do
       expect(serialized_post_for_user(nil)[:group_moderator]).to eq(nil)
@@ -310,11 +380,11 @@ RSpec.describe PostSerializer do
     end
   end
 
-  context "with allow_anonymous_likes enabled" do
+  context "with allow_likes_in_anonymous_mode enabled" do
     fab!(:user)
     fab!(:topic) { Fabricate(:topic, user: user) }
     fab!(:post) { Fabricate(:post, topic: topic, user: topic.user) }
-    fab!(:anonymous_user) { Fabricate(:anonymous) }
+    fab!(:anonymous_user, :anonymous)
 
     let(:serializer) { PostSerializer.new(post, scope: Guardian.new(anonymous_user), root: false) }
     let(:post_action) do
@@ -332,8 +402,8 @@ RSpec.describe PostSerializer do
     end
 
     before do
-      SiteSetting.allow_anonymous_posting = true
-      SiteSetting.allow_anonymous_likes = true
+      SiteSetting.allow_anonymous_mode = true
+      SiteSetting.allow_likes_in_anonymous_mode = true
       SiteSetting.post_undo_action_window_mins = 10
       PostSerializer.any_instance.stubs(:post_actions).returns({ 2 => post_action })
     end
@@ -354,78 +424,452 @@ RSpec.describe PostSerializer do
       before { post_action.created_at = 20.minutes.ago }
 
       it "disallows anonymous users from unliking posts" do
-        # There are no other post actions available to anonymous users so the action_summary will be an empty array
-        expect(serializer.actions_summary.find { |a| a[:id] == PostActionType.types[:like] }).to eq(
-          nil,
-        )
+        like_actions_summary =
+          serializer.actions_summary.find { |a| a[:id] == PostActionType.types[:like] }
+
+        expect(like_actions_summary[:acted]).to eq(true)
+        expect(like_actions_summary[:can_act]).to be_nil
       end
+    end
+  end
+
+  context "when user has liked a post but like count is 0 and undo window passed" do
+    fab!(:user)
+    fab!(:poster, :user)
+    fab!(:topic) { Fabricate(:topic, user: poster) }
+    fab!(:post) { Fabricate(:post, topic:, user: poster, like_count: 0) }
+    fab!(:like_action) do
+      Fabricate(
+        :post_action,
+        user:,
+        post:,
+        post_action_type_id: PostActionType.types[:like],
+        created_at: 1.day.ago,
+      )
+    end
+
+    before { SiteSetting.post_undo_action_window_mins = 10 }
+
+    let(:serializer) do
+      PostSerializer.new(
+        post,
+        scope: Guardian.new(user),
+        root: false,
+        post_actions: {
+          PostActionType.types[:like] => like_action,
+        },
+      )
+    end
+
+    it "includes the like action in actions_summary with acted flag" do
+      like_actions_summary =
+        serializer.actions_summary.find { |a| a[:id] == PostActionType.types[:like] }
+
+      expect(like_actions_summary).to be_present
+      expect(like_actions_summary[:acted]).to eq(true)
+      expect(like_actions_summary[:can_act]).to be_nil
+      expect(like_actions_summary[:can_undo]).to be_nil
     end
   end
 
   context "with mentions" do
     fab!(:user_status)
     fab!(:user)
-    fab!(:user1) { Fabricate(:user, user_status: user_status) }
-    fab!(:post) { Fabricate(:post, user: user, raw: "Hey @#{user1.username}") }
+
+    let(:username) { "joffrey" }
+    let(:user1) { Fabricate(:user, user_status:, username:) }
+    let(:post) { Fabricate(:post, user: user, raw: "Hey @#{user1.username}") }
     let(:serializer) { described_class.new(post, scope: Guardian.new(user), root: false) }
 
-    it "returns mentioned users with user status when user status is enabled" do
-      SiteSetting.enable_user_status = true
+    context "when user status is enabled" do
+      before { SiteSetting.enable_user_status = true }
 
-      json = serializer.as_json
+      it "returns mentioned users with user status" do
+        json = serializer.as_json
+        expect(json[:mentioned_users]).to be_present
+        expect(json[:mentioned_users].length).to be(1)
+        expect(json[:mentioned_users][0]).to_not be_nil
+        expect(json[:mentioned_users][0][:id]).to eq(user1.id)
+        expect(json[:mentioned_users][0][:username]).to eq(user1.username)
+        expect(json[:mentioned_users][0][:name]).to eq(user1.name)
+        expect(json[:mentioned_users][0][:status][:description]).to eq(user_status.description)
+        expect(json[:mentioned_users][0][:status][:emoji]).to eq(user_status.emoji)
+      end
 
-      expect(json[:mentioned_users]).to be_present
-      expect(json[:mentioned_users].length).to be(1)
-      expect(json[:mentioned_users][0]).to_not be_nil
-      expect(json[:mentioned_users][0][:id]).to eq(user1.id)
-      expect(json[:mentioned_users][0][:username]).to eq(user1.username)
-      expect(json[:mentioned_users][0][:name]).to eq(user1.name)
-      expect(json[:mentioned_users][0][:status][:description]).to eq(user_status.description)
-      expect(json[:mentioned_users][0][:status][:emoji]).to eq(user_status.emoji)
+      context "when username has a capital letter" do
+        let(:username) { "JoJo" }
+
+        it "returns mentioned users with user status" do
+          expect(serializer.as_json[:mentioned_users][0][:username]).to eq(user1.username)
+        end
+      end
     end
 
-    it "doesn't return mentioned users when user status is disabled" do
-      SiteSetting.enable_user_status = false
-      json = serializer.as_json
-      expect(json[:mentioned_users]).to be_nil
+    context "when user status is disabled" do
+      before { SiteSetting.enable_user_status = false }
+
+      it "doesn't return mentioned users" do
+        expect(serializer.as_json[:mentioned_users]).to be_nil
+      end
     end
   end
 
   describe "#user_status" do
     fab!(:user_status)
-    fab!(:user) { Fabricate(:user, user_status: user_status) }
-    fab!(:post) { Fabricate(:post, user: user) }
-    let(:serializer) { described_class.new(post, scope: Guardian.new(user), root: false) }
+    fab!(:user) { Fabricate(:user, user_status:) }
+    fab!(:post) { Fabricate(:post, user:) }
 
-    it "adds user status when enabled" do
-      SiteSetting.enable_user_status = true
+    def serialize_user_status(scope: Guardian.new(user))
+      described_class.new(post, scope:, root: false).as_json[:user_status]
+    end
 
-      json = serializer.as_json
+    context "when user status is disabled" do
+      before { SiteSetting.enable_user_status = false }
 
-      expect(json[:user_status]).to_not be_nil do |status|
-        expect(status.description).to eq(user_status.description)
-        expect(status.emoji).to eq(user_status.emoji)
+      it "doesn't include status" do
+        expect(serialize_user_status).to be_nil
       end
     end
 
-    it "doesn't add user status when disabled" do
-      SiteSetting.enable_user_status = false
-      json = serializer.as_json
-      expect(json.keys).not_to include :user_status
-    end
+    context "when user status is enabled" do
+      before { SiteSetting.enable_user_status = true }
 
-    it "doesn't add status if user doesn't have it" do
-      SiteSetting.enable_user_status = true
+      it "includes status" do
+        expect(serialize_user_status).to be_present
+      end
 
-      user.clear_status!
-      user.reload
-      json = serializer.as_json
+      it "doesn't include status if user doesn't have it set" do
+        user.clear_status!
+        user.reload
+        expect(serialize_user_status).to be_nil
+      end
 
-      expect(json.keys).not_to include :user_status
+      it "respects guardian's can_see_user_status?" do
+        user.update!(silenced_till: 1.year.from_now)
+        scope = Guardian.new(Fabricate(:user))
+        expect(serialize_user_status(scope:)).to be_nil
+      end
     end
   end
 
-  def serialized_post(u)
+  describe "#badges_granted" do
+    fab!(:user)
+    fab!(:user2, :user)
+    fab!(:post) { Fabricate(:post, user: user) }
+    fab!(:post2) { Fabricate(:post, user: user) }
+
+    # Create twp badges that have all required flags set to true
+    fab!(:badge1) do
+      Badge.create!(
+        name: "SomeBadge",
+        badge_type_id: BadgeType::Bronze,
+        listable: true,
+        show_posts: true,
+        show_in_post_header: true,
+        multiple_grant: true,
+      )
+    end
+    fab!(:ub1) do
+      UserBadge.create!(
+        badge_id: badge1.id,
+        user: user,
+        granted_by: Discourse.system_user,
+        granted_at: Time.now,
+        post_id: post.id,
+      )
+    end
+
+    fab!(:badge2) do
+      Badge.create!(
+        name: "SomeOtherBadge",
+        badge_type_id: BadgeType::Bronze,
+        listable: true,
+        show_posts: true,
+        show_in_post_header: true,
+        multiple_grant: true,
+      )
+    end
+    fab!(:ub2) do
+      UserBadge.create!(
+        badge_id: badge2.id,
+        user: user,
+        granted_by: Discourse.system_user,
+        granted_at: Time.now,
+        post_id: post.id,
+      )
+    end
+
+    # Create a badge that has the show_posts flag set to false
+    fab!(:badge3) do
+      Badge.create!(
+        name: "YetAnotherBadge",
+        badge_type_id: BadgeType::Bronze,
+        listable: true,
+        show_posts: false,
+        show_in_post_header: true,
+      )
+    end
+    fab!(:ub3) do
+      UserBadge.create!(
+        badge_id: badge3.id,
+        user: user,
+        granted_by: Discourse.system_user,
+        granted_at: Time.now,
+        post_id: post.id,
+      )
+    end
+
+    # Re-use our first badge, but on a different post
+    fab!(:ub4) do
+      UserBadge.create!(
+        badge_id: badge1.id,
+        user: user,
+        granted_by: Discourse.system_user,
+        granted_at: Time.now,
+        post_id: post2.id,
+      )
+    end
+
+    # Now re-use our first badge, but on a different user
+    fab!(:ub5) do
+      UserBadge.create!(
+        badge_id: badge1.id,
+        user: user2,
+        granted_by: Discourse.system_user,
+        granted_at: Time.now,
+        post_id: post.id,
+      )
+    end
+
+    # Create a badge that has the listable flag set to false
+    fab!(:badge4) do
+      Badge.create!(
+        name: "WeirdBadge",
+        badge_type_id: BadgeType::Bronze,
+        listable: false,
+        show_posts: true,
+        show_in_post_header: true,
+      )
+    end
+    fab!(:ub6) do
+      UserBadge.create!(
+        badge_id: badge4.id,
+        user: user,
+        granted_by: Discourse.system_user,
+        granted_at: Time.now,
+        post_id: post.id,
+      )
+    end
+
+    # Create a badge that has the show_in_post_header flag set to false
+    fab!(:badge5) do
+      Badge.create!(
+        name: "StrangeBadge",
+        badge_type_id: BadgeType::Bronze,
+        listable: true,
+        show_posts: true,
+        show_in_post_header: false,
+      )
+    end
+    fab!(:ub7) do
+      UserBadge.create!(
+        badge_id: badge5.id,
+        user: user,
+        granted_by: Discourse.system_user,
+        granted_at: Time.now,
+        post_id: post.id,
+      )
+    end
+
+    let(:serializer) { described_class.new(post, scope: Guardian.new(user), root: false) }
+
+    it "doesn't include badges when `enable_badges` site setting is disabled" do
+      SiteSetting.enable_badges = false
+      expect(serializer.as_json[:badges_granted]).to eq([])
+    end
+
+    it "doesn't include badges when `show_badges_in_post_header` site setting is disabled" do
+      SiteSetting.enable_badges = true
+      SiteSetting.show_badges_in_post_header = false
+      expect(serializer.as_json[:badges_granted]).to eq([])
+    end
+
+    context "when `enable_badges` and `show_badges_in_post_header` site settings are enabled" do
+      before do
+        SiteSetting.enable_badges = true
+        SiteSetting.show_badges_in_post_header = true
+      end
+
+      it "includes badges that were granted for this user on this post" do
+        json = serializer.as_json
+
+        expect(json[:badges_granted].length).to eq(2)
+        expect(json[:badges_granted].map { |b| b[:badges][0][:id] }).to contain_exactly(
+          ub1.badge_id,
+          ub2.badge_id,
+        )
+
+        expect(json[:badges_granted].map { |b| b[:basic_user_badge][:id] }).to contain_exactly(
+          ub1.id,
+          ub2.id,
+        )
+      end
+
+      it "does not return a user badge that has the show_posts flag set to false" do
+        json = serializer.as_json
+
+        expect(json[:badges_granted].map { |b| b[:basic_user_badge][:id] }).not_to include(ub3.id)
+      end
+
+      it "does not return a user badge that was not granted for this post" do
+        json = serializer.as_json
+
+        expect(json[:badges_granted].map { |b| b[:basic_user_badge][:id] }).not_to include(ub4.id)
+      end
+
+      it "does not return a user badge that was granted for a different user" do
+        json = serializer.as_json
+
+        expect(json[:badges_granted].map { |b| b[:basic_user_badge][:id] }).not_to include(ub5.id)
+      end
+
+      it "does not return a user badge that has the listable flag set to false" do
+        json = serializer.as_json
+
+        expect(json[:badges_granted].map { |b| b[:basic_user_badge][:id] }).not_to include(ub6.id)
+      end
+
+      it "does not return a user badge that has the show_in_post_header flag set to false" do
+        json = serializer.as_json
+
+        expect(json[:badges_granted].map { |b| b[:basic_user_badge][:id] }).not_to include(ub7.id)
+      end
+    end
+  end
+
+  describe "#raw" do
+    fab!(:user)
+    let(:serializer) { serialized_post }
+    let(:json) { serializer.as_json }
+
+    it "returns the post's raw" do
+      expect(json[:raw]).to eq(post.raw)
+    end
+  end
+
+  describe "#locale" do
+    let(:serializer) { serialized_post }
+    let(:json) { serializer.as_json }
+
+    it "is included when content_localization_enabled is enabled" do
+      SiteSetting.content_localization_enabled = true
+      post.update!(locale: "ja")
+
+      expect(json[:locale]).to eq("ja")
+    end
+
+    it "is excluded when content_localization_enabled is disabled" do
+      SiteSetting.content_localization_enabled = false
+      post.update!(locale: "ja")
+
+      expect(json[:locale]).to eq(nil)
+    end
+  end
+
+  describe "#is_localized?" do
+    let(:serializer) { serialized_post }
+    let(:json) { serializer.as_json }
+
+    it "is excluded when content_localization_enabled is disabled" do
+      SiteSetting.content_localization_enabled = false
+
+      expect(json[:is_localized]).to eq(nil)
+    end
+
+    describe "content localization enabled" do
+      before do
+        SiteSetting.content_localization_enabled = true
+        I18n.locale = "en"
+      end
+
+      it "returns true when the post is localized" do
+        post.update!(locale: "ja")
+        Fabricate(:post_localization, post:, locale: "en")
+
+        expect(json[:is_localized]).to eq(true)
+      end
+
+      it "returns false when the post is same language as user" do
+        post.update!(locale: "ja")
+        I18n.locale = "ja"
+
+        expect(json[:is_localized]).to eq(false)
+      end
+
+      it "returns false when no localization" do
+        post.update!(locale: "ja")
+
+        expect(json[:is_localized]).to eq(false)
+      end
+    end
+  end
+
+  describe "#language" do
+    let(:serializer) { serialized_post }
+    let(:json) { serializer.as_json }
+
+    it "is excluded when content_localization_enabled is disabled or no locale" do
+      SiteSetting.content_localization_enabled = false
+      post.update!(locale: "ja")
+      expect(serializer.as_json[:language]).to eq(nil)
+
+      SiteSetting.content_localization_enabled = true
+      post.update!(locale: nil)
+      expect(serializer.as_json[:language]).to eq(nil)
+    end
+
+    it "shows the language of the post based on locale" do
+      SiteSetting.content_localization_enabled = true
+      post.update!(locale: "ja")
+
+      expect(json[:language]).to eq("ja")
+    end
+
+    it "defaults to locale if language does not exist" do
+      SiteSetting.content_localization_enabled = true
+      post.update!(locale: "aa")
+
+      expect(json[:language]).to eq("aa")
+    end
+  end
+
+  describe "#localization_outdated?" do
+    let(:serializer) { serialized_post }
+    let(:json) { serializer.as_json }
+
+    it "is excluded when content_localization_enabled is disabled" do
+      SiteSetting.content_localization_enabled = false
+      expect(json[:localization_outdated]).to eq(nil)
+    end
+
+    it "is true when the post is localized and the localization is outdated" do
+      SiteSetting.content_localization_enabled = true
+      post.update!(locale: "ja", version: 3)
+      Fabricate(:post_localization, post:, locale: "en", post_version: 2)
+
+      expect(json[:localization_outdated]).to eq(true)
+    end
+
+    it "is false when the post is localized and the localization is not outdated" do
+      SiteSetting.content_localization_enabled = true
+      post.update!(locale: "ja", version: 10)
+      Fabricate(:post_localization, post:, locale: "en", post_version: 10)
+
+      expect(json[:localization_outdated]).to eq(false)
+    end
+  end
+
+  def serialized_post(u = nil)
     s = PostSerializer.new(post, scope: Guardian.new(u), root: false)
     s.add_raw = true
     s
@@ -434,5 +878,70 @@ RSpec.describe PostSerializer do
   def serialized_post_for_user(u)
     s = serialized_post(u)
     s.as_json
+  end
+
+  describe "#can_localize_post" do
+    fab!(:author, :user)
+    fab!(:author_post) { Fabricate(:post, user: author) }
+    fab!(:admin)
+    fab!(:group)
+
+    before do
+      SiteSetting.content_localization_enabled = true
+      SiteSetting.content_localization_allowed_groups = group.id.to_s
+    end
+
+    it "is included when user can localize content" do
+      group.add(admin)
+      json = PostSerializer.new(author_post, scope: Guardian.new(admin), root: false).as_json
+      expect(json[:can_localize_post]).to eq(true)
+    end
+
+    it "is included when author localization is enabled and user is post author" do
+      SiteSetting.content_localization_allow_author_localization = true
+      json = PostSerializer.new(author_post, scope: Guardian.new(author), root: false).as_json
+      expect(json[:can_localize_post]).to eq(true)
+
+      SiteSetting.content_localization_allow_author_localization = false
+      json = PostSerializer.new(author_post, scope: Guardian.new(author), root: false).as_json
+      expect(json[:can_localize_post]).to eq(nil)
+    end
+
+    it "is not included when user cannot localize post" do
+      other_user = Fabricate(:user)
+      json = PostSerializer.new(author_post, scope: Guardian.new(other_user), root: false).as_json
+      expect(json.key?(:can_localize_post)).to eq(false)
+    end
+  end
+
+  describe "post_localizations_count" do
+    fab!(:author, :user)
+    fab!(:author_post) { Fabricate(:post, user: author) }
+    fab!(:group)
+
+    before do
+      SiteSetting.content_localization_enabled = true
+      SiteSetting.content_localization_allowed_groups = group.id.to_s
+      Fabricate(:post_localization, post: author_post, locale: "ja")
+    end
+
+    it "is included for users in allowed groups" do
+      user = Fabricate(:user)
+      group.add(user)
+      json = PostSerializer.new(author_post, scope: Guardian.new(user), root: false).as_json
+      expect(json[:post_localizations_count]).to eq(1)
+    end
+
+    it "is included for post authors when author localization is enabled" do
+      SiteSetting.content_localization_allow_author_localization = true
+      json = PostSerializer.new(author_post, scope: Guardian.new(author), root: false).as_json
+      expect(json[:post_localizations_count]).to eq(1)
+    end
+
+    it "is not included for users who cannot localize" do
+      other_user = Fabricate(:user)
+      json = PostSerializer.new(author_post, scope: Guardian.new(other_user), root: false).as_json
+      expect(json.key?(:post_localizations_count)).to eq(false)
+    end
   end
 end

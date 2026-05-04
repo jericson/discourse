@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 describe "Core extensions" do
-  fab!(:automation_1) { Fabricate(:automation) }
-  fab!(:automation_2) { Fabricate(:automation) }
+  fab!(:automation_1, :automation)
+  fab!(:automation_2, :automation)
 
   describe "plugin_api" do
     describe "#add_triggerable_to_scriptable" do
@@ -119,6 +119,8 @@ describe "Core extensions" do
 
   describe "user custom fields" do
     it "supports discourse_automation_ids" do
+      SiteSetting.hide_email_address_taken = false
+
       user = create_user
       automation_1.add_id_to_custom_field(user, DiscourseAutomation::AUTOMATION_IDS_CUSTOM_FIELD)
 

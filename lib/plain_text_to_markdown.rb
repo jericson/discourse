@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 class PlainTextToMarkdown
-  SIGNATURE_SEPARATOR ||= "-- "
+  SIGNATURE_SEPARATOR = "-- "
 
   def initialize(plaintext, opts = {})
     @plaintext = plaintext
@@ -153,9 +153,9 @@ class PlainTextToMarkdown
     converted_text
   end
 
-  URL_REGEX ||= URI.regexp(%w[http https ftp mailto])
-  BEFORE ||= Regexp.escape(%Q|([<«"“'‘|)
-  AFTER ||= Regexp.escape(%Q|)]>»"”'’|)
+  URL_REGEX = URI.regexp(%w[http https ftp mailto])
+  BEFORE = Regexp.escape(%Q|([<«"“'‘|)
+  AFTER = Regexp.escape(%Q|)]>»"”'’|)
 
   def replace_duplicate_links(text)
     urls = Set.new
@@ -186,7 +186,7 @@ class PlainTextToMarkdown
     urls = Set.new
     text.scan(URL_REGEX) { urls << $& }
 
-    hoisted = urls.map { |url| [SecureRandom.hex, url] }.to_h
+    hoisted = urls.index_by { |url| SecureRandom.hex }
 
     hoisted.each { |h, url| text.gsub!(url, h) }
 

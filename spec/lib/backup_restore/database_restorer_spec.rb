@@ -73,6 +73,14 @@ RSpec.describe BackupRestore::DatabaseRestorer do
         expect_restore_to_work("postgresql_12.1.sql")
       end
 
+      it "restores from PostgreSQL 15.14" do
+        expect_restore_to_work("postgresql_15.14.sql")
+      end
+
+      it "ignores unwanted SQL" do
+        expect_restore_to_work("unwanted.sql")
+      end
+
       it "detects error during restore" do
         expect { restore("error.sql", stub_migrate: false) }.to raise_error(
           BackupRestore::DatabaseRestoreError,
@@ -133,6 +141,21 @@ RSpec.describe BackupRestore::DatabaseRestorer do
           /^CREATE TRIGGER foo_user_id_readonly .+? EXECUTE FUNCTION discourse_functions.raise_foo_user_id_readonly/,
         )
       end
+
+      it "removes unwanted SQL" do
+        log = restore_and_log_output("unwanted.sql")
+
+        expect(log).to include("CREATE TABLE public.foo")
+        expect(log).not_to be_blank
+        expect(log).not_to include("CREATE EXTENSION")
+        expect(log).not_to include("COMMENT ON EXTENSION")
+        expect(log).not_to include(
+          "CREATE FUNCTION discourse_functions.raise_topic_status_updates_readonly",
+        )
+        expect(log).not_to include("CREATE SERVER")
+        expect(log).not_to include("CREATE USER")
+        expect(log).not_to include("CREATE FOREIGN TABLE")
+      end
     end
 
     describe "database connection" do
@@ -157,7 +180,7 @@ RSpec.describe BackupRestore::DatabaseRestorer do
 
   describe "readonly functions" do
     before do
-      BackupRestore::DatabaseRestorer.stubs(:core_migration_files).returns(
+      BackupRestore::DatabaseRestorer.stubs(:all_migration_files).returns(
         Dir[Rails.root.join("spec/fixtures/db/post_migrate/drop_column/**/*.rb")],
       )
     end

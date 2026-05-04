@@ -10,17 +10,20 @@ module Jobs
     every 10.minutes
 
     def execute(_args)
-      # This way if the problems have been solved in the meantime, then they will
-      # not be re-added by the relevant checker, and will be cleared.
-      AdminDashboardData.clear_found_scheduled_check_problems
+      ProblemCheck.scheduled.filter_map do |scheduled_check|
+        scheduled_check.each_target do |target|
+          next if target == ProblemCheck::NO_TARGET && scheduled_check.targeted?
 
-      scheduled_checks =
-        ProblemCheckTracker.all.filter_map do |tracker|
-          tracker.check if tracker.check.scheduled? && tracker.ready_to_run?
+          check = scheduled_check.new(target)
+
+          if check.enabled? && check.ready_to_run?
+            Jobs.enqueue(
+              :run_problem_check,
+              check_identifier: check.identifier.to_s,
+              target: target.to_s,
+            )
+          end
         end
-
-      scheduled_checks.each do |check|
-        Jobs.enqueue(:run_problem_check, check_identifier: check.identifier.to_s)
       end
     end
   end

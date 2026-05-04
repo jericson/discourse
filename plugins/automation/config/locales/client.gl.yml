@@ -7,8 +7,8 @@
 gl:
   js:
     discourse_automation:
-      create: Crear
-      update: Actualizar
+      back: Volver
+      edit: Editar
       fields:
         user:
           label: Usuario
@@ -27,6 +27,12 @@ gl:
         text:
           label: Texto
       triggerables:
+        post_flag_created:
+          fields:
+            categories:
+              label: Categorías
+            tags:
+              label: Etiquetas
         user_badge_granted:
           fields:
             badge:
@@ -60,11 +66,15 @@ gl:
               label: ID do tema
         post_created_edited:
           fields:
-            restricted_category:
-              label: Categoría
-            restricted_group:
-              label: Grupo
+            restricted_tags:
+              label: Etiquetas
+            restricted_categories:
+              label: Categorías
           created: Creado
+          with_images: Imaxes
+          with_links: Ligazóns
+          with_code: Código
+          with_uploads: Cargas
         category_created_edited:
           fields:
             restricted_category:
@@ -128,6 +138,8 @@ gl:
               label: ID do tema
             user:
               label: Usuario
+        set_topic_timer:
+          title: Estabelecer temporizador do tema
       models:
         trigger:
           name:
@@ -139,7 +151,7 @@ gl:
             label: Disparador
           version:
             label: Versión
-          enabled:
-            label: Activado
+          status:
+            label: Estado
           disabled:
             label: Desactivado

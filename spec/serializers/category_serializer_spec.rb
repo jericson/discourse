@@ -4,18 +4,19 @@ RSpec.describe CategorySerializer do
   fab!(:user)
   fab!(:admin)
   fab!(:group)
-  fab!(:category) { Fabricate(:category, reviewable_by_group_id: group.id) }
+  fab!(:category)
+  fab!(:category_moderation_group) { Fabricate(:category_moderation_group, category:, group:) }
 
   it "includes the reviewable by group name if enabled" do
     SiteSetting.enable_category_group_moderation = true
     json = described_class.new(category, scope: Guardian.new, root: false).as_json
-    expect(json[:reviewable_by_group_name]).to eq(group.name)
+    expect(json[:moderating_group_ids]).to eq([group.id])
   end
 
   it "doesn't include the reviewable by group name if disabled" do
     SiteSetting.enable_category_group_moderation = false
     json = described_class.new(category, scope: Guardian.new, root: false).as_json
-    expect(json[:reviewable_by_group_name]).to be_blank
+    expect(json[:moderating_group_ids]).to be_blank
   end
 
   it "includes custom fields" do
@@ -83,20 +84,33 @@ RSpec.describe CategorySerializer do
     end
 
     it "returns the right category group permissions for a user that can edit the category" do
-      SiteSetting.moderators_manage_categories_and_groups = true
+      SiteSetting.moderators_manage_categories = true
       user.update!(moderator: true)
 
       json = described_class.new(category, scope: Guardian.new(user), root: false).as_json
 
       expect(json[:group_permissions]).to eq(
         [
-          { permission_type: CategoryGroup.permission_types[:readonly], group_name: group.name },
+          {
+            permission_type: CategoryGroup.permission_types[:readonly],
+            group_name: group.name,
+            group_id: group.id,
+          },
           {
             permission_type: CategoryGroup.permission_types[:full],
             group_name: private_group.name,
+            group_id: private_group.id,
           },
-          { permission_type: CategoryGroup.permission_types[:full], group_name: user_group.name },
-          { permission_type: CategoryGroup.permission_types[:readonly], group_name: "everyone" },
+          {
+            permission_type: CategoryGroup.permission_types[:full],
+            group_name: user_group.name,
+            group_id: user_group.id,
+          },
+          {
+            permission_type: CategoryGroup.permission_types[:readonly],
+            group_name: "everyone",
+            group_id: Group::AUTO_GROUPS[:everyone],
+          },
         ],
       )
     end
@@ -111,6 +125,155 @@ RSpec.describe CategorySerializer do
     it "included for an admin" do
       json = described_class.new(category, scope: Guardian.new(admin), root: false).as_json
       expect(json[:available_groups]).to eq(Group.order(:name).pluck(:name) - ["everyone"])
+    end
+  end
+
+  describe "name and description" do
+    fab!(:category_with_localization) do
+      Fabricate(:category, name: "Original Name", description: "Original Description", locale: "en")
+    end
+
+    before do
+      CategoryLocalization.create!(
+        category: category_with_localization,
+        locale: "ja",
+        name: "日本語名",
+        description: "<p>最初の段落</p><p>二番目の段落</p>",
+      )
+    end
+
+    it "returns untranslated name and description for CategorySerializer" do
+      json =
+        described_class.new(
+          category_with_localization,
+          scope: Guardian.new(user),
+          root: false,
+        ).as_json
+      expect(json[:name]).to eq("Original Name")
+      expect(json[:description]).to eq("Original Description")
+    end
+
+    it "returns translated attributes for SiteCategorySerializer when enabled" do
+      SiteSetting.content_localization_enabled = true
+      user.update!(locale: "ja")
+      I18n.with_locale("ja") do
+        json =
+          SiteCategorySerializer.new(
+            category_with_localization,
+            scope: Guardian.new(user),
+            root: false,
+          ).as_json
+        expect(json[:name]).to eq("日本語名")
+        expect(json[:description]).to eq("<p>最初の段落</p><p>二番目の段落</p>")
+        expect(json[:description_text]).to eq("&lt;p&gt;最初の段落&lt;/p&gt;&lt;p&gt;二番目の段落&lt;/p&gt;")
+        expect(json[:description_excerpt]).to eq("最初の段落 二番目の段落")
+      end
+    end
+
+    it "returns untranslated attributes for SiteCategorySerializer when disabled" do
+      SiteSetting.content_localization_enabled = false
+      user.update!(locale: "ja")
+      I18n.with_locale("ja") do
+        json =
+          SiteCategorySerializer.new(
+            category_with_localization,
+            scope: Guardian.new(user),
+            root: false,
+          ).as_json
+        expect(json[:name]).to eq("Original Name")
+        expect(json[:description]).to eq("Original Description")
+        expect(json[:description_text]).to eq(category_with_localization.description_text)
+        expect(json[:description_excerpt]).to eq(category_with_localization.description_excerpt)
+      end
+    end
+
+    it "returns untranslated name and description for BasicCategorySerializer" do
+      json =
+        BasicCategorySerializer.new(
+          category_with_localization,
+          scope: Guardian.new(user),
+          root: false,
+        ).as_json
+      expect(json[:name]).to eq("Original Name")
+      expect(json[:description]).to eq("Original Description")
+    end
+  end
+
+  describe "#topic_posting_review_group_ids" do
+    it "returns group ids when groups exist" do
+      category.update!(
+        topic_posting_review_mode: :everyone_except,
+        topic_posting_review_group_ids: [group.id],
+      )
+
+      json = described_class.new(category, scope: Guardian.new, root: false).as_json
+
+      expect(json[:topic_posting_review_group_ids]).to eq([group.id])
+    end
+
+    it "returns empty array when no groups are associated" do
+      json = described_class.new(category, scope: Guardian.new, root: false).as_json
+
+      expect(json[:topic_posting_review_group_ids]).to eq([])
+    end
+  end
+
+  describe "#reply_posting_review_group_ids" do
+    it "returns group ids when groups exist" do
+      category.update!(
+        reply_posting_review_mode: :no_one_except,
+        reply_posting_review_group_ids: [group.id],
+      )
+
+      json = described_class.new(category, scope: Guardian.new, root: false).as_json
+
+      expect(json[:reply_posting_review_group_ids]).to eq([group.id])
+    end
+
+    it "returns empty array when no groups are associated" do
+      json = described_class.new(category, scope: Guardian.new, root: false).as_json
+
+      expect(json[:reply_posting_review_group_ids]).to eq([])
+    end
+  end
+
+  describe "#require_topic_approval" do
+    it "returns false when topic approval is not required" do
+      category.require_topic_approval = false
+      category.save!
+
+      json = described_class.new(category, scope: Guardian.new(admin), root: false).as_json
+
+      expect(json[:category_setting][:require_topic_approval]).to eq(false)
+    end
+
+    it "returns true when topic approval is required" do
+      category.require_topic_approval = true
+      category.save!
+
+      json = described_class.new(category, scope: Guardian.new(admin), root: false).as_json
+
+      expect(json[:category_setting][:require_topic_approval]).to eq(true)
+    end
+  end
+
+  describe "#require_reply_approval" do
+    it "returns false when reply approval is not required" do
+      category.require_reply_approval = false
+      category.save!
+
+      json = described_class.new(category, scope: Guardian.new(admin), root: false).as_json
+
+      expect(json[:category_setting][:require_reply_approval]).to eq(false)
+    end
+
+    it "returns true when reply approval is required" do
+      category.require_reply_approval = true
+      category.save!
+
+      json = described_class.new(category, scope: Guardian.new(admin), root: false).as_json
+
+      expect(json[:category_setting][:require_reply_approval]).to eq(true)
     end
   end
 end

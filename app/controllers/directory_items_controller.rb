@@ -2,6 +2,8 @@
 
 class DirectoryItemsController < ApplicationController
   PAGE_SIZE = 50
+  PAGE_LIMIT = 10
+
   before_action :set_groups_exclusion, if: -> { params[:exclude_groups].present? }
 
   def index
@@ -58,11 +60,12 @@ class DirectoryItemsController < ApplicationController
     end
 
     result = result.includes(:user_stat) if period_type == DirectoryItem.period_types[:all]
-    page = fetch_int_from_params(:page, default: 0)
+    page = fetch_int_from_params(:page, default: 0, max: PAGE_LIMIT)
 
     user_ids = nil
     if params[:name].present?
-      user_ids = UserSearch.new(params[:name], include_staged_users: true).search.pluck(:id)
+      user_ids =
+        UserSearch.new(params[:name], { include_staged_users: true, limit: 200 }).search.pluck(:id)
       if user_ids.present?
         # Add the current user if we have at least one other match
         user_ids << current_user.id if current_user && result.dup.where(user_id: user_ids).exists?
@@ -86,7 +89,7 @@ class DirectoryItemsController < ApplicationController
     result_count = result.count
     result = result.limit(limit).offset(limit * page).to_a
 
-    more_params = params.slice(:period, :order, :asc, :group, :user_field_ids).permit!
+    more_params = params.slice(:period, :order, :asc, :group, :user_field_ids, :name).permit!
     more_params[:page] = page + 1
     load_more_uri = URI.parse(directory_items_path(more_params))
     load_more_directory_items_json = "#{load_more_uri.path}.json?#{load_more_uri.query}"
@@ -110,7 +113,14 @@ class DirectoryItemsController < ApplicationController
     if params[:user_field_ids]
       serializer_opts[:user_custom_field_map] = {}
 
-      user_field_ids = params[:user_field_ids]&.split("|")&.map(&:to_i)
+      allowed_field_ids =
+        if guardian.is_staff?
+          UserField.pluck(:id)
+        else
+          UserField.public_fields.pluck(:id)
+        end
+
+      user_field_ids = params[:user_field_ids].split("|").map(&:to_i) & allowed_field_ids
       user_field_ids.each do |user_field_id|
         serializer_opts[:user_custom_field_map][
           "#{User::USER_FIELD_PREFIX}#{user_field_id}"
@@ -123,6 +133,9 @@ class DirectoryItemsController < ApplicationController
     end
 
     serializer_opts[:attributes] = active_directory_column_names
+    serializer_opts[:searchable_fields] = UserField.where(searchable: true) if serializer_opts[
+      :user_custom_field_map
+    ].present?
 
     serialized = serialize_data(result, DirectoryItemSerializer, serializer_opts)
     render_json_dump(
@@ -139,7 +152,9 @@ class DirectoryItemsController < ApplicationController
 
   def set_groups_exclusion
     @exclude_group_names = params[:exclude_groups].split("|")
-    @exclude_group_ids = Group.where(name: @exclude_group_names).pluck(:id)
+    groups = Group.where(name: @exclude_group_names)
+    groups = groups.select { |g| guardian.can_see?(g) && guardian.can_see_group_members?(g) }
+    @exclude_group_ids = groups.map(&:id)
     @users_in_exclude_groups = GroupUser.where(group_id: @exclude_group_ids).pluck(:user_id)
   end
 

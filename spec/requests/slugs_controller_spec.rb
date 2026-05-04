@@ -30,8 +30,6 @@ RSpec.describe SlugsController do
       describe "rate limiting" do
         before { RateLimiter.enable }
 
-        use_redis_snapshotting
-
         it "rate limits" do
           stub_const(SlugsController, "MAX_SLUG_GENERATIONS_PER_MINUTE", 1) do
             post "/slugs.json?name=#{name}"
@@ -52,7 +50,7 @@ RSpec.describe SlugsController do
       end
 
       context "when user is admin" do
-        fab!(:current_user) { Fabricate(:admin) }
+        fab!(:current_user, :admin)
 
         it "generates a slug from the name" do
           post "/slugs.json", params: { name: name }

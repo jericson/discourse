@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require "mysql2"
-require File.expand_path(File.dirname(__FILE__) + "/base.rb")
+require_relative "base"
 require "htmlentities"
 
 class ImportScripts::VBulletin < ImportScripts::Base
@@ -11,14 +11,14 @@ class ImportScripts::VBulletin < ImportScripts::Base
 
   # override these using environment vars
 
-  URL_PREFIX ||= ENV["URL_PREFIX"] || "forum/"
-  DB_PREFIX ||= ENV["DB_PREFIX"] || "vb_"
-  DB_HOST ||= ENV["DB_HOST"] || "localhost"
-  DB_NAME ||= ENV["DB_NAME"] || "vbulletin"
-  DB_PASS ||= ENV["DB_PASS"] || "password"
-  DB_USER ||= ENV["DB_USER"] || "username"
-  ATTACH_DIR ||= ENV["ATTACH_DIR"] || "/home/discourse/vbulletin/attach"
-  AVATAR_DIR ||= ENV["AVATAR_DIR"] || "/home/discourse/vbulletin/avatars"
+  URL_PREFIX = ENV["URL_PREFIX"] || "forum/"
+  DB_PREFIX = ENV["DB_PREFIX"] || "vb_"
+  DB_HOST = ENV["DB_HOST"] || "localhost"
+  DB_NAME = ENV["DB_NAME"] || "vbulletin"
+  DB_PASS = ENV["DB_PASS"] || "password"
+  DB_USER = ENV["DB_USER"] || "username"
+  ATTACH_DIR = ENV["ATTACH_DIR"] || "/home/discourse/vbulletin/attach"
+  AVATAR_DIR = ENV["AVATAR_DIR"] || "/home/discourse/vbulletin/avatars"
 
   def initialize
     super
@@ -790,7 +790,7 @@ class ImportScripts::VBulletin < ImportScripts::Base
   end
 
   def parse_timestamp(timestamp)
-    Time.zone.at(@tz.utc_to_local(timestamp))
+    Time.zone.at(@tz.utc_to_local(Time.at(timestamp)))
   end
 
   def mysql_query(sql)

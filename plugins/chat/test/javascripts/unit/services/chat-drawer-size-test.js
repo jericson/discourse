@@ -1,8 +1,8 @@
-import { getOwner } from "@ember/application";
+import { getOwner } from "@ember/owner";
 import { setupTest } from "ember-qunit";
 import { module, test } from "qunit";
 
-module("Discourse Chat | Unit | Service | chat-drawer-size", function (hooks) {
+module("Unit | Service | chat-drawer-size", function (hooks) {
   setupTest(hooks);
 
   hooks.beforeEach(function () {

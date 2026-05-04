@@ -6,11 +6,23 @@
 
 ro:
   js:
+    admin:
+      logs:
+        staff_actions:
+          actions:
+            update_automation: actualizează automatizare
+            delete_automation: șterge automatizarea
     discourse_automation:
-      create: Creează
+      table_title: Automatizări
+      create: Adaugă automatizare
+      update: Actualizează automatizare
+      back: Înapoi
+      edit: Editează
+      no_automation_yet: Momentan nu este nicio automatizare configurată.
+      filter_placeholder: Filtrează după nume sau descriere...
       fields:
         user:
-          label: Utilizatori
+          label: Utilizator
         pm:
           title:
             label: Titlu
@@ -26,6 +38,12 @@ ro:
         text:
           label: Text
       triggerables:
+        post_flag_created:
+          fields:
+            categories:
+              label: Categorii
+            tags:
+              label: Etichete
         user_badge_granted:
           fields:
             badge:
@@ -41,7 +59,7 @@ ro:
             minute: minut
             hour: oră
             day: zi
-            week: săptămană
+            week: săptămână
             month: lună
             year: an
           fields:
@@ -56,14 +74,44 @@ ro:
         topic:
           fields:
             restricted_topic:
-              label: ID discuție
+              label: ID subiect
         post_created_edited:
           fields:
-            restricted_category:
-              label: Categorie
-            restricted_group:
-              label: Grup
+            original_post_only:
+              label: Doar articolul original
+              description: Se va declanșa doar dacă articolul este articolul original în subiect
+            restricted_tags:
+              label: Etichete
+              description: Opțional, se va declanșa doar dacă articolul are oricare dintre aceste etichete
+            restricted_categories:
+              label: Categorii
+              description: Opțional, se va declanșa numai dacă subiectul postării se află în aceste categorii
+            exclude_subcategories:
+              label: Exclude subcategorii
+              description: Opțional, se va declanșa numai dacă subiectul postării este exact în categoriile specificate mai sus
+            restricted_archetype:
+              label: Tip subiect
+              description: Opțional, permite declanșarea numai pe subiecte sau mesaje personale
+            restricted_groups:
+              label: Grupuri restricționate
+              description: Opțional, se va declanșa doar dacă utilizatorul postării se află în oricare dintre aceste grupuri
+            restricted_inbox_groups:
+              label: Grupuri de căsuțe poștale restricționate
+              description: Opțional, se va declanșa doar dacă subiectul postării este un mesaj personal într-una dintre căsuțele de intrare ale grupului
+            excluded_groups:
+              label: Grupuri excluse
+              description: Opțional, ignoră declanșatorul dacă utilizatorul postării aparține unuia dintre aceste grupuri
+            skip_via_email:
+              label: "Omite prin email"
+              description: "Omite declanșatorul dacă articolul a fost creat prin email"
+            post_features:
+              label: Caracteristici postare
+              description: "Opțional, limitează declanșarea numai la postările cu aceste caracteristici"
           created: Creat
+          with_images: Imagini
+          with_links: Legături
+          with_code: Cod
+          with_uploads: Încărcări
         user_updated:
           fields:
             new_users_only:
@@ -79,6 +127,14 @@ ro:
               label: Utilizatori
             restricted_group:
               label: Grup
+        topic_tags_changed:
+          trigger_on_modes:
+            tags_added_or_removed: Etichete adăugate sau eliminate
+            tags_added: Etichete adăugate
+            tags_removed: Etichete eliminate
+          fields:
+            trigger_on:
+              label: Declanșator pornit
         after_post_cook:
           fields:
             restricted_category:
@@ -92,8 +148,11 @@ ro:
               label: Etichete
         post:
           fields:
+            creator:
+              label: Creator
+              updated_user_context: Utilizatorul actualizat
             topic:
-              label: ID discuție
+              label: ID subiect
         topic:
           fields:
             creator:
@@ -124,35 +183,45 @@ ro:
         suspend_user_by_email:
           fields:
             actor:
-              label: Utilizatori
+              label: Utilizator
         pin_topic:
           fields:
             pinnable_topic:
-              label: ID discuție
+              label: ID subiect
         banner_topic:
           fields:
             topic_id:
-              label: ID discuție
+              label: ID subiect
             user:
-              label: Utilizatori
+              label: Utilizator
         close_topic:
           fields:
             topic:
-              label: ID discuție
+              label: ID subiect
             user:
-              label: Utilizatori
+              label: Utilizator
+        set_topic_timer:
+          title: Setează cronometrul subiectului
+      unnamed_automation: "Automatizare fără nume"
       models:
         trigger:
           name:
             label: Declanșator
         automation:
+          runs_today: "%{count} astăzi"
+          runs_this_week: "%{count} săptămâna aceasta"
+          runs_this_month: "%{count} luna aceasta"
+          runs:
+            label: Rulări
           name:
             label: Nume
           trigger:
             label: Declanșator
           version:
             label: Versiune
-          enabled:
-            label: Activat
+          status:
+            label: Stare
           disabled:
             label: Dezactivat
+          last_run:
+            label: Ultima rulare

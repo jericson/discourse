@@ -1,16 +1,13 @@
 import Component from "@glimmer/component";
 import { hash } from "@ember/helper";
 import { LinkTo } from "@ember/routing";
-import { service } from "@ember/service";
 import { isEmpty } from "@ember/utils";
 import concatClass from "discourse/helpers/concat-class";
-import i18n from "discourse-common/helpers/i18n";
+import { i18n } from "discourse-i18n";
 import ChannelTitle from "./channel-title";
 import ToggleChannelMembershipButton from "./toggle-channel-membership-button";
 
 export default class ChatChannelPreviewCard extends Component {
-  @service chat;
-
   get showJoinButton() {
     return this.args.channel?.isOpen && this.args.channel?.canJoin;
   }

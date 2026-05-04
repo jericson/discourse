@@ -7,7 +7,8 @@
 et:
   js:
     discourse_automation:
-      create: Loo
+      back: Tagasi
+      edit: Muuda
       fields:
         user:
           label: Kasutaja
@@ -26,6 +27,12 @@ et:
         text:
           label: Tekst
       triggerables:
+        post_flag_created:
+          fields:
+            categories:
+              label: Liigid
+            tags:
+              label: Sildid
         user_badge_granted:
           fields:
             badge:
@@ -44,11 +51,15 @@ et:
               label: Teema ID
         post_created_edited:
           fields:
-            restricted_category:
-              label: Foorum
-            restricted_group:
-              label: Grupp
+            restricted_tags:
+              label: Sildid
+            restricted_categories:
+              label: Liigid
           created: Loodud
+          with_images: Pildid
+          with_links: Viited
+          with_code: Kood
+          with_uploads: Üleslaadimised
         category_created_edited:
           fields:
             restricted_category:
@@ -111,6 +122,8 @@ et:
               label: Teema ID
             user:
               label: Kasutaja
+        set_topic_timer:
+          title: Määra teema taimer
       models:
         trigger:
           name:
@@ -122,7 +135,7 @@ et:
             label: Päästik
           version:
             label: Versioon
-          enabled:
-            label: Sisse lülitatud
+          status:
+            label: Staatus
           disabled:
             label: Välja lülitatud

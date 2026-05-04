@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
-describe "Change Owner Modal", type: :system do
+describe "Change Owner Modal" do
   fab!(:post) { Fabricate(:post, raw: "This is some post to change owner for") }
-  fab!(:other_user) { Fabricate(:user) }
+  fab!(:other_user, :user)
   fab!(:admin)
   let(:user) { post.user }
   let(:topic) { post.topic }

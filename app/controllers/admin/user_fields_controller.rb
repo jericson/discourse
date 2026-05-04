@@ -9,6 +9,7 @@ class Admin::UserFieldsController < Admin::AdminController
       description
       requirement
       show_on_profile
+      show_on_signup
       show_on_user_card
       position
       searchable
@@ -28,6 +29,14 @@ class Admin::UserFieldsController < Admin::AdminController
   def index
     user_fields = UserField.all.includes(:user_field_options).order(:position)
     render_serialized(user_fields, UserFieldSerializer, root: "user_fields")
+  end
+
+  def show
+    user_field = UserField.find(params[:id])
+    render_serialized(user_field, UserFieldSerializer)
+  end
+
+  def edit
   end
 
   def update
@@ -51,7 +60,8 @@ class Admin::UserFieldsController < Admin::AdminController
 
   def destroy
     field = UserField.where(id: params.require(:id)).first
-    field.destroy if field.present?
+    field.presence&.destroy
+
     render json: success_json
   end
 

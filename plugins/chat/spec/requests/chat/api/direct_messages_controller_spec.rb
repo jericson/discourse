@@ -2,9 +2,9 @@
 
 RSpec.describe Chat::Api::DirectMessagesController do
   fab!(:current_user) { Fabricate(:user, refresh_auto_groups: true) }
-  fab!(:user1) { Fabricate(:user) }
-  fab!(:user2) { Fabricate(:user) }
-  fab!(:user3) { Fabricate(:user) }
+  fab!(:user1, :user)
+  fab!(:user2, :user)
+  fab!(:user3, :user)
 
   before do
     SiteSetting.chat_enabled = true
@@ -105,6 +105,44 @@ RSpec.describe Chat::Api::DirectMessagesController do
       expect {
         post "/chat/api/direct-message-channels.json", params: { target_usernames: usernames }
       }.to change { Chat::UserChatChannelMembership.count }.by(3)
+    end
+
+    context "when using target_groups with a group not visible to the user" do
+      fab!(:secret_group) do
+        Fabricate(
+          :group,
+          visibility_level: Group.visibility_levels[:staff],
+          members_visibility_level: Group.visibility_levels[:staff],
+        )
+      end
+      fab!(:secret_user, :user)
+
+      before do
+        secret_group.add(secret_user)
+        secret_user.user_option.update!(chat_enabled: true)
+      end
+
+      it "does not resolve members from groups the acting user cannot see" do
+        post "/chat/api/direct-message-channels.json",
+             params: {
+               target_groups: [secret_group.name],
+             }
+        expect(
+          response.parsed_body.dig("channel", "chatable", "users").map { |u| u["id"] },
+        ).not_to include(secret_user.id)
+      end
+    end
+
+    context "when the acting user has chat disabled" do
+      before { current_user.user_option.update!(chat_enabled: false) }
+
+      it "returns a 404" do
+        post "/chat/api/direct-message-channels.json",
+             params: {
+               target_usernames: [user2.username],
+             }
+        expect(response.status).to eq(404)
+      end
     end
 
     context "when one of the users I am messaging has ignored, muted, or prevented DMs from the acting user creating the channel" do

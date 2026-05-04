@@ -1,20 +1,22 @@
 import Component from "@glimmer/component";
-import I18n from "I18n";
+import I18n, { i18n } from "discourse-i18n";
 import DaBooleanField from "./fields/da-boolean-field";
 import DaCategoriesField from "./fields/da-categories-field";
 import DaCategoryField from "./fields/da-category-field";
-import DaCategoryNotificationlevelField from "./fields/da-category-notification-level-field";
+import DaCategoryNotificationLevelField from "./fields/da-category-notification-level-field";
 import DaChoicesField from "./fields/da-choices-field";
 import DaCustomField from "./fields/da-custom-field";
 import DaCustomFields from "./fields/da-custom-fields";
 import DaDateTimeField from "./fields/da-date-time-field";
 import DaEmailGroupUserField from "./fields/da-email-group-user-field";
 import DaGroupField from "./fields/da-group-field";
+import DaGroupsField from "./fields/da-groups-field";
 import DaKeyValueField from "./fields/da-key-value-field";
 import DaMessageField from "./fields/da-message-field";
 import DaPeriodField from "./fields/da-period-field";
 import DaPmsField from "./fields/da-pms-field";
 import DaPostField from "./fields/da-post-field";
+import DaRelativeTimeField from "./fields/da-relative-time-field";
 import DaTagsField from "./fields/da-tags-field";
 import DaTextField from "./fields/da-text-field";
 import DaTextListField from "./fields/da-text-list-field";
@@ -41,11 +43,13 @@ const FIELD_COMPONENTS = {
   "trust-levels": DaTrustLevelsField,
   category: DaCategoryField,
   group: DaGroupField,
+  groups: DaGroupsField,
   choices: DaChoicesField,
-  category_notification_level: DaCategoryNotificationlevelField,
+  category_notification_level: DaCategoryNotificationLevelField,
   email_group_user: DaEmailGroupUserField,
   custom_field: DaCustomField,
   custom_fields: DaCustomFields,
+  relative_time: DaRelativeTimeField,
 };
 
 export default class AutomationField extends Component {
@@ -66,7 +70,7 @@ export default class AutomationField extends Component {
   }
 
   get label() {
-    return I18n.t(
+    return i18n(
       `discourse_automation${this.target}fields.${this.args.field.name}.label`
     );
   }
@@ -92,6 +96,11 @@ export default class AutomationField extends Component {
   }
 
   get description() {
-    return I18n.lookup(this.translationKey);
+    if (
+      I18n.lookup(this.translationKey, { locale: "en" }) ||
+      I18n.lookup(this.translationKey)
+    ) {
+      return i18n(this.translationKey);
+    }
   }
 }

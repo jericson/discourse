@@ -8,6 +8,8 @@
 class NewPostManager
   attr_reader :user, :args
 
+  FAST_TYPING_THRESHOLD_MAP = { disabled: 0, low: 1000, standard: 3000, high: 5000 }
+
   def self.sorted_handlers
     @sorted_handlers ||= clear_handlers!
   end
@@ -44,7 +46,8 @@ class NewPostManager
     args = manager.args
 
     is_first_post?(manager) &&
-      args[:typing_duration_msecs].to_i < SiteSetting.min_first_post_typing_time &&
+      args[:typing_duration_msecs].to_i <
+        FAST_TYPING_THRESHOLD_MAP[SiteSetting.fast_typing_threshold.to_sym] &&
       SiteSetting.auto_silence_fast_typers_on_first_post &&
       manager.user.trust_level <= SiteSetting.auto_silence_fast_typers_max_trust_level
   end
@@ -126,15 +129,18 @@ class NewPostManager
   end
 
   def self.post_needs_approval_in_its_category?(manager)
-    if manager.args[:topic_id].present?
-      cat = Category.joins(:topics).find_by(topics: { id: manager.args[:topic_id] })
-      return false unless cat
+    guardian = manager.user.guardian
 
-      topic = Topic.find(manager.args[:topic_id])
-      cat.require_reply_approval? && !manager.user.guardian.can_review_topic?(topic)
+    if manager.args[:topic_id].present?
+      topic = Topic.find_by(id: manager.args[:topic_id])
+      return false unless topic&.category
+
+      guardian.reply_posting_review_required?(topic.category) && !guardian.can_review_topic?(topic)
     elsif manager.args[:category].present?
-      cat = Category.find(manager.args[:category])
-      cat.require_topic_approval? && !manager.user.guardian.is_category_group_moderator?(cat)
+      category = Category.find(manager.args[:category])
+
+      guardian.topic_posting_review_required?(category) &&
+        !guardian.is_category_group_moderator?(category)
     else
       false
     end
@@ -175,21 +181,21 @@ class NewPostManager
 
     I18n.with_locale(SiteSetting.default_locale) do
       if is_fast_typer?(manager)
-        UserSilencer.silence(
+        UserSilencer.auto_silence(
           manager.user,
           Discourse.system_user,
           keep_posts: true,
           reason: I18n.t("user.new_user_typed_too_fast"),
         )
       elsif auto_silence?(manager) || matches_auto_silence_regex?(manager)
-        UserSilencer.silence(
+        UserSilencer.auto_silence(
           manager.user,
           Discourse.system_user,
           keep_posts: true,
           reason: I18n.t("user.content_matches_auto_silence_regex"),
         )
       elsif reason == :email_spam && is_first_post?(manager)
-        UserSilencer.silence(
+        UserSilencer.auto_silence(
           manager.user,
           Discourse.system_user,
           keep_posts: true,
@@ -253,7 +259,7 @@ class NewPostManager
   end
 
   # Enqueue this post
-  def enqueue(reason = nil)
+  def enqueue(reason = nil, creator_opts: {})
     result = NewPostResult.new(:enqueued)
     payload = { raw: @args[:raw], tags: @args[:tags] }
     %w[typing_duration_msecs composer_open_duration_msecs reply_to_post_number].each do |a|
@@ -277,7 +283,7 @@ class NewPostManager
     reviewable.category_id = args[:category] if args[:category].present?
     reviewable.created_new!
 
-    create_options = reviewable.create_options
+    create_options = reviewable.create_options.merge(creator_opts)
 
     creator =
       (

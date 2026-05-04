@@ -10,7 +10,7 @@ RSpec.describe Chat::Action::PublishAndFollowDirectMessageChannel do
   before { channel.add(user) }
 
   context "when channel is not a direct message one" do
-    fab!(:channel) { Fabricate(:chat_channel) }
+    fab!(:channel, :chat_channel)
 
     it "does not publish anything" do
       Chat::Publisher.expects(:publish_new_channel).never
@@ -25,7 +25,7 @@ RSpec.describe Chat::Action::PublishAndFollowDirectMessageChannel do
   end
 
   context "when channel is a direct message one" do
-    fab!(:channel) { Fabricate(:direct_message_channel) }
+    fab!(:channel, :direct_message_channel)
 
     context "when no users allow communication" do
       it "does not publish anything" do
@@ -41,12 +41,11 @@ RSpec.describe Chat::Action::PublishAndFollowDirectMessageChannel do
     end
 
     context "when at least one user allows communication" do
-      let(:users) { channel.user_chat_channel_memberships.map(&:user) }
-
       before { channel.user_chat_channel_memberships.update_all(following: false) }
 
       it "publishes the channel" do
-        Chat::Publisher.expects(:publish_new_channel).with(channel, includes(*users))
+        user_ids = channel.user_chat_channel_memberships.map(&:user_id)
+        Chat::Publisher.expects(:publish_new_channel).with(channel, includes(*user_ids))
         action
       end
 

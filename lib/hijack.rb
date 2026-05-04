@@ -13,6 +13,10 @@ module Hijack
       request.env["discourse.request_tracker.skip"] = true
       request_tracker = request.env["discourse.request_tracker"]
 
+      # need this because we can't call with_resolved_locale with around_action
+      # when we are evaluating the block
+      resolved_locale = I18n.locale
+
       # in the past unicorn would recycle env, this is not longer the case
       env = request.env
 
@@ -33,7 +37,7 @@ module Hijack
           &scheduled.method(:resolve)
         )
       rescue WorkQueue::WorkQueueFull
-        return render plain: "", status: 503
+        return render plain: "", status: :service_unavailable
       end
 
       # duplicate headers so other middleware does not mess with it
@@ -53,7 +57,7 @@ module Hijack
           # this trick avoids double render, also avoids any litter that the controller hooks
           # place on the response
           instance = controller_class.new
-          response = ActionDispatch::Response.new.tap { _1.request = request_copy }
+          response = ActionDispatch::Response.new.tap { it.request = request_copy }
           instance.set_response!(response)
           instance.set_request!(request_copy)
 
@@ -61,7 +65,7 @@ module Hijack
 
           view_start = Process.clock_gettime(Process::CLOCK_MONOTONIC)
           begin
-            instance.instance_eval(&blk)
+            I18n.with_locale(resolved_locale) { instance.instance_eval(&blk) }
           rescue => e
             # TODO we need to reuse our exception handling in ApplicationController
             Discourse.warn_exception(
@@ -102,7 +106,7 @@ module Hijack
 
           io.write "\r\n"
           io.write body
-        rescue Errno::EPIPE, IOError
+        rescue Errno::EPIPE, Errno::ECONNRESET, IOError
           # happens if client terminated before we responded, ignore
           io = nil
         ensure

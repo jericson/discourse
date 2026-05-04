@@ -5,6 +5,11 @@
 # https://translate.discourse.org/
 
 el:
+  admin_js:
+    admin:
+      site_settings:
+        categories:
+          discourse_local_dates: "Τοπικές Ημερομηνίες Discourse"
   js:
     discourse_local_dates:
       relative_dates:
@@ -23,7 +28,7 @@ el:
           timezones_title: Ζώνες ώρας για εμφάνιση
           timezones_description: Οι ζώνες ώρας θα χρησιμοποιηθούν για την εμφάνιση ημερομηνιών σε προεπισκόπηση και ως εφεδρικές.
           recurring_title: Επανάληψη
-          recurring_description: "Ορίστε την επανάληψη ενός συμβάντος. Μπορείτε επίσης να επεξεργαστείτε με μη αυτόματο τρόπο την επαναλαμβανόμενη επιλογή που δημιουργείται από τη φόρμα και να χρησιμοποιήσετε ένα από τα ακόλουθα κλειδιά: έτη, τρίμηνα, μήνες, εβδομάδες, ημέρες, ώρες, λεπτά, δευτερόλεπτα, χιλιοστά του δευτερολέπτου."
+          recurring_description: "Ορίστε την επανάληψη μιας εκδήλωσης. Μπορείτε επίσης να επεξεργαστείτε με μη αυτόματο τρόπο την επαναλαμβανόμενη επιλογή που δημιουργείται από τη φόρμα και να χρησιμοποιήσετε ένα από τα ακόλουθα κλειδιά: years, quarters, months, weeks, days, hours, minutes, seconds, milliseconds."
           recurring_none: Χωρίς επανάληψη
           invalid_date: Μη έγκυρη ημερομηνία, βεβαιωθείτε ότι η ημερομηνία και η ώρα είναι σωστές
           date_title: Ημερομηνία
@@ -31,6 +36,7 @@ el:
           format_title: Μορφή ημερομηνίας
           timezone: Ζώνη ώρας
           until: Μέχρι...
+          current_timezone: "Τρέχουσα ζώνη ώρας:"
           recurring:
             every_day: "Κάθε μέρα"
             every_week: "Κάθε εβδομάδα"
@@ -40,3 +46,4 @@ el:
             every_three_months: "Κάθε τρεις μήνες"
             every_six_months: "Κάθε έξι μήνες"
             every_year: "Κάθε χρόνο"
+      default_title: "%{site_name} Εκδήλωση"

@@ -1,0 +1,16 @@
+{
+  "extends": "discourse/tsconfig-plugin",
+  "include": [
+    "admin/assets/javascripts/**/*",
+    "assets/javascripts/**/*",
+    "test/javascripts/**/*"
+  ],
+  "compilerOptions": {
+    "paths": {
+      "discourse/plugins/discourse-apple-auth/*": ["./assets/javascripts/*"],
+      "discourse/plugins/discourse-apple-auth/admin/*": [
+        "./admin/assets/javascripts/admin/*"
+      ]
+    }
+  }
+}

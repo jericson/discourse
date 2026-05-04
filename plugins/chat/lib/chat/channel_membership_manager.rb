@@ -44,7 +44,7 @@ module Chat
 
       ActiveRecord::Base.transaction do
         if membership.following
-          membership.update!(following: false)
+          membership.update!(following: false, starred: false)
           recalculate_user_count
         end
       end
@@ -62,19 +62,6 @@ module Chat
       Chat::UserChatChannelMembership.where(chat_channel: channel).update_all(
         following: false,
         last_read_message_id: channel.chat_messages.last&.id,
-      )
-    end
-
-    def enforce_automatic_channel_memberships
-      Jobs.enqueue(Jobs::Chat::AutoJoinChannelMemberships, chat_channel_id: channel.id)
-    end
-
-    def enforce_automatic_user_membership(user)
-      Jobs.enqueue(
-        Jobs::Chat::AutoJoinChannelBatch,
-        chat_channel_id: channel.id,
-        starts_at: user.id,
-        ends_at: user.id,
       )
     end
   end

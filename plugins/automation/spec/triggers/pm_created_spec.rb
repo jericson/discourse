@@ -11,7 +11,7 @@ describe "PMCreated" do
   fab!(:automation) { Fabricate(:automation, trigger: DiscourseAutomation::Triggers::PM_CREATED) }
 
   context "when creating a PM to a user" do
-    fab!(:target_user) { Fabricate(:user) }
+    fab!(:target_user, :user)
     let(:basic_topic_params) do
       {
         title: "hello world topic",
@@ -38,7 +38,7 @@ describe "PMCreated" do
     end
 
     context "when user is not targeted" do
-      fab!(:user2) { Fabricate(:user) }
+      fab!(:user2, :user)
 
       it "doesn't fire the trigger" do
         list =
@@ -164,7 +164,7 @@ describe "PMCreated" do
           incoming_email: "team@somesmtpaddress.com|suppor+team@bar.com",
           smtp_server: "smtp.test.com",
           smtp_port: 587,
-          smtp_ssl: true,
+          smtp_ssl_mode: Group.smtp_ssl_modes[:starttls],
           smtp_enabled: true,
         )
         SiteSetting.email_in = true

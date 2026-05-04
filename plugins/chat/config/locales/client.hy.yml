@@ -12,14 +12,21 @@ hy:
           always: "Միշտ"
           never: "Երբեք"
     chat:
+      edit_category:
+        channel: "Ալիք"
+        description: "Նկարագրություն"
+        actions: "Գործողություններ"
+        settings: "Կարգավորումներ"
       deleted_chat_username: ջնջված
       dates:
         yesterday: "Երեկվա"
       create: "Ստեղծել"
       cancel: "Չեղարկել"
+      pinned: "Ամրակցված"
       channel_settings:
         edit: "Խմբագրել"
         add: "Ավելացնել"
+        notification_settings_context: "Ծանուցումներ"
         join: "Միանալ"
         leave: "Լքել"
       close: "Փակել"
@@ -39,10 +46,10 @@ hy:
       edit: "Խմբագրել"
       rebake_message: "Վերակառուցել HTML-ը"
       bookmark_message: "Էջանշել"
+      bookmark_message_edit: "Խմբագրել Էջանիշը"
       save: "Պահպանել"
       sounds:
         none: "Ոչ մի"
-      exit: "ետ"
       channel_status:
         closed: "Փակված"
         open: "Բացել"
@@ -54,6 +61,8 @@ hy:
       chat_message_separator:
         today: Այսօրվա
         yesterday: Երեկվա
+      search_view:
+        filter_placeholder: Որոնել հաղորդագրություններում
       about_view:
         title: Վերնագիր
         name: Անուն
@@ -63,17 +72,25 @@ hy:
         tabs:
           members: Անդամներ
           settings: Կարգավորումներ
+          search: Որոնում
+        remove_member: "Հեռացնել"
       new_message_modal:
         no_items: "Տարրեր չկան"
         filter: "Ֆիլտր"
       direct_message_creator:
         title: Նոր Հաղորդագրություն
         prefix: "Ում:"
+      channel:
+        memberships_count:
+          one: "%{count} անդամ"
+          other: "%{count} անդամ"
       create_channel:
         type: "Տիպը"
         types:
           category: "Կատեգորիա"
           topic: "Թեմա"
+      reviewable:
+        message_in_channel: "Ալիք"
       composer:
         italic_text: "շեղ տեքստ"
         bold_text: "թավ տեքստ"
@@ -94,6 +111,11 @@ hy:
         category_label: "Կատեգորիա"
         history_label: "Պատմություն"
         members_label: "Անդամներ"
+      search:
+        short_title: Որոնում
+        sort:
+          relevance: "Համապատասխանության"
+          latest: "Վերջինը"
       incoming_webhooks:
         back: "Ետ"
         description: "Նկարագրությունը"
@@ -135,6 +157,8 @@ hy:
             title: "Նորմալ"
           tracking:
             title: "Հետևում Եմ"
+          watching:
+            title: "Դիտում Եմ"
       draft_channel_screen:
         header: "Նոր Հաղորդագրություն"
         cancel: "Չեղարկել"

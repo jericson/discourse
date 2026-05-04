@@ -6,10 +6,10 @@ require "htmlentities"
 require "parallel"
 
 class BulkImport::VBulletin < BulkImport::Base
-  TABLE_PREFIX ||= ENV["TABLE_PREFIX"] || "vb_"
-  SUSPENDED_TILL ||= Date.new(3000, 1, 1)
-  ATTACHMENT_DIR ||= ENV["ATTACHMENT_DIR"] || "/shared/import/data/attachments"
-  AVATAR_DIR ||= ENV["AVATAR_DIR"] || "/shared/import/data/customavatars"
+  TABLE_PREFIX = ENV["TABLE_PREFIX"] || "vb_"
+  SUSPENDED_TILL = Date.new(3000, 1, 1)
+  ATTACHMENT_DIR = ENV["ATTACHMENT_DIR"] || "/shared/import/data/attachments"
+  AVATAR_DIR = ENV["AVATAR_DIR"] || "/shared/import/data/customavatars"
 
   def initialize
     super
@@ -48,7 +48,7 @@ class BulkImport::VBulletin < BulkImport::Base
 
   def execute
     # enable as per requirement:
-    # SiteSetting.automatic_backups_enabled = false
+    # SiteSetting.backup_frequency = 0
     # SiteSetting.disable_emails = "non-staff"
     # SiteSetting.authorized_extensions = '*'
     # SiteSetting.max_image_size_kb = 102400

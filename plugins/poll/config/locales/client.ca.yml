@@ -49,6 +49,8 @@ ca:
         age: "Tancat <strong>%{age}</strong>"
       breakdown:
         count: "Recompte"
+      ranked_choice:
+        none: "Cap"
       options:
         label: "Opcions"
       error_while_toggling_status: "Ho sentim. S'ha produït un error en canviar l'estat d'aquesta enquesta."
@@ -56,7 +58,6 @@ ca:
       error_while_fetching_voters: "Hi ha hagut un error en mostrar els votants."
       error_while_exporting_results: "S'ha produït un error en exportar els resultats de la votació."
       ui_builder:
-        title: Crea una enquesta
         insert: Insereix una enquesta
         help:
           options_min_count: Introduïu almenys una opció.

@@ -5,6 +5,11 @@
 # https://translate.discourse.org/
 
 ar:
+  admin_js:
+    admin:
+      site_settings:
+        categories:
+          styleguide: "دليل أنماط Discourse"
   js:
     styleguide:
       title: "دليل الأنماط"
@@ -25,17 +30,21 @@ ar:
           title: "حقول إدخال التاريخ/الوقت"
         menus:
           title: "القوائم"
+        multi_select:
+          title: "اختيار متعدد"
         toasts:
           title: "الرسائل المنبثقة"
         font_scale:
           title: "نظام الخطوط"
         colors:
           title: "الألوان"
+        dialog:
+          title: "حوار"
         icons:
           title: "الأيقونات"
           full_list: "طالِع قائمة أيقونات Font Awesome كاملةً"
-        input_fields:
-          title: "حقول الإدخال"
+        forms:
+          title: "النماذج"
         buttons:
           title: "الأزرار"
         dropdowns:
@@ -53,33 +62,37 @@ ar:
         categories_list:
           title: "قائمة الفئات"
         topic_link:
-          title: "رابط الموضوع"
+          title: "رابط الموضوع والحالة"
         topic_list_item:
-          title: "العنصر في قائمة المواضيع"
+          title: "العنصر في قائمة الموضوعات"
         topic_statuses:
-          title: "حالات المواضيع"
+          title: "حالات الموضوعات"
         topic_list:
-          title: "قائمة المواضيع"
+          title: "قائمة الموضوعات"
         basic_topic_list:
           title: "قائمة الموضوعات الأساسية"
-        footer_message:
-          title: "رسالة التذييل"
         signup_cta:
           title: "عبارة الحث على الاشتراك"
         topic_timer_info:
-          title: "مؤقّتات المواضيع"
+          title: "مؤقّتات الموضوعات"
         topic_footer_buttons:
           title: "أزرار تذييل الموضوع"
         topic_notifications:
           title: "إشعارات الموضوعات"
         post:
           title: "المنشور"
+        post_list:
+          title: "قائمة المنشورات"
+          empty_example: "<PostList /> حالة فارغة"
+          populated_example: "<PostList /> حالة ممتلئة"
+        post_oneboxes:
+          title: "لوحات معاينة المنشورات"
         topic_map:
           title: "خريطة الموضوع"
         site_header:
           title: "رأس الموقع"
-        suggested_topics:
-          title: "الموضوعات المقترحة"
+        more_topics:
+          title: "المزيد من الموضوعات"
         post_menu:
           title: "قائمة المشاركة"
         modal:
@@ -92,6 +105,8 @@ ar:
           title: "أيقونات الترويسة"
         spinners:
           title: "المُنزلقات"
+        otp:
+          title: "رمز التحقق لمرة واحدة"
         empty_state:
           title: "حالة فارغة"
         tooltips:
@@ -102,3 +117,5 @@ ar:
         char_counter:
           title: "عداد الأحرف"
           placeholder: "أدخل نصك هنا..."
+        segmented_control:
+          title: "عنصر تحكم مُقسَّم (مجموعة أزرار تبديل)"

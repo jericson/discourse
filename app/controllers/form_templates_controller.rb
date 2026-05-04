@@ -13,7 +13,10 @@ class FormTemplatesController < ApplicationController
     params.require(:id)
 
     template = FormTemplate.find_by(id: params[:id])
+
     raise Discourse::NotFound if template.nil?
+
+    template.process!(guardian)
 
     render_serialized(template, FormTemplateSerializer, root: "form_template")
   end
@@ -21,6 +24,8 @@ class FormTemplatesController < ApplicationController
   private
 
   def ensure_form_templates_enabled
-    raise Discourse::InvalidAccess.new unless SiteSetting.experimental_form_templates
+    unless UpcomingChanges.enabled_for_user?(:enable_form_templates, current_user)
+      raise Discourse::InvalidAccess.new
+    end
   end
 end

@@ -1,9 +1,12 @@
 # frozen_string_literal: true
 
-RSpec.describe "List channels | sidebar", type: :system do
-  fab!(:current_user) { Fabricate(:user) }
+RSpec.describe "List channels | sidebar" do
+  fab!(:current_user, :user)
 
   let(:chat) { PageObjects::Pages::Chat.new }
+  let(:drawer_page) { PageObjects::Pages::ChatDrawer.new }
+  let(:chat_sidebar) { PageObjects::Components::Chat::Sidebar.new }
+  let(:chat_sidebar_page) { PageObjects::Pages::ChatSidebar.new }
 
   before do
     chat_system_bootstrap
@@ -13,7 +16,7 @@ RSpec.describe "List channels | sidebar", type: :system do
 
   context "when channels present" do
     context "when category channel" do
-      fab!(:category_channel_1) { Fabricate(:category_channel) }
+      fab!(:category_channel_1, :category_channel)
 
       context "when member of the channel" do
         before do
@@ -50,7 +53,7 @@ RSpec.describe "List channels | sidebar", type: :system do
         channel_2.add(current_user)
       end
 
-      it "sorts them by slug" do
+      it "sorts them by slug when all channels are read" do
         visit("/")
 
         expect(page.find("#sidebar-section-content-chat-channels li:nth-child(1)")).to have_css(
@@ -60,11 +63,41 @@ RSpec.describe "List channels | sidebar", type: :system do
           ".channel-#{channel_1.id}",
         )
       end
+
+      it "sorts them by slug when channel has unread messages" do
+        Fabricate(:chat_message, chat_channel: channel_1)
+        visit("/")
+
+        expect(page.find("#sidebar-section-content-chat-channels li:nth-child(1)")).to have_css(
+          ".channel-#{channel_2.id}",
+        )
+        expect(page.find("#sidebar-section-content-chat-channels li:nth-child(2)")).to have_css(
+          ".channel-#{channel_1.id}",
+        )
+      end
+
+      it "does not change sorting order when using drawer" do
+        Fabricate(:chat_message, chat_channel: channel_1)
+        visit("/")
+
+        expect(page.find("#sidebar-section-content-chat-channels li:nth-child(1)")).to have_css(
+          ".channel-#{channel_2.id}",
+        )
+
+        drawer_page.visit_index
+        drawer_page.click_channels
+
+        expect(drawer_page).to have_channel_at_position(channel_1, 1)
+
+        expect(page.find("#sidebar-section-content-chat-channels li:nth-child(1)")).to have_css(
+          ".channel-#{channel_2.id}",
+        )
+      end
     end
 
     context "when direct message channels" do
       fab!(:dm_channel_1) { Fabricate(:direct_message_channel, users: [current_user]) }
-      fab!(:inaccessible_dm_channel_1) { Fabricate(:direct_message_channel) }
+      fab!(:inaccessible_dm_channel_1, :direct_message_channel)
 
       context "when member of the channel" do
         before { visit("/") }
@@ -103,10 +136,23 @@ RSpec.describe "List channels | sidebar", type: :system do
   end
 
   context "when no direct message channels" do
-    before { visit("/") }
+    it "shows the start new dm button" do
+      visit("/")
+      chat_sidebar.click_start_new_dm
 
-    it "shows the section" do
-      expect(page).to have_css(".sidebar-section[data-section-name='chat-dms']")
+      expect(page).to have_selector(".chat-modal-new-message")
+    end
+
+    context "when user can't dm" do
+      fab!(:group)
+
+      before { SiteSetting.direct_message_enabled_groups = group.id }
+
+      it "doesn't show the section" do
+        visit("/")
+
+        expect(chat_sidebar).to have_no_dm_section
+      end
     end
   end
 
@@ -141,11 +187,8 @@ RSpec.describe "List channels | sidebar", type: :system do
 
       it "removes it from the sidebar" do
         visit("/")
-
-        find(".sidebar-row.channel-#{dm_channel_1.id}").hover
-        find(".sidebar-row.channel-#{dm_channel_1.id} .sidebar-section-hover-button").click
-
-        expect(page).to have_no_selector(".sidebar-row.channel-#{dm_channel_1.id}")
+        chat_sidebar_page.remove_channel(dm_channel_1)
+        expect(chat_sidebar_page).to have_no_channel(dm_channel_1)
       end
     end
   end

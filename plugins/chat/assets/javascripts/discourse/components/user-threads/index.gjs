@@ -2,8 +2,8 @@ import Component from "@glimmer/component";
 import { cached } from "@glimmer/tracking";
 import { LinkTo } from "@ember/routing";
 import { service } from "@ember/service";
-import i18n from "discourse-common/helpers/i18n";
-import { bind } from "discourse-common/utils/decorators";
+import { bind } from "discourse/lib/decorators";
+import { i18n } from "discourse-i18n";
 import ChannelIcon from "discourse/plugins/chat/discourse/components/channel-icon";
 import ChannelTitle from "discourse/plugins/chat/discourse/components/channel-title";
 import List from "discourse/plugins/chat/discourse/components/chat/list";
@@ -13,18 +13,12 @@ import ThreadPreview from "discourse/plugins/chat/discourse/components/user-thre
 import ChatThreadPreview from "discourse/plugins/chat/discourse/models/chat-thread-preview";
 
 export default class UserThreads extends Component {
-  @service chat;
   @service chatApi;
   @service chatChannelsManager;
   @service messageBus;
   @service site;
 
   trackedChannels = {};
-
-  @cached
-  get threadsCollection() {
-    return this.chatApi.userThreads(this.handleLoadedThreads);
-  }
 
   willDestroy() {
     super.willDestroy(...arguments);
@@ -34,6 +28,11 @@ export default class UserThreads extends Component {
     });
 
     this.trackedChannels = {};
+  }
+
+  @cached
+  get threadsCollection() {
+    return this.chatApi.userThreads(this.handleLoadedThreads);
   }
 
   @bind
@@ -46,6 +45,8 @@ export default class UserThreads extends Component {
       if (tracking) {
         thread.tracking.mentionCount = tracking.mention_count;
         thread.tracking.unreadCount = tracking.unread_count;
+        thread.tracking.watchedThreadsUnreadCount =
+          tracking.watched_threads_unread_count;
       }
 
       this.trackChannel(thread.channel);

@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
-describe "Using #hashtag autocompletion to search for and lookup categories and tags",
-         type: :system do
+describe "Using #hashtag autocompletion to search for and lookup categories and tags" do
   fab!(:current_user) { Fabricate(:user, refresh_auto_groups: true) }
   fab!(:category) do
     Fabricate(:category, name: "Cool Category", slug: "cool-cat", topic_count: 3234)
@@ -50,7 +49,7 @@ describe "Using #hashtag autocompletion to search for and lookup categories and 
     )
   end
 
-  it "cooks the selected hashtag clientside in the composer preview with the correct url and icon" do
+  it "cooks the selected category hashtag clientside in the composer preview with the correct url and icon" do
     visit_topic_and_initiate_autocomplete
     hashtag_results = page.all(".hashtag-autocomplete__link", count: 2)
     hashtag_results[0].click
@@ -70,16 +69,19 @@ describe "Using #hashtag autocompletion to search for and lookup categories and 
       with_tag(
         "span",
         with: {
-          class: "hashtag-category-badge hashtag-color--category-#{category.id}",
+          class: "hashtag-category-square hashtag-color--category-#{category.id}",
         },
       )
     end
+  end
 
+  it "cooks the selected tag hashtag clientside in the composer preview with the correct url and icon" do
     visit_topic_and_initiate_autocomplete
     hashtag_results = page.all(".hashtag-autocomplete__link", count: 2)
     hashtag_results[1].click
     expect(page).to have_css(".hashtag-cooked")
     cooked_hashtag = page.find(".hashtag-cooked")
+
     expect(cooked_hashtag["outerHTML"]).to have_tag(
       "a",
       with: {
@@ -124,7 +126,7 @@ describe "Using #hashtag autocompletion to search for and lookup categories and 
       with_tag(
         "span",
         with: {
-          class: "hashtag-category-badge hashtag-color--category-#{category.id}",
+          class: "hashtag-category-square hashtag-color--category-#{category.id}",
         },
       )
     end
@@ -186,7 +188,7 @@ describe "Using #hashtag autocompletion to search for and lookup categories and 
       with_tag(
         "span",
         with: {
-          class: "hashtag-category-badge hashtag-color--category-#{category.id}",
+          class: "hashtag-category-square hashtag-color--category-#{category.id}",
         },
       )
     end
@@ -218,7 +220,7 @@ describe "Using #hashtag autocompletion to search for and lookup categories and 
       with_tag(
         "span",
         with: {
-          class: "hashtag-category-badge hashtag-color--category-#{category.id}",
+          class: "hashtag-category-square hashtag-color--category-#{category.id}",
         },
       )
     end
@@ -242,6 +244,20 @@ describe "Using #hashtag autocompletion to search for and lookup categories and 
     end
   end
 
+  it "does not show hashtag autocomplete when typing a URL with anchor" do
+    topic_page.visit_topic_and_open_composer(topic)
+    expect(topic_page).to have_expanded_composer
+
+    # normal autocomplete works
+    topic_page.type_in_composer("#co")
+    expect(page).to have_css(".hashtag-autocomplete")
+
+    # autocomplete does not trigger within a URL
+    topic_page.clear_composer
+    topic_page.type_in_composer("discourse.org/#co")
+    expect(page).to have_no_css(".hashtag-autocomplete", wait: 2)
+  end
+
   context "when a user cannot access the category for a hashtag cooked in another post" do
     fab!(:admin)
     fab!(:manager_group) { Fabricate(:group, name: "Managers") }
@@ -255,9 +271,9 @@ describe "Using #hashtag autocompletion to search for and lookup categories and 
 
     it "shows a default color and css class for the category icon square" do
       topic_page.visit_topic(topic, post_number: post_with_private_category.post_number)
-      expect(page).to have_css(".hashtag-cooked .hashtag-category-badge")
+      expect(page).to have_css(".hashtag-cooked .hashtag-category-square")
       generated_css = find("#hashtag-css-generator", visible: false).text(:all)
-      expect(generated_css).to include(".hashtag-category-badge")
+      expect(generated_css).to include(".hashtag-category-square")
       expect(generated_css).not_to include(".hashtag-color--category--#{private_category.id}")
     end
   end

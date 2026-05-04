@@ -16,7 +16,7 @@ module BackupRestore
       @current_db = current_db
     end
 
-    def restore(db_dump_path)
+    def restore(db_dump_path, interactive = false)
       BackupRestore.move_tables_between_schemas(MAIN_SCHEMA, BACKUP_SCHEMA)
 
       @db_dump_path = db_dump_path
@@ -24,6 +24,7 @@ module BackupRestore
 
       create_missing_discourse_functions
       restore_dump
+      pause_before_migration if interactive
       migrate_database
       reconnect_database
 
@@ -49,9 +50,11 @@ module BackupRestore
       ActiveRecord::Base.connection.drop_schema(BACKUP_SCHEMA) if backup_schema_dropable?
     end
 
-    def self.core_migration_files
+    def self.all_migration_files
       Dir[Rails.root.join(Migration::SafeMigrate.post_migration_path, "**/*.rb")] +
-        Dir[Rails.root.join("db/migrate/*.rb")]
+        Dir[Rails.root.join("db/migrate/*.rb")] +
+        Dir[Rails.root.join("plugins/**", Migration::SafeMigrate.post_migration_path, "**/*.rb")] +
+        Dir[Rails.root.join("plugins/**", "db/migrate/*.rb")]
     end
 
     protected
@@ -101,17 +104,39 @@ module BackupRestore
         "CREATE SCHEMA", # PostgreSQL 11+
         "COMMENT ON SCHEMA", # PostgreSQL 11+
         "SET default_table_access_method", # PostgreSQL 12
+        "CREATE EXTENSION",
+        "COMMENT ON EXTENSION",
+        "\\\\restrict",
+        "\\\\unrestrict",
       ].join("|")
 
-      command = "sed -E '/^(#{unwanted_sql})/d' #{@db_dump_path}"
+      commands = [
+        "/^(#{unwanted_sql})/d;",
+        "/^CREATE FUNCTION discourse_functions/,/^\\$\\$;$/d",
+        "/^CREATE (SERVER|USER MAPPING|FOREIGN TABLE)/,/^ *\\);/d",
+      ]
+
       if BackupRestore.postgresql_major_version < 11
-        command = "#{command} | sed -E 's/^(CREATE TRIGGER.+EXECUTE) FUNCTION/\\1 PROCEDURE/'"
+        commands << "s/^(CREATE TRIGGER.+EXECUTE) FUNCTION/\\1 PROCEDURE/"
       end
-      command
+
+      <<~COMMAND
+        sed -E '
+          #{commands.join(";\n")}
+        ' #{@db_dump_path}
+      COMMAND
     end
 
     def restore_dump_command
-      "#{sed_command} | #{self.class.psql_command} 2>&1"
+      nonce = SecureRandom.hex
+
+      <<~CMD
+        (
+          printf '%s\\n' "\\\\restrict #{nonce}"
+          #{sed_command}
+          printf '%s\\n' "\\\\unrestrict #{nonce}"
+        ) | #{self.class.psql_command} 2>&1
+      CMD
     end
 
     def self.psql_command
@@ -134,6 +159,16 @@ module BackupRestore
       ].compact.join(" ")
     end
 
+    def pause_before_migration
+      puts ""
+      puts "Attention! Pausing restore before migrating database.".red.bold
+      puts "You can work on the restored database in a separate Rails console."
+      puts ""
+      puts "Press any key to continue with the restore.".bold
+      puts ""
+      STDIN.getch
+    end
+
     def migrate_database
       log "Migrating the database..."
 
@@ -142,6 +177,7 @@ module BackupRestore
               "SKIP_POST_DEPLOYMENT_MIGRATIONS" => "0",
               "SKIP_OPTIMIZE_ICONS" => "1",
               "DISABLE_TRANSLATION_OVERRIDES" => "1",
+              "SKIP_SEED_FU" => "1",
             },
             "rake",
             "db:migrate",
@@ -162,7 +198,10 @@ module BackupRestore
       @created_functions_for_table_columns = []
       all_readonly_table_columns = []
 
-      DatabaseRestorer.core_migration_files.each do |path|
+      DatabaseRestorer.all_migration_files.each do |path|
+        file_content = File.read(path)
+        next if file_content.exclude?("DROPPED_TABLES") && file_content.exclude?("DROPPED_COLUMNS")
+
         require path
         class_name = File.basename(path, ".rb").sub(/\A\d+_/, "").camelize
         migration_class = class_name.constantize

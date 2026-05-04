@@ -1,8 +1,33 @@
-// Modal wrappers
+@use "lib/viewport";
 
+html.modal-open {
+  // prevents bg scrolling when modal is open
+  overflow: hidden;
+  scrollbar-gutter: stable;
+}
+
+html.keyboard-visible.mobile-view {
+  .d-modal {
+    max-height: calc(var(--composer-vh, 1dvh) * 100);
+    height: calc(var(--composer-vh, 1dvh) * 100);
+    bottom: 0;
+  }
+
+  .d-modal__container {
+    max-height: calc(var(--composer-vh, 1dvh) * 100);
+    height: calc(var(--composer-vh, 1dvh) * 100);
+  }
+}
+
+html:not(.keyboard-visible).mobile-device {
+  .d-modal__container {
+    padding-bottom: env(safe-area-inset-bottom, 1rem);
+  }
+}
+
+// Modal wrappers
 .d-modal {
   pointer-events: none; // Allow clicks through wrappers so they hit the adjacent backdrop element
-
   display: flex;
   align-items: center;
   width: 100%;
@@ -12,12 +37,18 @@
   z-index: z("modal", "content");
   overflow: auto;
 
-  &.-inline {
-    position: relative;
+  @include viewport.until(sm) {
+    align-items: flex-end;
   }
 
-  html.keyboard-visible body.ios-safari-composer-hacks & {
-    height: calc(var(--composer-vh, 1vh) * 100);
+  @include viewport.from(sm) {
+    --modal-max-width: 600px;
+    --modal-width: 30em; // set in ems to scale with user font-size
+    --modal-min-width: 400px;
+  }
+
+  &.-inline {
+    position: relative;
   }
 
   &__container {
@@ -25,24 +56,83 @@
     flex-direction: column;
     pointer-events: auto;
     box-sizing: border-box;
+    border-radius: var(--d-border-radius);
     margin: 0 auto;
-    max-height: 80vh;
     background-color: var(--secondary);
     box-shadow: var(--shadow-modal);
+    max-height: var(--modal-max-height, 80vh); // unset, optional theme utility
+
+    @include viewport.until(sm) {
+      // this is a hack to prevent issues on safari with transforms
+      position: fixed;
+      width: 100%;
+      max-width: 100%;
+      max-height: calc(var(--composer-vh, 1dvh) * 85);
+
+      &.is-entering {
+        @include d-animation(modal-enter-mobile, 250ms, ease);
+      }
+
+      &.is-exiting {
+        @include d-animation(modal-exit-mobile, 250ms, ease);
+      }
+    }
+
+    @include viewport.from(sm) {
+      max-width: var(--modal-max-width);
+      min-width: var(--modal-min-width);
+      min-height: var(--modal-min-height); // unset, optional theme utility
+
+      .d-modal.-large & {
+        max-width: 800px;
+      }
+
+      .d-modal.-max & {
+        max-width: 90vw;
+      }
+
+      &.is-entering {
+        @include d-animation(
+          modal-enter-desktop,
+          250ms,
+          cubic-bezier(0.4, 0, 0.2, 1)
+        );
+      }
+
+      &.is-exiting {
+        @include d-animation(
+          modal-exit-desktop,
+          250ms,
+          cubic-bezier(0.4, 0, 0.2, 1)
+        );
+      }
+    }
   }
 
   &__header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0.5rem 0.5rem 0.5rem 1.5rem; //offset for close button padding
-    border-bottom: 1px solid var(--primary-low);
+    padding: 0.5rem;
+    border-bottom: 1px solid var(--content-border-color);
+
+    &:not(.--has-primary-action) {
+      padding: 0.5rem 0.5rem 0.5rem 1.5rem; // offset for close button padding
+    }
 
     .modal-close {
       margin-left: auto;
+      align-self: start;
+
       .d-icon {
         font-size: var(--font-up-2);
         color: var(--primary-high);
+      }
+
+      &:focus-visible {
+        .d-icon {
+          color: var(--primary);
+        }
       }
     }
   }
@@ -51,6 +141,15 @@
   .d-modal__dismiss-action {
     .btn {
       text-transform: capitalize;
+    }
+  }
+
+  &__title-text {
+    font-size: var(--font-up-1-rem);
+    line-height: var(--line-height-medium);
+
+    @include viewport.from(sm) {
+      font-size: var(--font-up-3);
     }
   }
 
@@ -64,30 +163,69 @@
     padding: 1rem 1.5rem;
     box-sizing: border-box;
 
+    &.empty {
+      display: none;
+    }
+
     input {
       width: auto;
 
-      &[type="text"] {
+      &[type="text"],
+      &[type="password"] {
         width: 100%;
       }
     }
+
     textarea {
       width: 100%;
       height: 80px;
     }
+
+    .password-confirmation {
+      display: none;
+    }
+
+    section.field {
+      padding: 0.25em 0;
+      margin-bottom: 5px;
+
+      &.with-items {
+        display: flex;
+        align-items: flex-start;
+      }
+
+      .field-item {
+        display: inline-block;
+        margin-right: 10px;
+      }
+    }
+
     pre code {
       white-space: pre-wrap;
       max-width: 100%;
     }
   }
+
   &__footer {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     padding: 1rem 1.5rem;
-    border-top: 1px solid var(--primary-low);
+    border-top: 1px solid var(--content-border-color);
     gap: 0.5rem;
+
+    @include viewport.until(sm) {
+      &__footer {
+        margin-top: auto;
+
+        .--stacked & {
+          flex-direction: column;
+          align-items: stretch;
+        }
+      }
+    }
   }
+
   &__backdrop {
     user-select: none;
     position: fixed;
@@ -102,55 +240,39 @@
     @media (prefers-reduced-motion) {
       animation-duration: 0s;
     }
+
+    &.is-exiting {
+      @include d-animation(
+        backdrop-fade-out,
+        250ms,
+        cubic-bezier(0.4, 0, 0.2, 1)
+      );
+    }
   }
-}
 
-//legacy
+  #modal-alert {
+    padding-left: 1.5rem;
+  }
 
-.fixed-modal:not(#discourse-modal) {
-  // new <DModal /> only, not <DModalLegacy />
-  pointer-events: none; // Allow clicks through wrappers so they hit the adjacent backdrop element
-}
+  .ios-device & {
+    &__footer {
+      margin-top: auto;
+    }
+  }
 
-.modal-outer-container {
-  width: 100%;
-  height: 100%;
-}
+  // fixes modal placement on Android when keyboard is visible
+  html.keyboard-visible:not(.ios-device) & {
+    height: calc(100% - env(keyboard-inset-height));
 
-.modal-middle-container {
-  display: flex;
-  height: 100%;
-  align-items: center;
-}
-
-.modal-inner-container {
-  pointer-events: auto;
-  --modal-max-width: 47em; // set in ems to scale with user font-size
-  box-sizing: border-box;
-  flex: 0 1 auto;
-  margin: 0 auto;
-  max-width: var(--modal-max-width);
-  background-color: var(--secondary);
-  box-shadow: var(--shadow-modal);
-
-  .select-kit {
-    width: 220px;
-
-    &.tag-chooser {
-      width: 100%;
+    .d-modal__container {
+      max-height: 100%;
+      min-height: 100%;
+      height: 100%;
     }
   }
 }
 
-.modal-open {
-  .popover {
-    z-index: z("modal", "popover");
-  }
-  .tooltip {
-    z-index: z("modal", "tooltip");
-  }
-}
-
+// legacy
 .input-hint-text {
   margin-left: 0.5em;
   color: var(--secondary-high);
@@ -165,6 +287,7 @@
   left: 0;
   z-index: z("modal", "overlay");
   background-color: #111;
+
   &.fade {
     opacity: 0;
   }
@@ -173,11 +296,12 @@
 .modal-backdrop,
 .modal-backdrop.fade.in {
   animation: fade 0.3s;
+  opacity: 0.9;
+  filter: alpha(opacity=90);
+
   @media (prefers-reduced-motion) {
     animation-duration: 0s;
   }
-  opacity: 0.9;
-  filter: alpha(opacity=90);
 }
 
 // fade in
@@ -185,415 +309,69 @@
   from {
     opacity: 0;
   }
+
   to {
     opacity: 0.6;
   }
 }
 
-.inline-modal {
-  .modal-inner-container {
-    border: 1px solid var(--secondary-medium);
+// Modal animations
+@keyframes modal-enter-desktop {
+  from {
+    transform: scale(0.7);
+    opacity: 0;
+  }
+
+  to {
+    transform: scale(1);
+    opacity: 1;
   }
 }
 
-.fixed-modal {
-  position: fixed;
-  top: 0;
-  width: 100%;
-  height: 100%;
-  z-index: z("modal", "content");
-  overflow: auto;
-
-  html.keyboard-visible body.ios-safari-composer-hacks & {
-    height: calc(var(--composer-vh, 1vh) * 100);
-    .modal-inner-container {
-      max-height: 100%;
-      margin-bottom: 0px;
-    }
+@keyframes modal-exit-desktop {
+  from {
+    transform: scale(1);
+    opacity: 1;
   }
 
-  &:not(.bookmark-reminder-modal):not(.history-modal) {
-    .modal-body:not(.reorder-categories):not(.poll-ui-builder):not(
-        .poll-breakdown
-      ) {
-      max-height: 80vh !important;
-      @media screen and (max-height: 500px) {
-        max-height: 65vh !important;
-      }
-    }
+  to {
+    transform: scale(0.7);
+    opacity: 0;
+  }
+}
+
+@keyframes modal-enter-mobile {
+  from {
+    transform: translateY(100%);
+  }
+
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes modal-exit-mobile {
+  from {
+    transform: translateY(0);
+  }
+
+  to {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes backdrop-fade-out {
+  from {
+    opacity: 0.6;
+  }
+
+  to {
+    opacity: 0;
   }
 }
 
 .modal-form {
   margin-bottom: 0;
-}
-
-.modal {
-  .nav {
-    padding: 10px 30px 10px 15px;
-    background-color: var(--secondary);
-    li > a {
-      font-size: var(--font-0);
-    }
-    border-bottom: 1px solid var(--primary-low);
-  }
-
-  &.hidden {
-    display: none;
-  }
-
-  .modal-body {
-    overflow-y: auto;
-    max-height: 400px;
-    padding: 1em;
-
-    &.full-height-modal {
-      max-height: calc(100vh - 150px);
-    }
-
-    &.insert-link {
-      overflow-y: visible;
-      input {
-        min-width: 300px;
-      }
-
-      .inputs {
-        position: relative;
-        .spinner {
-          position: absolute;
-          right: 8px;
-          top: -15px;
-          width: 10px;
-          height: 10px;
-        }
-        .internal-link-results {
-          position: absolute;
-          top: 70%;
-          padding: 5px 10px;
-          box-shadow: var(--shadow-card);
-          z-index: 5;
-          background-color: var(--secondary);
-          max-height: 150px;
-          width: 90%;
-          overflow-y: auto;
-          > .search-link {
-            padding: 6px;
-            border-bottom: 1px solid var(--primary-low);
-            cursor: pointer;
-            display: block;
-            &:hover,
-            &:focus {
-              background-color: var(--highlight-bg);
-            }
-            .search-category {
-              display: flex;
-              align-items: center;
-            }
-            .discourse-tags {
-              font-size: var(--font-down-1);
-            }
-          }
-        }
-      }
-    }
-    textarea {
-      width: 100%;
-      height: 80px;
-      box-sizing: border-box;
-    }
-    p {
-      font-size: var(--font-0);
-    }
-    .archetype-option {
-      margin-bottom: 20px;
-    }
-    .warning {
-      color: var(--danger) !important;
-    }
-  }
-
-  .password-confirmation {
-    display: none;
-  }
-
-  section.field {
-    padding: 0.25em 0;
-    margin-bottom: 5px;
-    &.with-items {
-      display: flex;
-      align-items: flex-start;
-    }
-    .field-item {
-      display: inline-block;
-      margin-right: 10px;
-    }
-  }
-
-  // password reset modal
-  .modal-body.forgot-password-modal p {
-    font-size: var(--font-0);
-  }
-
-  pre code {
-    white-space: pre-wrap;
-    max-width: var(--modal-max-width);
-  }
-}
-
-.reply-where-modal {
-  .dialog-content {
-    width: 100%;
-    min-width: unset;
-    max-width: 30em;
-  }
-
-  .dialog-footer {
-    display: block;
-  }
-
-  .btn {
-    display: block;
-    text-align: left;
-    margin-bottom: 0.75em;
-    margin-right: 0;
-    overflow: hidden;
-    width: 100%;
-
-    &.dialog-close {
-      display: none;
-    }
-
-    &.btn-reply-on-original {
-      --text-color: var(--secondary);
-    }
-
-    &.btn-reply-where__cancel {
-      padding-left: 0;
-      margin: 0;
-    }
-
-    &.btn-reply-here {
-      --text-color: var(--primary);
-      .discourse-no-touch & {
-        &:hover {
-          --text-color: var(--secondary);
-        }
-      }
-    }
-
-    &.btn-reply-where {
-      min-height: 3em; // for situations when there are no categories/tags
-    }
-
-    .fancy-title {
-      display: inline-block;
-      width: 100%;
-
-      @include ellipsis;
-    }
-
-    .topic-title__top-line {
-      display: flex;
-      align-items: baseline;
-      color: var(--text-color);
-      font-size: var(--font-up-1);
-      .d-icon {
-        color: var(--text-color);
-        margin: 0;
-      }
-    }
-
-    .topic-statuses {
-      display: flex;
-      font-size: 0.95em;
-    }
-
-    .topic-title__bottom-line {
-      margin-top: 0.15em;
-      display: flex;
-      align-items: baseline;
-      gap: 0.5em;
-      .discourse-tags {
-        font-size: var(--font-down-1);
-      }
-      .badge-category__name,
-      .discourse-tag {
-        color: var(--text-color);
-      }
-    }
-  }
-}
-
-.admin-delete-user-posts-progress-modal {
-  .progress-bar {
-    height: 15px;
-    position: relative;
-    background: var(--primary-low-mid);
-    border-radius: 25px;
-    overflow: hidden;
-    margin: 30px 0 20px;
-    span {
-      display: block;
-      width: 0%;
-      height: 100%;
-      background-color: var(--tertiary);
-      position: relative;
-      transition: width 0.6s linear;
-    }
-  }
-}
-
-.incoming-email-modal {
-  max-height: 80vh;
-
-  .btn {
-    background-color: transparent;
-    margin-right: 5px;
-    &:hover,
-    &.active {
-      color: var(--primary);
-    }
-    &.active {
-      font-weight: bold;
-    }
-    &:focus {
-      outline: 2px solid var(--primary-low);
-    }
-  }
-  .incoming-email-tabs {
-    margin-bottom: 15px;
-  }
-  .incoming-email-content {
-    height: 300px;
-    max-width: 100%;
-    width: 90vw; // forcing textarea wider
-    textarea,
-    .incoming-email-html-part {
-      height: 95%;
-      border: none;
-      border-top: 1px solid var(--primary-low);
-      padding-top: 10px;
-      width: 100%;
-    }
-    textarea {
-      font-family: var(--d-font-family--monospace);
-      resize: none;
-      border-radius: 0;
-      box-shadow: none;
-    }
-    .incoming-email-html-part {
-      width: calc(100% - 36px);
-      padding: 10px 4px 4px 4px;
-    }
-    @media screen and (max-width: 760px) {
-      .incoming-email-html-part {
-        width: calc(100% - 10px);
-      }
-    }
-  }
-}
-
-.modal .modal-body.change-timestamp {
-  #date-container {
-    .pika-single {
-      width: 100%;
-      box-sizing: border-box;
-      display: flex;
-      justify-content: center;
-    }
-  }
-
-  form {
-    display: flex;
-
-    .date-picker-wrapper,
-    input[type="time"] {
-      width: 50%;
-    }
-
-    .date-picker-wrapper {
-      display: flex;
-      flex: 1;
-
-      .date-picker {
-        flex: 1;
-      }
-    }
-
-    input.date-picker,
-    input[type="time"] {
-      text-align: left;
-      margin: 0;
-    }
-  }
-}
-
-.change-timestamp {
-  width: 28em; // scales with user font-size
-  max-width: 90vw; // prevents overflow due to extra large user font-size
-}
-
-.change-timestamp {
-  #date-container {
-    .pika-single {
-      position: relative !important; // overriding another important
-      display: inline-block;
-      margin-top: 0.5em;
-    }
-  }
-
-  .date-picker-wrapper {
-    min-width: 130px;
-    margin-right: 0.5em;
-  }
-
-  input[type="time"] {
-    width: 130px;
-  }
-
-  form {
-    margin: 0;
-  }
-}
-
-.flag-modal-body {
-  form {
-    margin: 0;
-  }
-  .flag-action-type .controls .checkbox-label {
-    margin-bottom: 0.25em;
-  }
-  .flag-action-type-details {
-    width: 100%;
-    // max-width: 500px;
-    line-height: var(--line-height-large);
-  }
-  .flag-confirmation {
-    margin-top: 0.5em;
-    padding-left: 1.125em;
-  }
-}
-
-.flag-message {
-  margin: 0;
-}
-
-.custom-message-length {
-  color: var(--primary-medium);
-  font-size: var(--font-down-1);
-}
-
-.ignore-duration-with-username-modal {
-  .future-date-input {
-    margin-top: 1em;
-  }
-}
-
-.modal:not(.has-tabs) {
-  .modal-tab {
-    position: absolute;
-    width: 95%;
-  }
 }
 
 .modal {
@@ -625,6 +403,286 @@
       }
     }
   }
+
+  &:not(.has-tabs) {
+    .modal-tab {
+      position: absolute;
+      width: 95%;
+    }
+  }
+
+  .nav {
+    background-color: var(--secondary);
+    border-bottom: 1px solid var(--content-border-color);
+
+    li > a {
+      font-size: var(--font-0);
+    }
+  }
+
+  &.hidden {
+    display: none;
+  }
+
+  pre code {
+    white-space: pre-wrap;
+    max-width: var(--modal-max-width);
+  }
+
+  .close {
+    font-size: var(--font-up-4);
+    text-decoration: none;
+    cursor: pointer;
+
+    @include viewport.from(sm) {
+      font-size: var(--font-up-3);
+
+      &:hover {
+        color: var(--primary);
+      }
+    }
+  }
+
+  @include viewport.from(sm) {
+    .category-chooser {
+      width: 50%;
+    }
+  }
+}
+
+.reply-where-modal {
+  .dialog-content {
+    width: 100%;
+    min-width: unset;
+    max-width: 30em;
+  }
+
+  .dialog-footer {
+    display: block;
+  }
+
+  .btn {
+    display: block;
+    text-align: left;
+    margin-bottom: 0.75em;
+    margin-right: 0;
+    overflow: hidden;
+    width: 100%;
+    border-radius: var(--d-border-radius);
+
+    &.dialog-close {
+      display: none;
+    }
+
+    &.btn-reply-on-original {
+      --text-color: var(--secondary);
+    }
+
+    &.btn-reply-where__cancel {
+      padding-left: 0;
+      margin: 0;
+    }
+
+    &.btn-reply-here {
+      --text-color: var(--primary);
+
+      .discourse-no-touch & {
+        &:hover {
+          --text-color: var(--secondary);
+        }
+      }
+    }
+
+    &.btn-reply-where {
+      min-height: 3em; // for situations when there are no categories/tags
+    }
+
+    .fancy-title {
+      display: inline-block;
+      width: 100%;
+
+      @include ellipsis;
+    }
+
+    .topic-title__top-line {
+      display: flex;
+      align-items: baseline;
+      color: var(--text-color);
+      font-size: var(--font-up-1);
+
+      .d-icon {
+        color: var(--text-color);
+        margin: 0;
+      }
+    }
+
+    .topic-statuses {
+      display: flex;
+      font-size: 0.95em;
+    }
+
+    .topic-title__bottom-line {
+      margin-top: 0.15em;
+      display: flex;
+      align-items: baseline;
+      gap: 0.5em;
+
+      .discourse-tags {
+        font-size: var(--font-down-1);
+      }
+
+      .badge-category__name,
+      .discourse-tag {
+        color: var(--text-color);
+      }
+    }
+  }
+}
+
+.admin-delete-user-posts-progress-modal {
+  .progress-bar {
+    height: 15px;
+    position: relative;
+    background: var(--primary-low-mid);
+    border-radius: 25px;
+    overflow: hidden;
+    margin: 30px 0 20px;
+
+    span {
+      display: block;
+      width: 0%;
+      height: 100%;
+      background-color: var(--tertiary);
+      position: relative;
+      transition: width 0.6s linear;
+    }
+  }
+}
+
+.incoming-email-modal {
+  max-height: 80vh;
+
+  .btn {
+    background-color: transparent;
+    margin-right: 5px;
+
+    &:hover,
+    &.active {
+      color: var(--primary);
+    }
+
+    &.active {
+      font-weight: bold;
+    }
+
+    &:focus {
+      outline: 2px solid var(--primary-low);
+    }
+  }
+
+  .incoming-email-tabs {
+    margin-bottom: 15px;
+  }
+
+  .incoming-email-content {
+    height: 300px;
+    max-width: 100%;
+    width: 90vw; // forcing textarea wider
+
+    textarea,
+    .incoming-email-html-part {
+      height: 95%;
+      border: none;
+      border-top: 1px solid var(--content-border-color);
+      padding-top: 10px;
+      width: 100%;
+    }
+
+    textarea {
+      font-family: var(--d-font-family--monospace);
+      resize: none;
+      border-radius: 0;
+      box-shadow: none;
+    }
+
+    .incoming-email-html-part {
+      width: calc(100% - 36px);
+      padding: 10px 4px 4px 4px;
+    }
+
+    @media screen and (width <= 760px) {
+      .incoming-email-html-part {
+        width: calc(100% - 10px);
+      }
+    }
+  }
+}
+
+.change-timestamp {
+  width: 28em; // scales with user font-size
+  max-width: 90vw; // prevents overflow due to extra large user font-size
+
+  #date-container {
+    .pika-single {
+      position: relative !important; // overriding another important
+      display: inline-block;
+      margin-top: 0.5em;
+    }
+  }
+
+  .date-picker-wrapper {
+    min-width: 130px;
+    margin-right: 0.5em;
+  }
+
+  input[type="time"] {
+    width: 130px;
+  }
+
+  form {
+    margin: 0;
+  }
+}
+
+.flag-modal-body {
+  form {
+    margin: 0;
+  }
+
+  .flag-action-type .controls .checkbox-label {
+    margin-bottom: 0.25em;
+  }
+
+  .flag-action-type-details {
+    width: 100%;
+
+    // max-width: 500px;
+    line-height: var(--line-height-large);
+
+    a {
+      margin: 0;
+    }
+  }
+
+  .flag-confirmation {
+    margin-top: 0.5em;
+    padding-left: 1.125em;
+  }
+}
+
+.flag-message {
+  margin: 0;
+}
+
+.custom-message-length {
+  color: var(--primary-medium);
+  font-size: var(--font-down-1);
+}
+
+.ignore-duration-with-username-modal {
+  .future-date-input {
+    margin-top: 1em;
+  }
 }
 
 .bulk-notification-list {
@@ -635,17 +693,10 @@
   flex-wrap: wrap;
   align-items: baseline;
   margin-bottom: 0.5em;
+
   .description {
     width: 100%;
     margin-top: 0.25em;
-  }
-}
-
-.modal-body .codeblock-buttons {
-  margin: 0;
-
-  button {
-    top: 21px;
   }
 }
 
@@ -688,4 +739,89 @@
 .rename-passkey__message {
   max-width: 500px;
   margin-bottom: 2em;
+}
+
+@include viewport.from(sm) {
+  .flag-modal-body .flag-message {
+    height: 3em;
+  }
+
+  .choose-topic-modal {
+    #choosing-topic {
+      // prevents content from moving when user selects different move options 525px
+      width: 525px;
+
+      p {
+        margin-top: 0;
+      }
+
+      .radios {
+        margin-bottom: 10px;
+        display: flex;
+        flex-direction: row;
+
+        .radio-label {
+          display: inline-block;
+          padding-right: 15px;
+        }
+      }
+
+      button {
+        margin-top: 10px;
+        display: block;
+      }
+
+      form {
+        width: 95%;
+        margin-top: 20px;
+
+        .participant-selector {
+          width: 100%;
+        }
+
+        div.ac-wrap {
+          width: 100%;
+          margin-bottom: 9px;
+        }
+      }
+    }
+  }
+
+  .create-invite-modal,
+  .create-invite-bulk-modal,
+  .share-topic-modal {
+    .title {
+      align-items: center;
+      display: flex;
+
+      .subtitle {
+        margin-left: 0.5em;
+      }
+    }
+
+    .alert-error {
+      label {
+        display: inline-block;
+      }
+    }
+  }
+}
+
+.wrap-attributes-modal {
+  .wrap-modal__attribute-row {
+    display: flex;
+    gap: var(--space-2);
+
+    .form-kit__field {
+      flex: 1;
+    }
+
+    .btn {
+      align-self: end;
+    }
+  }
+
+  &__unwrap {
+    margin-left: auto;
+  }
 }

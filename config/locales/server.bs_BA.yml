@@ -116,7 +116,6 @@ bs_BA:
     confirm_email: "<p>Skoro ste gotovi! Na vašu e-adresu poslali smo aktivacijski mail. Slijedite upute u pošti da biste aktivirali svoj račun.</p><p>Ako ne stigne, provjerite svoju mapu neželjene pošte.</p>"
   topic_invite:
     muted_topic: "Žao nam je, navedeni korisnik je utišao ovu temu."
-    receiver_does_not_allow_pm: "Žao nam je, navedeni korisnik vam ne dozvoljava da mu šaljete privatne poruke."
   backup:
     operation_already_running: "An operation is currently running. Can't start a new job right now."
     backup_file_should_be_tar_gz: "The backup file should be a .tar.gz archive."
@@ -125,6 +124,10 @@ bs_BA:
   read_only_mode_enabled: "The site is in read only mode. Interactions are disabled."
   not_in_group:
     join_group: "Pridruži se grupi"
+  reading_time_minutes:
+    one: "%{count} min 🕑"
+    few: "%{count} min 🕑"
+    other: "%{count} minuta 🕑"
   likes: "Sviđanja"
   embed:
     start_discussion: "Pokreni raspravu"
@@ -205,6 +208,8 @@ bs_BA:
         bio_raw: "O Meni"
       user:
         password: "Lozinka"
+      user_password:
+        password: "Lozinka"
     errors:
       models:
         topic:
@@ -212,6 +217,10 @@ bs_BA:
             base:
               too_many_users: "You can only send warnings to one user at a time."
         user:
+          attributes:
+            password:
+              common: "is one of the 10000 most common passwords. Please use a more secure password."
+        user_password:
           attributes:
             password:
               common: "is one of the 10000 most common passwords. Please use a more secure password."
@@ -311,11 +320,7 @@ bs_BA:
   change_email:
     error: "There was an error changing your email address. Perhaps the address is already in use?"
   activation:
-    action: "Kliknite ovdje kako bi aktivirali vaš korisnički račun"
     already_done: "Link za konfirmaciju nije validan. Možda ste već aktivirani?"
-    please_continue: "Vaš novi nalog je verifikovan, i možete se ulogovati."
-    continue_button: "Nastavi na %{site_name}"
-    welcome_to: "Dobrodošli na %{site_name}!"
     approval_required: "A moderator must manually approve your new account before you can access this forum. You'll get an email when your account is approved!"
   reviewable_score_types:
     needs_approval:
@@ -383,7 +388,9 @@ bs_BA:
       every_month: "svaki mjesec"
       every_six_months: "svakih šest mjeseci"
   user_api_key:
+    deny: "Odustani"
     read: "čitaj"
+    copied: "Kopirano!"
     otp_confirmation:
       confirm_title: Nastavi ka %{site_name}
       logging_in_as: Prijavite se kao %{username}
@@ -411,7 +418,9 @@ bs_BA:
         flag: Tip
     visits:
       title: "User Visits"
-      xaxis: "Day"
+      xaxis:
+        desktop: "Desktop"
+        mobile: "Mobilno"
       yaxis: "Number of visits"
     signups:
       xaxis: "Day"
@@ -431,6 +440,8 @@ bs_BA:
         user_api: "Korisnički API"
       yaxis: "Day"
     consolidated_page_views_browser_detection:
+      yaxis: "Day"
+    site_traffic:
       yaxis: "Day"
     dau_by_mau:
       xaxis: "Day"
@@ -541,6 +552,8 @@ bs_BA:
     page_view_total_reqs:
       title: "Pagevieovi"
       xaxis: "Day"
+    page_view_legacy_total_reqs:
+      xaxis: "Day"
     page_view_logged_in_mobile_reqs:
       xaxis: "Day"
     page_view_anon_mobile_reqs:
@@ -574,6 +587,8 @@ bs_BA:
     web_crawlers:
       labels:
         page_views: "Pagevieovi"
+    web_hook_events_daily_aggregate:
+      xaxis: "Day"
     suspicious_logins:
       labels:
         user: User
@@ -597,6 +612,11 @@ bs_BA:
       labels:
         user: User
         qtt_like: Likes Received
+    topic_view_stats:
+      labels:
+        topic: Topic
+        anon_views: Anoniman
+        total_views: Suma
   dashboard:
     problem:
       rails_env: "Your server is running in %{env} mode."
@@ -617,7 +637,6 @@ bs_BA:
     educate_until_posts: "When the user starts typing their first (n) new posts, show the pop-up new user education panel in the composer."
     crawl_images: "Retrieve images from remote URLs to insert the correct width and height dimensions."
     download_remote_images_threshold: "Minimum disk space necessary to download remote images locally (in percent)"
-    disabled_image_download_domains: "Remote images will never be downloaded from these domains. Pipe-delimited list."
     editing_grace_period: "For (n) seconds after posting, editing will not create a new version in the post history."
     edit_history_visible_to_public: "Allow everyone to see previous versions of an edited post. When disabled, only staff members can view."
     delete_removed_posts_after: "Posts removed by the author will be automatically deleted after (n) hours. If set to 0, posts will be deleted immediately."
@@ -626,7 +645,6 @@ bs_BA:
     post_excerpt_maxlength: "Maximum length of a post excerpt / summary."
     post_onebox_maxlength: "Maximum length of a oneboxed Discourse post in characters."
     notification_email: "The from: email address used when sending all essential system emails. The domain specified here must have SPF, DKIM and reverse PTR records set correctly for email to arrive."
-    email_custom_headers: "A pipe-delimited list of custom email headers"
     summary_score_threshold: "The minimum score required for a post to be included in 'Summarize This Topic'"
     summary_percent_filter: "When a user clicks 'Summarize This Topic', show the top % of posts"
     polling_interval: "How often should logged in user clients poll in milliseconds"
@@ -635,7 +653,6 @@ bs_BA:
     traditional_markdown_linebreaks: "Use traditional linebreaks in Markdown, which require two trailing spaces for a linebreak."
     post_undo_action_window_mins: "Number of minutes users are allowed to undo recent actions on a post (like, flag, etc)."
     cors_origins: "Allowed origins for cross-origin requests (CORS). Each origin must include http:// or https://. The DISCOURSE_ENABLE_CORS env variable must be set to true to enable CORS."
-    post_menu_hidden_items: "The menu items to hide by default in the post menu unless an expansion ellipsis is clicked on."
     share_links: "Determine which items appear on the share dialog, and in what order."
     site_contact_username: "All automated private messages will be from this user; if left blank the default System account will be used."
     send_welcome_message: "Send all new users a welcome private message with a quick start guide."
@@ -644,7 +661,6 @@ bs_BA:
     suppress_reply_when_quoting: "Don't show the expandable in-reply-to on a post when post quotes reply."
     topics_per_period_in_top_summary: "Number of top topics shown in the default top topics summary."
     topics_per_period_in_top_page: "Number of top topics shown on the expanded 'Show More' top topics."
-    redirect_users_to_top_page: "Automatically redirect new and long absent users to the top page."
     email_token_valid_hours: "Forgot password / activate account tokens are valid for (n) hours."
     new_version_emails: "Send an email to the contact_email address when a new version of Discourse is available."
     invite_expiry_days: "How long user invitation keys are valid, in days"
@@ -687,8 +703,6 @@ bs_BA:
     tl3_requires_posts_read_all_time: "The minimum total number of posts a user must have read to qualify for trust level 3."
     tl3_promotion_min_duration: "The minimum number of days that a promotion to trust level 3 lasts before a user can be demoted back to trust level 2."
     tl3_links_no_follow: "Do not remove rel=nofollow from links posted by trust level 3 users."
-    min_trust_to_create_topic: "The minimum trust level required to create a new topic."
-    min_trust_to_edit_wiki_post: "The minimum trust level required to edit post marked as wiki."
     newuser_max_links: "How many links a new user can add to a post."
     newuser_max_attachments: "How many attachments a new user can add to a post."
     newuser_max_mentions_per_post: "Maximum number of @name notifications a new user can use in a post."
@@ -697,13 +711,11 @@ bs_BA:
     create_thumbnails: "Create thumbnails and lightbox images that are too large to fit in a post."
     email_time_window_mins: "Wait (n) minutes before sending any notification emails, to give users a chance to edit and finalize their posts."
     email_posts_context: "How many prior replies to include as context in notification emails."
-    flush_timings_secs: "How frequently we flush timing data to the server, in seconds."
     title_min_entropy: "The minimum entropy (unique characters, non-english count for more) required for a topic title."
     body_min_entropy: "The minimum entropy (unique characters, non-english count for more) required for a post body."
     min_title_similar_length: "The minimum length of a title before it will be checked for similar topics."
     category_colors: "A list of hexadecimal color values allowed for categories."
     dark_mode_none: "Ništa"
-    max_similar_results: "How many similar topics to show above the editor when composing a new topic. Comparison is based on title and body."
     title_prettify: "Prevent common title typos and errors, including all caps, lowercase first character, multiple ! and ?, extra . at end, etc."
     topic_views_heat_low: "After this many views, the views field is slightly highlighted."
     topic_views_heat_medium: "After this many views, the views field is moderately highlighted."
@@ -725,7 +737,6 @@ bs_BA:
     pop3_polling_ssl: "Use SSL while connecting to the POP3 server. (Recommended)"
     pop3_polling_username: "The username for the POP3 account to poll for email."
     pop3_polling_password: "The password for the POP3 account to poll for email."
-    email_in_min_trust: "The minimum trust level a user needs to have to be allowed to post new topics via email."
     email_prefix: "The [label] used in the subject of emails. It will default to 'title' if not set."
     email_site_title: "The title of the site used as the sender of emails from the site. Default to 'title' if not set. If your 'title' contains characters that are not allowed in email sender strings, use this setting."
     minimum_topics_similar: "How many topics need to exist before similar topics are presented when composing new topics."
@@ -743,7 +754,6 @@ bs_BA:
     enable_names: "Allow showing user full names. Disable to hide full names."
     display_name_on_posts: "Show a user's full name on their posts in addition to their @username."
     short_progress_text_threshold: "After the number of posts in a topic goes above this number, the progress bar will only show the current post number. If you change the progress bar's width, you may need to change this value."
-    warn_reviving_old_topic_age: "When someone starts replying to a topic where the last reply is older than this many days, a warning will be displayed. Disable by setting to 0."
     embed_post_limit: "Maximum number of posts to embed."
     default_other_skip_new_user_tips: "Preskoči savjete i upute za novoregistrirane korisnike."
     errors:
@@ -756,15 +766,6 @@ bs_BA:
       regex_mismatch: "Value doesn't match the required format."
       invalid_string: "Invalid value."
       invalid_string_min_max: "Must be between %{min} and %{max} characters."
-    keywords:
-      clean_up_inactive_users_after_days:
-      - ""
-      - "neaktivan"
-      - ""
-      purge_unactivated_users_grace_period_days:
-      - ""
-      - "neaktivan"
-      - ""
   search:
     within_post: "#%{post_number} od %{username}"
     types:
@@ -805,7 +806,6 @@ bs_BA:
     omniauth_confirm_button: "Nastavi"
     new_registrations_disabled: "New account registrations are not allowed at this time."
     password_too_long: "Passwords are limited to 200 characters."
-    missing_user_field: "You have not completed all the user fields"
     click_to_continue: "Klikni ovdje da nastavite dalje"
     second_factor_backup_description: "Molim ukucajte jedan od vaši rezevni kodova"
     second_factor_toggle:
@@ -836,8 +836,10 @@ bs_BA:
     queued_by_staff:
       title: "Post treba odobrenje"
     welcome_user:
+      preview: "Dobrodošli na %{site_name}!"
       subject_template: "Dobrodošli na %{site_name}!"
     welcome_invite:
+      preview: "Dobrodošli na %{site_name}!"
       subject_template: "Dobrodošli na %{site_name}!"
     tl2_promotion_message:
       subject_template: "Čestitamo na povišenju vašeg nivoa povjerenja!"
@@ -893,6 +895,7 @@ bs_BA:
       liked_received: "Likes Received"
       new_users: "Users"
       join_the_discussion: "Pročitaj Više"
+      subject_template_improved: "Sažetak"
       click_here: "klikni ovdje"
     email_login:
       text_body_template: |
@@ -904,16 +907,15 @@ bs_BA:
         %{base_url}/session/e-mail-login/%{email_token}
     set_password:
       title: "Postavi šifru"
+    admin_login:
+      subject_template_improved: "Login"
     signup_after_approval:
       subject_template: "You've been approved on %{site_name}!"
     post_approved:
       title: "Vaš post je odobren"
   page_not_found:
     page_title: "Stranica nije pronađena"
-    popular_topics: "Popularno"
-    recent_topics: "Nove"
     see_more: "Više"
-    search_title: "Pretraži stranicu"
     search_button: "Pretraži"
   upload:
     edit_reason: "downloaded local copies of images"
@@ -941,7 +943,6 @@ bs_BA:
     sender_body_blank: "body is blank"
   color_schemes:
     base_theme_name: "Base"
-    default_theme_name: "Uobičajen"
   edit_this_page: "Edit this page"
   csv_export:
     boolean_yes: "Da"
@@ -1017,31 +1018,21 @@ bs_BA:
       title: "Pošalji ponovo email aktivacije"
   wizard:
     step:
-      privacy:
+      setup:
         fields:
           login_required:
-            placeholder: "Privatno"
-      styling:
-        fields:
-          styling_preview:
-            label: "Pregled"
-          homepage_style:
+            label: "Vidljivost"
             choices:
-              categories_only:
-                label: "Samo kategorije"
-              categories_with_featured_topics:
-                label: "Kategorije s istaknutim temama"
-              categories_and_latest_topics:
-                label: "Kategorije i zadnje teme"
-              categories_and_top_topics:
-                label: "Kategorije i top teme"
-      corporate:
-        fields:
-          contact_url:
-            placeholder: "https://www.example.com/contact-us"
+              public:
+                label: "Javno"
+              private:
+                label: "Privatno"
   onebox:
     github:
       closed: "zatvoreno"
+      status_date:
+        approved: "approved"
+        closed: "zatvoreno"
   discourse_push_notifications:
     popup:
       mentioned: '%{username} vas je spomenuo/la u "%{topic}" - %{site_title}'
@@ -1049,6 +1040,7 @@ bs_BA:
       quoted: '%{username} vas je citirao/la u "%{topic}" - %{site_title}'
       replied: '%{username} vam je odgovorio/la u "%{topic}" - %{site_title}'
       posted: '%{username} je objavio/la "%{topic}" - %{site_title}'
+      private_message: '%{username} vam je poslao/la poruku u "%{topic}" - %{site_title}'
       linked: '%{username} je linkao/la vašu objavu "%{topic}" - %{site_title}'
       watching_first_post: '%{username} je kreirao novu temu "%{topic}" - %{site_title}'
       confirm_title: "Obavijesti uključene - %{site_title}"
@@ -1073,21 +1065,48 @@ bs_BA:
         description: "Složij se sa prijavom i suspendiraj prijavljenog korisnika (suspend)"
       agree_and_silence:
         description: "Složij se sa prijavom i utišaj prijavljenog korisnika (silence)"
-      delete_single:
+      delete:
         title: "Delete"
-      disagree:
+        complete: "Post izbrisan."
+      delete_and_ignore:
+        complete: "Post izbrisan."
+      delete_and_agree:
+        complete: "Post izbrisan."
+      disagree_bundle:
         title: "Ne"
       ignore:
         title: "Zanemari"
       ignore_and_do_nothing:
         title: "Ne radi ništa"
       approve:
-        title: "Odobri"
+        title: "Da"
+      approve_post:
+        title: "Da"
+      approve_post_closed:
+        title: "Da"
+      reject_post_bundle:
+        title: "Ne"
+      approve_user:
+        title: "Da"
       reject_user:
+        title: "Ne"
         delete:
           title: "Delete User"
+          complete: "Korisnik izbrisan."
+      confirm_spam:
+        title: "Da"
+      not_spam:
+        title: "Ne"
       reject:
         title: "Odbij"
+      approve_and_restore:
+        title: "Da"
+      approve_and_unhide:
+        title: "Da"
+      delete_post:
+        complete: "Post izbrisan"
+      delete_user:
+        complete: "Korisnik izbrisan"
   fallback_username: "user"
   activemodel:
     errors:

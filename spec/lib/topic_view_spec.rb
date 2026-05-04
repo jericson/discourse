@@ -28,6 +28,120 @@ RSpec.describe TopicView do
     end
   end
 
+  describe "#reset_post_collection" do
+    fab!(:post1) { Fabricate(:post, topic: topic) }
+    fab!(:post2) { Fabricate(:post, topic: topic) }
+    fab!(:post3) { Fabricate(:post, topic: topic) }
+
+    it "replaces the posts collection" do
+      tv = TopicView.new(topic.id, evil_trout)
+      original_posts = tv.posts.to_a
+
+      new_posts = [post3]
+      tv.reset_post_collection(posts: new_posts)
+
+      expect(tv.posts).to eq(new_posts)
+      expect(tv.posts).not_to eq(original_posts)
+    end
+
+    it "clears memoized state derived from the previous posts" do
+      tv = TopicView.new(topic.id, evil_trout)
+
+      tv.all_post_actions
+      tv.reviewable_counts
+      tv.mentioned_users
+      tv.category_group_moderator_user_ids
+      tv.primary_group_names
+      tv.last_post
+
+      tv.reset_post_collection(posts: [post2])
+
+      expect(tv.all_post_actions).to be_a(Hash)
+      expect(tv.last_post).to eq(post2)
+      expect(tv.mentioned_users).to eq({})
+      expect(tv.primary_group_names).to be_a(Hash)
+    end
+
+    it "allows preload hooks to run on the new posts" do
+      tv = TopicView.new(topic.id, evil_trout)
+      preloaded_post_ids = nil
+      preloader = lambda { |view| preloaded_post_ids = view.posts.map(&:id) }
+
+      TopicView.on_preload(&preloader)
+
+      tv.reset_post_collection(posts: [post2, post3])
+      TopicView.preload(tv)
+
+      expect(preloaded_post_ids).to contain_exactly(post2.id, post3.id)
+    ensure
+      TopicView.cancel_preload(&preloader)
+    end
+
+    it "skips post loading when skip_post_loading is true" do
+      tv = TopicView.new(topic.id, evil_trout, skip_post_loading: true)
+
+      expect(tv.posts).to eq([])
+      expect(tv.filtered_posts.count).to eq(0)
+      expect(tv.topic).to eq(topic)
+
+      tv.reset_post_collection(posts: [post1, post2])
+      expect(tv.posts).to eq([post1, post2])
+    end
+  end
+
+  describe "#reset_post_collection (memoize_for_posts)" do
+    fab!(:post1) { Fabricate(:post, topic: topic) }
+    fab!(:post2) { Fabricate(:post, topic: topic) }
+
+    it "clears all registered post-dependent caches when posts are replaced" do
+      tv = TopicView.new(topic.id, evil_trout)
+
+      # Force memoization of a registered cache
+      tv.all_post_actions
+      expect(tv.instance_variable_defined?(:@all_post_actions)).to eq(true)
+
+      tv.reset_post_collection(posts: [post1])
+
+      expect(tv.instance_variable_defined?(:@all_post_actions)).to eq(false)
+    end
+
+    it "clears caches with custom ivar names" do
+      tv = TopicView.new(topic.id, evil_trout)
+
+      # primary_group_names is registered as `memoize_for_posts :primary_group_names, :@group_names`
+      tv.primary_group_names
+      expect(tv.instance_variable_defined?(:@group_names)).to eq(true)
+
+      tv.reset_post_collection(posts: [post1])
+
+      expect(tv.instance_variable_defined?(:@group_names)).to eq(false)
+    end
+
+    it "allows plugins to register their own post-dependent caches" do
+      original_ivars = TopicView.post_dependent_ivars.dup
+      TopicView.memoize_for_posts(:test_plugin_cache)
+
+      tv = TopicView.new(topic.id, evil_trout)
+      tv.instance_variable_set(:@test_plugin_cache, { some: "data" })
+
+      tv.reset_post_collection(posts: [post1])
+
+      expect(tv.instance_variable_defined?(:@test_plugin_cache)).to eq(false)
+    ensure
+      TopicView.post_dependent_ivars = original_ivars
+    end
+
+    it "replaces @posts with the new collection" do
+      tv = TopicView.new(topic.id, evil_trout)
+
+      tv.reset_post_collection(posts: [post2])
+      expect(tv.posts).to eq([post2])
+
+      tv.reset_post_collection(posts: [post1, post2])
+      expect(tv.posts).to eq([post1, post2])
+    end
+  end
+
   it "raises a not found error if the topic doesn't exist" do
     expect { TopicView.new(1_231_232, evil_trout) }.to raise_error(Discourse::NotFound)
   end
@@ -72,19 +186,28 @@ RSpec.describe TopicView do
     fab!(:p0) { Fabricate(:post, topic: topic) }
     fab!(:p1) { Fabricate(:post, topic: topic, wiki: true) }
 
-    after { TopicView.custom_filters.clear }
+    let(:tv) { described_class.new(topic.id, evil_trout, { filter: }) }
+    let(:enabled?) { true }
+    let(:filter) { "wiki" }
 
-    it "allows to register custom filters" do
-      tv = TopicView.new(topic.id, evil_trout, { filter: "wiki" })
-      expect(tv.filter_posts({ filter: "wiki" })).to eq([p0, p1])
+    before do
+      described_class.add_custom_filter("wiki", enabled: method(:enabled?)) do |posts, topic_view|
+        posts.where(wiki: true)
+      end
+    end
 
-      TopicView.add_custom_filter("wiki") { |posts, topic_view| posts.where(wiki: true) }
+    after { described_class.custom_filters.clear }
 
-      tv = TopicView.new(topic.id, evil_trout, { filter: "wiki" })
-      expect(tv.filter_posts).to eq([p1])
+    it "applies custom filters" do
+      expect(tv.filter_posts).to contain_exactly(p1)
+    end
 
-      tv = TopicView.new(topic.id, evil_trout, { filter: "whatever" })
-      expect(tv.filter_posts).to eq([p0, p1])
+    context "when the custom filter is disabled" do
+      let(:enabled?) { false }
+
+      it "does not apply the custom filter" do
+        expect(tv.filter_posts).to contain_exactly(p0, p1)
+      end
     end
   end
 
@@ -538,7 +661,7 @@ RSpec.describe TopicView do
       p3 = Fabricate(:post, topic: topic, user: evil_trout)
 
       ch_posts = TopicView.new(topic.id, evil_trout).posts
-      expect(ch_posts.map(&:id)).to eq([p1.id, p2.id, p3.id])
+      expect(ch_posts.map(&:id)).to eq([p1.id, p3.id])
 
       anon_posts = TopicView.new(topic.id).posts
       expect(anon_posts.map(&:id)).to eq([p1.id, p3.id])
@@ -647,13 +770,8 @@ RSpec.describe TopicView do
     end
 
     describe "filter_posts_near" do
-      def topic_view_near(post, show_deleted = false)
-        TopicView.new(
-          topic.id,
-          evil_trout,
-          post_number: post.post_number,
-          show_deleted: show_deleted,
-        )
+      def topic_view_near(post, user = evil_trout, show_deleted: false)
+        TopicView.new(topic.id, user, post_number: post.post_number, show_deleted: show_deleted)
       end
 
       it "snaps to the lower boundary" do
@@ -688,8 +806,7 @@ RSpec.describe TopicView do
       end
 
       it "gaps deleted posts to an admin" do
-        evil_trout.admin = true
-        near_view = topic_view_near(p3)
+        near_view = topic_view_near(p3, admin)
         expect(near_view.desired_post).to eq(p3)
         expect(near_view.posts).to eq([p2, p3, p5])
         expect(near_view.gaps.before).to eq(p5.id => [p4.id])
@@ -697,16 +814,14 @@ RSpec.describe TopicView do
       end
 
       it "returns deleted posts to an admin with show_deleted" do
-        evil_trout.admin = true
-        near_view = topic_view_near(p3, true)
+        near_view = topic_view_near(p3, admin, show_deleted: true)
         expect(near_view.desired_post).to eq(p3)
         expect(near_view.posts).to eq([p2, p3, p4])
         expect(near_view.contains_gaps?).to eq(false)
       end
 
       it "gaps deleted posts by nuked users to an admin" do
-        evil_trout.admin = true
-        near_view = topic_view_near(p5)
+        near_view = topic_view_near(p5, admin)
         expect(near_view.desired_post).to eq(p5)
         # note: both p4 and p6 get skipped
         expect(near_view.posts).to eq([p2, p3, p5])
@@ -715,8 +830,7 @@ RSpec.describe TopicView do
       end
 
       it "returns deleted posts by nuked users to an admin with show_deleted" do
-        evil_trout.admin = true
-        near_view = topic_view_near(p5, true)
+        near_view = topic_view_near(p5, admin, show_deleted: true)
         expect(near_view.desired_post).to eq(p5)
         expect(near_view.posts).to eq([p4, p5, p6])
         expect(near_view.contains_gaps?).to eq(false)
@@ -732,16 +846,14 @@ RSpec.describe TopicView do
         end
 
         it "gaps deleted posts to admins" do
-          evil_trout.admin = true
-          near_view = topic_view_near(p5)
+          near_view = topic_view_near(p5, admin)
           expect(near_view.posts).to eq([p1, p2, p3, p5])
           expect(near_view.gaps.before).to eq(p5.id => [p4.id])
           expect(near_view.gaps.after).to eq(p5.id => [p6.id, p7.id])
         end
 
         it "returns deleted posts to admins" do
-          evil_trout.admin = true
-          near_view = topic_view_near(p5, true)
+          near_view = topic_view_near(p5, admin, show_deleted: true)
           expect(near_view.posts).to eq([p1, p2, p3, p4, p5, p6, p7])
           expect(near_view.contains_gaps?).to eq(false)
         end
@@ -950,9 +1062,20 @@ RSpec.describe TopicView do
     end
   end
 
+  describe "#mentioned_users" do
+    it "works with capitalized usernames" do
+      user = Fabricate(:user, username: "JoJo")
+      post_1 = Fabricate(:post, topic: topic, raw: "Hey @#{user.username}")
+
+      view = TopicView.new(topic.id, user).mentioned_users
+
+      expect(view[post_1.id]).to eq([user])
+    end
+  end
+
   describe "#image_url" do
-    fab!(:op_upload) { Fabricate(:image_upload) }
-    fab!(:post3_upload) { Fabricate(:image_upload) }
+    fab!(:op_upload, :image_upload)
+    fab!(:post3_upload, :image_upload)
 
     fab!(:post1) { Fabricate(:post, topic: topic) }
     fab!(:post2) { Fabricate(:post, topic: topic) }
@@ -1112,29 +1235,50 @@ RSpec.describe TopicView do
     end
   end
 
-  describe "with topic_view_suggested_topics_options modifier" do
-    let!(:topic1) { Fabricate(:topic) }
-    let!(:topic2) { Fabricate(:topic) }
+  describe "plugin modifiers" do
+    let(:plugin) { Plugin::Instance.new }
 
-    after { DiscoursePluginRegistry.clear_modifiers! }
+    context "with topic_view_link_counts modifier registered" do
+      let(:modifier) do
+        Proc.new do |link_counts|
+          link_counts["hijacked hehe"] = true
+          link_counts
+        end
+      end
 
-    it "allows disabling of random suggested" do
-      topic_view = TopicView.new(topic1)
+      it "allows modifications to link_counts" do
+        expect(TopicView.new(topic).link_counts).to eq({})
 
-      Plugin::Instance
-        .new
-        .register_modifier(
-          :topic_view_suggested_topics_options,
-        ) do |suggested_options, inner_topic_view|
-          expect(inner_topic_view).to eq(topic_view)
+        plugin.register_modifier(:topic_view_link_counts, &modifier)
+
+        expect(TopicView.new(topic).link_counts).to eq({ "hijacked hehe" => true })
+      ensure
+        DiscoursePluginRegistry.unregister_modifier(plugin, :topic_view_link_counts, &modifier)
+      end
+    end
+
+    context "with topic_view_suggested_topics_options modifier" do
+      let!(:topic1) { Fabricate(:topic) }
+      let!(:topic2) { Fabricate(:topic) }
+      let(:modifier) do
+        Proc.new do |suggested_options, inner_topic_view|
           suggested_options.merge(include_random: false)
         end
+      end
 
-      expect(topic_view.suggested_topics.topics.count).to eq(0)
+      it "allows modifications to suggested topics (disabling of random suggested)" do
+        expect(TopicView.new(topic1).suggested_topics.topics.count).to be > 0
 
-      DiscoursePluginRegistry.clear_modifiers!
+        plugin.register_modifier(:topic_view_suggested_topics_options, &modifier)
 
-      expect(TopicView.new(topic1).suggested_topics.topics.count).to be > 0
+        expect(TopicView.new(topic1).suggested_topics.topics.count).to eq(0)
+      ensure
+        DiscoursePluginRegistry.unregister_modifier(
+          plugin,
+          :topic_view_suggested_topics_options,
+          &modifier
+        )
+      end
     end
   end
 end

@@ -1,10 +1,6 @@
 # frozen_string_literal: true
 
 class TopicUser < ActiveRecord::Base
-  self.ignored_columns = [
-    :highest_seen_post_number, # TODO: Remove when 20240212034010_drop_deprecated_columns has been promoted to pre-deploy
-  ]
-
   belongs_to :user
   belongs_to :topic
 
@@ -85,32 +81,6 @@ class TopicUser < ActiveRecord::Base
         topic_id,
         notification_level: notification_level,
         notifications_reason_id: reason,
-      )
-    end
-
-    def unwatch_categories!(user, category_ids)
-      track_threshold = user.user_option.auto_track_topics_after_msecs
-
-      sql = <<~SQL
-        UPDATE topic_users tu
-        SET notification_level = CASE
-          WHEN t.user_id = :user_id THEN :watching
-          WHEN total_msecs_viewed > :track_threshold AND :track_threshold >= 0 THEN :tracking
-          ELSE :regular
-        end
-        FROM topics t
-        WHERE t.id = tu.topic_id AND tu.notification_level <> :muted AND category_id IN (:category_ids) AND tu.user_id = :user_id
-      SQL
-
-      DB.exec(
-        sql,
-        watching: notification_levels[:watching],
-        tracking: notification_levels[:tracking],
-        regular: notification_levels[:regular],
-        muted: notification_levels[:muted],
-        category_ids: category_ids,
-        user_id: user.id,
-        track_threshold: track_threshold,
       )
     end
 
@@ -299,8 +269,10 @@ class TopicUser < ActiveRecord::Base
     def track_visit!(topic_id, user_id)
       now = DateTime.now
       rows = TopicUser.where(topic_id: topic_id, user_id: user_id).update_all(last_visited_at: now)
-
-      change(user_id, topic_id, last_visited_at: now, first_visited_at: now) if rows == 0
+      if rows == 0
+        change(user_id, topic_id, last_visited_at: now, first_visited_at: now)
+        DiscourseEvent.trigger(:user_first_visit_to_topic, user_id: user_id, topic_id: topic_id)
+      end
     end
 
     # Update the last read and the last seen post count, but only if it doesn't exist.

@@ -4,6 +4,7 @@ module Chat
   class Message < ActiveRecord::Base
     include Trashable
     include TypeMappable
+    include HasCustomFields
 
     self.table_name = "chat_messages"
 
@@ -18,6 +19,10 @@ module Chat
     belongs_to :last_editor, class_name: "User"
     belongs_to :thread, class_name: "Chat::Thread", optional: true, autosave: true
 
+    has_many :interactions,
+             class_name: "Chat::MessageInteraction",
+             dependent: :destroy,
+             foreign_key: :chat_message_id
     has_many :replies,
              class_name: "Chat::Message",
              foreign_key: "in_reply_to_id",
@@ -52,6 +57,10 @@ module Chat
              dependent: :destroy,
              class_name: "Chat::Mention",
              foreign_key: :chat_message_id
+    has_one :pinned_message,
+            class_name: "Chat::PinnedMessage",
+            foreign_key: :chat_message_id,
+            dependent: :destroy
     has_many :user_mentions,
              dependent: :destroy,
              class_name: "Chat::UserMention",
@@ -68,6 +77,7 @@ module Chat
             dependent: :destroy,
             class_name: "Chat::HereMention",
             foreign_key: :chat_message_id
+    has_one :message_search_data, dependent: :destroy, foreign_key: :chat_message_id
 
     scope :in_public_channel,
           -> do
@@ -90,13 +100,30 @@ module Chat
 
     before_save { ensure_last_editor_id }
 
-    validates :cooked, length: { maximum: 20_000 }
-    validate :validate_message
+    normalizes :blocks,
+               with: ->(blocks) do
+                 return if !blocks
+
+                 # automatically assigns unique IDs
+                 blocks.each do |block|
+                   block["schema_version"] = 1
+                   block["block_id"] ||= SecureRandom.uuid
+                   block["elements"].each do |element|
+                     element["schema_version"] = 1
+                     element["action_id"] ||= SecureRandom.uuid if element["type"] == "button"
+                   end
+                 end
+               end
 
     def self.polymorphic_class_mapping = { "ChatMessage" => Chat::Message }
 
+    validates :cooked, length: { maximum: 20_000 }
+
+    validates_with Chat::MessageBlocksValidator
+
+    validate :validate_message
     def validate_message
-      WatchedWordsValidator.new(attributes: [:message]).validate(self)
+      WatchedWordsValidator.new(attributes: [:message]).validate(self) if !user&.bot?
 
       if self.new_record? || self.changed.include?("message")
         Chat::DuplicateMessageValidator.new(self).validate
@@ -122,7 +149,14 @@ module Chat
 
     def build_excerpt
       # just show the URL if the whole message is a URL, because we cannot excerpt oneboxes
-      return message if UrlHelper.relaxed_parse(message).is_a?(URI)
+      urls = PrettyText.extract_links(cooked).map(&:url)
+      if urls.present?
+        regex = %r{^[^:]+://}
+        clean_urls = urls.map { |url| url.sub(regex, "") }
+        if message.gsub(regex, "").split.sort == clean_urls.sort
+          return PrettyText.excerpt(urls.join(" "), EXCERPT_LENGTH)
+        end
+      end
 
       # upload-only messages are better represented as the filename
       return uploads.first.original_filename if cooked.blank? && uploads.present?
@@ -137,6 +171,10 @@ module Chat
 
     def push_notification_excerpt
       Emoji.gsub_emoji_to_unicode(message).truncate(400)
+    end
+
+    def only_uploads?
+      self.message.blank? && self.uploads.present?
     end
 
     def to_markdown
@@ -164,9 +202,11 @@ module Chat
       invalidate_parsed_mentions
     end
 
-    def rebake!(invalidate_oneboxes: false, priority: nil)
+    def rebake!(invalidate_oneboxes: false, priority: nil, skip_notifications: false)
       ensure_last_editor_id
-      args = { chat_message_id: self.id, invalidate_oneboxes: invalidate_oneboxes }
+      args = { chat_message_id: self.id }
+      args[:invalidate_oneboxes] = true if invalidate_oneboxes
+      args[:skip_notifications] = true if skip_notifications
       args[:queue] = priority.to_s if priority && priority != :normal
       Jobs.enqueue(Jobs::Chat::ProcessMessage, args)
     end
@@ -181,7 +221,6 @@ module Chat
       chat-transcript
       discourse-local-dates
       emoji
-      emojiShortcuts
       inlineEmoji
       html-img
       hashtag-autocomplete
@@ -212,9 +251,20 @@ module Chat
       blockquote
       emphasis
       replacements
+      escape
+      entity
     ]
 
     def self.cook(message, opts = {})
+      bot = opts[:user_id] && opts[:user_id].negative?
+
+      features = MARKDOWN_FEATURES.dup
+      features << "image-grid" if bot
+      features << "emojiShortcuts" if SiteSetting.enable_emoji_shortcuts
+
+      rules = MARKDOWN_IT_RULES.dup
+      rules << "heading" if bot
+
       # A rule in our Markdown pipeline may have Guardian checks that require a
       # user to be present. The last editing user of the message will be more
       # generally up to date than the creating user. For example, we use
@@ -224,9 +274,8 @@ module Chat
       cooked =
         PrettyText.cook(
           message,
-          features_override:
-            MARKDOWN_FEATURES + DiscoursePluginRegistry.chat_markdown_features.to_a,
-          markdown_it_rules: MARKDOWN_IT_RULES,
+          features_override: features + DiscoursePluginRegistry.chat_markdown_features.to_a,
+          markdown_it_rules: rules,
           force_quote_link: true,
           user_id: opts[:user_id],
           hashtag_context: "chat-composer",
@@ -344,6 +393,10 @@ module Chat
       new_mentions = parsed_mentions.direct_mentions.pluck(:id)
       delete_mentions("Chat::UserMention", old_mentions - new_mentions)
       insert_mentions("Chat::UserMention", new_mentions - old_mentions)
+
+      # add users to threads when they are mentioned to track read status
+      return if new_mentions.empty? || !in_thread?
+      User.where(id: new_mentions).each { |user| thread.add(user, notification_level: :normal) }
     end
   end
 end
@@ -353,25 +406,30 @@ end
 # Table name: chat_messages
 #
 #  id              :bigint           not null, primary key
-#  chat_channel_id :integer          not null
-#  user_id         :integer
-#  created_at      :datetime         not null
-#  updated_at      :datetime         not null
-#  deleted_at      :datetime
-#  deleted_by_id   :integer
-#  in_reply_to_id  :integer
-#  message         :text
+#  blocks          :jsonb
 #  cooked          :text
 #  cooked_version  :integer
+#  created_by_sdk  :boolean          default(FALSE), not null
+#  deleted_at      :datetime
+#  excerpt         :string(1000)
+#  message         :text
+#  streaming       :boolean          default(FALSE), not null
+#  created_at      :datetime         not null
+#  updated_at      :datetime         not null
+#  chat_channel_id :bigint           not null
+#  deleted_by_id   :integer
+#  in_reply_to_id  :bigint
 #  last_editor_id  :integer          not null
-#  thread_id       :integer
+#  thread_id       :bigint
+#  user_id         :integer
 #
 # Indexes
 #
 #  idx_chat_messages_by_created_at_not_deleted            (created_at) WHERE (deleted_at IS NULL)
 #  idx_chat_messages_by_thread_id_not_deleted             (thread_id) WHERE (deleted_at IS NULL)
+#  idx_chat_messages_thread_id_id_user_id_not_deleted     (thread_id,id) WHERE (deleted_at IS NULL)
 #  index_chat_messages_on_chat_channel_id_and_created_at  (chat_channel_id,created_at)
-#  index_chat_messages_on_chat_channel_id_and_id          (chat_channel_id,id) WHERE (deleted_at IS NULL)
+#  index_chat_messages_on_chat_channel_id_and_id          (chat_channel_id,id) WHERE (deleted_at IS NOT NULL)
 #  index_chat_messages_on_last_editor_id                  (last_editor_id)
 #  index_chat_messages_on_thread_id                       (thread_id)
 #

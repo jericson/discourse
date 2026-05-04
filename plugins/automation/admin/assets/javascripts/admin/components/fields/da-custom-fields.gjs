@@ -1,15 +1,16 @@
 import { tracked } from "@glimmer/tracking";
 import { hash } from "@ember/helper";
 import didInsert from "@ember/render-modifiers/modifiers/did-insert";
-import { inject as service } from "@ember/service";
-import { bind } from "discourse-common/utils/decorators";
-import MultiSelect from "select-kit/components/multi-select";
+import { service } from "@ember/service";
+import { bind } from "discourse/lib/decorators";
+import MultiSelect from "discourse/select-kit/components/multi-select";
 import BaseField from "./da-base-field";
 import DAFieldDescription from "./da-field-description";
 import DAFieldLabel from "./da-field-label";
 
 export default class GroupField extends BaseField {
   @service store;
+
   @tracked allCustomFields = [];
 
   <template>

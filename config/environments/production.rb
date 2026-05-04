@@ -28,7 +28,7 @@ Discourse::Application.configure do
     config.action_mailer.smtp_settings = smtp_settings
   else
     config.action_mailer.delivery_method = :sendmail
-    config.action_mailer.sendmail_settings = { arguments: "-i" }
+    config.action_mailer.sendmail_settings = GlobalSetting.sendmail_settings
   end
 
   # Send deprecation notices to registered listeners
@@ -48,11 +48,12 @@ Discourse::Application.configure do
     config.developer_emails = emails.split(",").map(&:downcase).map(&:strip)
   end
 
-  config.active_record.dump_schema_after_migration = false
-
   if ENV["RAILS_LOG_TO_STDOUT"].present?
     config.logger = ActiveSupport::TaggedLogging.new(Logger.new(STDOUT))
   end
 
   config.active_record.action_on_strict_loading_violation = :log
+
+  # This is a NGINX specific header
+  config.action_dispatch.x_sendfile_header = "X-Accel-Redirect"
 end

@@ -5,6 +5,11 @@
 # https://translate.discourse.org/
 
 sk:
+  admin_js:
+    admin:
+      site_settings:
+        categories:
+          styleguide: "Sprievodca štýlom Discourse"
   js:
     styleguide:
       title: "Sprievodca štýlom"
@@ -25,6 +30,8 @@ sk:
           title: "Pole pre dátum a čas"
         menus:
           title: "Menu"
+        multi_select:
+          title: "Viacnásobný výber"
         toasts:
           title: "Toasty"
         font_scale:
@@ -34,8 +41,8 @@ sk:
         icons:
           title: "Ikony"
           full_list: "Zobraziť celý zoznam Font Awesome Icons"
-        input_fields:
-          title: "Vstupné polia"
+        forms:
+          title: "Formuláre"
         buttons:
           title: "Tlačidlá"
         dropdowns:
@@ -52,8 +59,6 @@ sk:
           title: "Navigácia"
         categories_list:
           title: "Zoznam kategórií"
-        topic_link:
-          title: "Odkaz na tému"
         topic_list_item:
           title: "Položka zoznamu tém"
         topic_statuses:
@@ -62,8 +67,6 @@ sk:
           title: "Zoznam tém"
         basic_topic_list:
           title: "Základný zoznam tém"
-        footer_message:
-          title: "Správa v päte"
         signup_cta:
           title: "Tlačidlo pre registráciu"
         topic_timer_info:
@@ -74,12 +77,16 @@ sk:
           title: "Oznámenia o témach"
         post:
           title: "Príspevok"
+        post_list:
+          title: "Zoznam príspevkov"
+          empty_example: "<PostList /> prázdny stav"
+          populated_example: "<PostList /> zverejnený stav"
         topic_map:
           title: "Mapa tém"
         site_header:
           title: "Záhlavie stránky"
-        suggested_topics:
-          title: "Odporúčané témy"
+        more_topics:
+          title: "Viac tém"
         post_menu:
           title: "Ponuka príspevkov"
         modal:

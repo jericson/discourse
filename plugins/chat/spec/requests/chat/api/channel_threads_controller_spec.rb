@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 RSpec.describe Chat::Api::ChannelThreadsController do
-  fab!(:current_user) { Fabricate(:user) }
+  fab!(:current_user, :user)
   fab!(:public_channel) { Fabricate(:chat_channel, threading_enabled: true) }
 
   before do
@@ -41,8 +41,52 @@ RSpec.describe Chat::Api::ChannelThreadsController do
         expect(response.parsed_body["thread"]["id"]).to eq(thread.id)
       end
 
+      context "with user status enabled" do
+        before { SiteSetting.enable_user_status = true }
+
+        it "preloads user_options to avoid N+1 queries for original message mentions" do
+          thread.original_message.user.set_status!("status", "grinning")
+
+          3.times do
+            mentioned_user = Fabricate(:user)
+            mentioned_user.set_status!("status", "wave")
+            Fabricate(
+              :user_chat_mention,
+              chat_message: thread.original_message,
+              user: mentioned_user,
+            )
+          end
+
+          get "/chat/api/channels/#{thread.channel_id}/threads/#{thread.id}"
+
+          queries =
+            track_sql_queries { get "/chat/api/channels/#{thread.channel_id}/threads/#{thread.id}" }
+          user_option_queries = queries.select { |query| query.include?('"user_options"') }
+
+          expect(user_option_queries.size).to eq(2)
+        end
+      end
+
+      context "when the thread original message is deleted" do
+        before { thread.original_message.trash! }
+
+        it "returns 404" do
+          get "/chat/api/channels/#{thread.channel_id}/threads/#{thread.id}"
+          expect(response.status).to eq(404)
+        end
+
+        context "when the current user is a moderator" do
+          before { current_user.update!(moderator: true) }
+
+          it "returns 200" do
+            get "/chat/api/channels/#{thread.channel_id}/threads/#{thread.id}"
+            expect(response.status).to eq(200)
+          end
+        end
+      end
+
       context "when the channel_id does not match the thread id" do
-        fab!(:other_channel) { Fabricate(:chat_channel) }
+        fab!(:other_channel, :chat_channel)
 
         it "returns 404" do
           get "/chat/api/channels/#{other_channel.id}/threads/#{thread.id}"
@@ -56,6 +100,15 @@ RSpec.describe Chat::Api::ChannelThreadsController do
         it "returns 404" do
           get "/chat/api/channels/#{thread.channel_id}/threads/#{thread.id}"
           expect(response.status).to eq(404)
+        end
+      end
+
+      context "when channel was deleted" do
+        before { thread.channel.trash! }
+
+        it "returns 403" do
+          get "/chat/api/channels/#{thread.channel_id}/threads/#{thread.id}"
+          expect(response.status).to eq(403)
         end
       end
 
@@ -251,7 +304,7 @@ RSpec.describe Chat::Api::ChannelThreadsController do
     context "when channel does not exist" do
       it "returns 404" do
         channel_1.destroy!
-        post "/chat/api/channels/#{channel_id}", params: params
+        post "/chat/api/channels/#{channel_id}/threads", params: params
 
         expect(response.status).to eq(404)
       end

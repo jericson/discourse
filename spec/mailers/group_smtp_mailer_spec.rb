@@ -10,12 +10,8 @@ RSpec.describe GroupSmtpMailer do
       full_name: "Testers Group",
       smtp_server: "smtp.gmail.com",
       smtp_port: 587,
-      smtp_ssl: true,
+      smtp_ssl_mode: Group.smtp_ssl_modes[:starttls],
       smtp_enabled: true,
-      imap_server: "imap.gmail.com",
-      imap_port: 993,
-      imap_ssl: true,
-      imap_enabled: true,
       email_username: "bugs@gmail.com",
       email_password: "super$secret$password",
     )
@@ -53,33 +49,10 @@ RSpec.describe GroupSmtpMailer do
 
   before do
     SiteSetting.enable_smtp = true
-    SiteSetting.enable_imap = true
     Jobs.run_immediately!
     SiteSetting.manual_polling_enabled = true
     SiteSetting.reply_by_email_address = "test+%{reply_key}@test.com"
     SiteSetting.reply_by_email_enabled = true
-  end
-
-  it "sends an email for first post when IMAP is disabled" do
-    staged = Fabricate(:staged)
-    group.update(imap_enabled: false)
-
-    PostCreator.create!(
-      user,
-      skip_validations: true,
-      title: "Hello from John",
-      archetype: Archetype.private_message,
-      target_usernames: staged.username,
-      target_group_names: group.name,
-      raw: raw,
-    )
-
-    expect(ActionMailer::Base.deliveries.size).to eq(1)
-
-    sent_mail = ActionMailer::Base.deliveries[0]
-    expect(sent_mail.to).to contain_exactly(staged.email)
-    expect(sent_mail.subject).to eq("Hello from John")
-    expect(sent_mail.to_s).to include(raw)
   end
 
   it "sends an email as reply" do
@@ -128,11 +101,24 @@ RSpec.describe GroupSmtpMailer do
         password: "super$secret$password",
         authentication: GlobalSetting.smtp_authentication,
         enable_starttls_auto: true,
+        enable_ssl: false,
         return_response: true,
-        open_timeout: GlobalSetting.group_smtp_open_timeout,
-        read_timeout: GlobalSetting.group_smtp_read_timeout,
+        open_timeout: GlobalSetting.group_smtp_open_timeout.to_f,
+        read_timeout: GlobalSetting.group_smtp_read_timeout.to_f,
       },
     )
+  end
+
+  it "uses the login SMTP authentication method for office365" do
+    group.update!(smtp_server: "smtp.office365.com")
+    mail = GroupSmtpMailer.send_mail(group, user.email, Fabricate(:post))
+    expect(mail.delivery_method.settings[:authentication]).to eq("login")
+  end
+
+  it "uses the login SMTP authentication method for outlook" do
+    group.update!(smtp_server: "smtp-mail.outlook.com")
+    mail = GroupSmtpMailer.send_mail(group, user.email, Fabricate(:post))
+    expect(mail.delivery_method.settings[:authentication]).to eq("login")
   end
 
   context "when the site has a reply by email address configured" do
@@ -142,7 +128,7 @@ RSpec.describe GroupSmtpMailer do
       SiteSetting.reply_by_email_enabled = true
     end
 
-    it "uses the correct IMAP/SMTP reply to address and does not create a post reply key" do
+    it "uses the correct SMTP reply to address and does not create a post reply key" do
       post = PostCreator.create(user, topic_id: receiver.incoming_email.topic.id, raw: raw)
 
       expect(ActionMailer::Base.deliveries.size).to eq(1)
@@ -152,16 +138,6 @@ RSpec.describe GroupSmtpMailer do
       sent_mail = ActionMailer::Base.deliveries[0]
       expect(sent_mail.reply_to).to eq(nil)
       expect(sent_mail.from).to contain_exactly("bugs@gmail.com")
-    end
-
-    context "when IMAP is disabled for the group" do
-      before { group.update(imap_enabled: false) }
-
-      it "does send the email" do
-        post = PostCreator.create(user, topic_id: receiver.incoming_email.topic.id, raw: raw)
-
-        expect(ActionMailer::Base.deliveries.size).to eq(1)
-      end
     end
 
     context "when SMTP is disabled for the group" do

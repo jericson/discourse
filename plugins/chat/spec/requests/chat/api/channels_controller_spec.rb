@@ -16,7 +16,7 @@ RSpec.describe Chat::Api::ChannelsController do
     end
 
     context "as disallowed user" do
-      fab!(:current_user) { Fabricate(:user) }
+      fab!(:current_user, :user)
 
       before do
         SiteSetting.chat_allowed_groups = Group::AUTO_GROUPS[:staff]
@@ -31,13 +31,13 @@ RSpec.describe Chat::Api::ChannelsController do
     end
 
     context "as allowed user" do
-      fab!(:current_user) { Fabricate(:user) }
+      fab!(:current_user, :user)
 
       before { sign_in(current_user) }
 
       context "with category channels" do
         context "when channel is public" do
-          fab!(:channel_1) { Fabricate(:category_channel) }
+          fab!(:channel_1, :category_channel)
 
           it "returns the channel" do
             get "/chat/api/channels"
@@ -61,7 +61,7 @@ RSpec.describe Chat::Api::ChannelsController do
         end
 
         context "when channel has limited access" do
-          fab!(:group_1) { Fabricate(:group) }
+          fab!(:group_1, :group)
           fab!(:channel_1) { Fabricate(:private_category_channel, group: group_1) }
 
           context "when user has access" do
@@ -104,9 +104,98 @@ RSpec.describe Chat::Api::ChannelsController do
       context "with direct message channels" do
         fab!(:dm_channel_1) { Fabricate(:direct_message_channel, users: [current_user]) }
 
-        it "doesnt return direct message channels" do
+        it "doesn't return direct message channels" do
           get "/chat/api/channels"
           expect(response.parsed_body["channels"]).to be_blank
+        end
+      end
+
+      context "when filtering by chatable_id and chatable_type (Category)" do
+        fab!(:category_1, :category)
+        fab!(:category_2, :category)
+        fab!(:channel_1) { Fabricate(:category_channel, chatable: category_1) }
+        fab!(:channel_2) { Fabricate(:category_channel, chatable: category_2) }
+
+        it "returns only channels for the given category" do
+          get "/chat/api/channels",
+              params: {
+                chatable_id: category_1.id,
+                chatable_type: "Category",
+              }
+
+          expect(response.status).to eq(200)
+          expect(response.parsed_body["channels"].map { |c| c["id"] }).to eq([channel_1.id])
+        end
+
+        it "returns empty when the category has no channels" do
+          category_without_channel = Fabricate(:category)
+
+          get "/chat/api/channels",
+              params: {
+                chatable_id: category_without_channel.id,
+                chatable_type: "Category",
+              }
+
+          expect(response.status).to eq(200)
+          expect(response.parsed_body["channels"]).to be_blank
+        end
+
+        it "does not filter when chatable type and id are not found" do
+          get "/chat/api/channels", params: { chatable_id: -999, chatable_type: "Category" }
+
+          expect(response.status).to eq(200)
+          expect(response.parsed_body["channels"].map { |c| c["id"] }).to contain_exactly(
+            channel_1.id,
+            channel_2.id,
+          )
+        end
+
+        it "does not filter when user cannot access the chatable" do
+          private_category = Fabricate(:private_category, group: Fabricate(:group))
+          Fabricate(:category_channel, chatable: private_category)
+
+          get "/chat/api/channels",
+              params: {
+                chatable_id: private_category.id,
+                chatable_type: "Category",
+              }
+
+          expect(response.status).to eq(200)
+          expect(response.parsed_body["channels"].map { |c| c["id"] }).to contain_exactly(
+            channel_1.id,
+            channel_2.id,
+          )
+        end
+
+        context "with include_subcategories" do
+          fab!(:subcategory) { Fabricate(:category, parent_category: category_1) }
+          fab!(:subcategory_channel) { Fabricate(:category_channel, chatable: subcategory) }
+
+          it "returns channels from parent and subcategories" do
+            get "/chat/api/channels",
+                params: {
+                  chatable_id: category_1.id,
+                  chatable_type: "Category",
+                  include_subcategories: true,
+                }
+
+            expect(response.status).to eq(200)
+            expect(response.parsed_body["channels"].map { |c| c["id"] }).to contain_exactly(
+              channel_1.id,
+              subcategory_channel.id,
+            )
+          end
+
+          it "returns only parent category channels without the param" do
+            get "/chat/api/channels",
+                params: {
+                  chatable_id: category_1.id,
+                  chatable_type: "Category",
+                }
+
+            expect(response.status).to eq(200)
+            expect(response.parsed_body["channels"].map { |c| c["id"] }).to eq([channel_1.id])
+          end
         end
       end
     end
@@ -122,7 +211,7 @@ RSpec.describe Chat::Api::ChannelsController do
     end
 
     context "when user cannot access channel" do
-      fab!(:channel_1) { Fabricate(:private_category_channel) }
+      fab!(:channel_1, :private_category_channel)
 
       before { sign_in(Fabricate(:user)) }
 
@@ -134,7 +223,7 @@ RSpec.describe Chat::Api::ChannelsController do
     end
 
     context "when user can access channel" do
-      fab!(:current_user) { Fabricate(:user) }
+      fab!(:current_user, :user)
 
       before { sign_in(current_user) }
 
@@ -147,7 +236,7 @@ RSpec.describe Chat::Api::ChannelsController do
       end
 
       context "when channel exists" do
-        fab!(:channel_1) { Fabricate(:category_channel) }
+        fab!(:channel_1, :category_channel)
 
         it "can find channel by id" do
           get "/chat/api/channels/#{channel_1.id}"
@@ -160,10 +249,10 @@ RSpec.describe Chat::Api::ChannelsController do
   end
 
   describe "#destroy" do
-    fab!(:channel_1) { Fabricate(:category_channel) }
+    fab!(:channel_1, :category_channel)
 
     context "when user is not staff" do
-      fab!(:current_user) { Fabricate(:user) }
+      fab!(:current_user, :user)
 
       before { sign_in(current_user) }
 
@@ -175,7 +264,7 @@ RSpec.describe Chat::Api::ChannelsController do
     end
 
     context "when user is admin" do
-      fab!(:current_user) { Fabricate(:admin) }
+      fab!(:current_user, :admin)
 
       before { sign_in(current_user) }
 
@@ -321,8 +410,8 @@ RSpec.describe Chat::Api::ChannelsController do
     end
 
     describe "triggers the auto-join process" do
-      fab!(:chatters_group) { Fabricate(:group) }
-      fab!(:user) { Fabricate(:user, last_seen_at: 15.minute.ago) }
+      fab!(:chatters_group, :group)
+      fab!(:user) { Fabricate(:user, last_seen_at: 15.minutes.ago) }
 
       before do
         Jobs.run_immediately!
@@ -368,7 +457,7 @@ RSpec.describe Chat::Api::ChannelsController do
     include_examples "channel access example", :put
 
     context "when user can’t edit channel" do
-      fab!(:channel) { Fabricate(:category_channel) }
+      fab!(:channel, :category_channel)
 
       before { sign_in(Fabricate(:user)) }
 
@@ -398,7 +487,7 @@ RSpec.describe Chat::Api::ChannelsController do
     end
 
     context "when user provided an empty name" do
-      fab!(:user) { Fabricate(:admin) }
+      fab!(:user, :admin)
       fab!(:channel) do
         Fabricate(:category_channel, name: "something", description: "something else")
       end
@@ -419,7 +508,7 @@ RSpec.describe Chat::Api::ChannelsController do
     end
 
     context "when user provides an empty description" do
-      fab!(:user) { Fabricate(:admin) }
+      fab!(:user, :admin)
       fab!(:channel) do
         Fabricate(:category_channel, name: "something else", description: "something")
       end
@@ -440,7 +529,7 @@ RSpec.describe Chat::Api::ChannelsController do
     end
 
     context "when user provides an empty slug" do
-      fab!(:user) { Fabricate(:admin) }
+      fab!(:user, :admin)
       fab!(:channel) do
         Fabricate(:category_channel, name: "something else", description: "something")
       end
@@ -455,8 +544,8 @@ RSpec.describe Chat::Api::ChannelsController do
     end
 
     context "when channel is a direct message channel" do
-      fab!(:user) { Fabricate(:admin) }
-      fab!(:channel) { Fabricate(:direct_message_channel) }
+      fab!(:user, :admin)
+      fab!(:channel, :direct_message_channel)
 
       before { sign_in(user) }
 
@@ -468,8 +557,8 @@ RSpec.describe Chat::Api::ChannelsController do
     end
 
     context "when user provides valid params" do
-      fab!(:user) { Fabricate(:admin) }
-      fab!(:channel) { Fabricate(:category_channel) }
+      fab!(:user, :admin)
+      fab!(:channel, :category_channel)
 
       before { sign_in(user) }
 
@@ -514,24 +603,46 @@ RSpec.describe Chat::Api::ChannelsController do
       end
 
       describe "when updating threading_enabled" do
-        it "sets the new value" do
+        it "can enable threading" do
           expect {
             put "/chat/api/channels/#{channel.id}", params: { channel: { threading_enabled: true } }
           }.to change { channel.reload.threading_enabled }.from(false).to(true)
 
           expect(response.parsed_body["channel"]["threading_enabled"]).to eq(true)
         end
+
+        it "can disable threading" do
+          channel.update!(threading_enabled: true)
+
+          expect {
+            put "/chat/api/channels/#{channel.id}",
+                params: {
+                  channel: {
+                    threading_enabled: false,
+                  },
+                },
+                as: :json
+          }.to change { channel.reload.threading_enabled }.from(true).to(false)
+
+          expect(response.status).to eq(200)
+          expect(response.parsed_body["channel"]["threading_enabled"]).to eq(false)
+        end
       end
 
       describe "when updating allow_channel_wide_mentions" do
-        it "sets the new value" do
-          put "/chat/api/channels/#{channel.id}",
-              params: {
-                channel: {
-                  allow_channel_wide_mentions: false,
-                },
-              }
+        it "can disable allow_channel_wide_mentions" do
+          channel.update!(allow_channel_wide_mentions: true)
 
+          expect {
+            put "/chat/api/channels/#{channel.id}",
+                params: {
+                  channel: {
+                    allow_channel_wide_mentions: false,
+                  },
+                }
+          }.to change { channel.reload.allow_channel_wide_mentions }.from(true).to(false)
+
+          expect(response.status).to eq(200)
           expect(response.parsed_body["channel"]["allow_channel_wide_mentions"]).to eq(false)
         end
       end
@@ -554,8 +665,8 @@ RSpec.describe Chat::Api::ChannelsController do
         end
 
         describe "triggers the auto-join process" do
-          fab!(:chatters_group) { Fabricate(:group) }
-          fab!(:another_user) { Fabricate(:user, last_seen_at: 15.minute.ago) }
+          fab!(:chatters_group, :group)
+          fab!(:another_user) { Fabricate(:user, last_seen_at: 15.minutes.ago) }
 
           before do
             Jobs.run_immediately!

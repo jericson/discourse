@@ -27,8 +27,6 @@ gl:
         icons:
           title: "Iconas"
           full_list: "Vexa a listaxe completa das iconas dos tipos de letra"
-        input_fields:
-          title: "Campos de entrada"
         buttons:
           title: "Botóns"
         dropdowns:
@@ -45,8 +43,6 @@ gl:
           title: "Navegación vertical"
         categories_list:
           title: "Lista de categorías"
-        topic_link:
-          title: "Ligazón do tema"
         topic_list_item:
           title: "Elemento da lista de temas"
         topic_statuses:
@@ -55,8 +51,6 @@ gl:
           title: "Listaxe de temas"
         basic_topic_list:
           title: "Listaxe de temas básicos"
-        footer_message:
-          title: "Mensaxe rodapé"
         signup_cta:
           title: "Subscrición CTA"
         topic_timer_info:
@@ -71,8 +65,8 @@ gl:
           title: "Mapa de temas"
         site_header:
           title: "Cabeceira do sitio"
-        suggested_topics:
-          title: "Temas suxeridos"
+        more_topics:
+          title: "Máis temas"
         post_menu:
           title: "Menú de publicación"
         modal:

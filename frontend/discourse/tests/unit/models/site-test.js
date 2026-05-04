@@ -1,0 +1,156 @@
+import { getOwner } from "@ember/owner";
+import { setupTest } from "ember-qunit";
+import { module, test } from "qunit";
+import { removeValuesFromArray } from "discourse/lib/array-tools";
+import Site from "discourse/models/site";
+import Tag from "discourse/models/tag";
+
+module("Unit | Model | site", function (hooks) {
+  setupTest(hooks);
+
+  test("create", function (assert) {
+    const store = getOwner(this).lookup("service:store");
+    assert.true(!!store.createRecord("site"), "can create with no parameters");
+  });
+
+  test("instance", function (assert) {
+    const site = Site.current();
+
+    assert.present(site, "We have a current site singleton");
+    assert.present(site.categories, "The instance has a list of categories");
+    assert.present(site.flagTypes, "The instance has a list of flag types");
+    assert.present(site.trustLevels, "The instance has a list of trust levels");
+  });
+
+  test("create categories", function (assert) {
+    const store = getOwner(this).lookup("service:store");
+    const site = store.createRecord("site", {
+      categories: [
+        { id: 3456, name: "Test Subcategory", parent_category_id: 1234 },
+        { id: 1234, name: "Test" },
+        { id: 3458, name: "Invalid Subcategory", parent_category_id: 6666 },
+      ],
+    });
+
+    assert.present(site.categories, "The categories are present");
+    assert.deepEqual(
+      site.categories.map((item) => item.name),
+      ["Test Subcategory", "Test", "Invalid Subcategory"]
+    );
+
+    assert.deepEqual(
+      site.sortedCategories.map((item) => item.name),
+      ["Test", "Test Subcategory"]
+    );
+
+    // remove invalid category and child
+    removeValuesFromArray(site.categories, [
+      site.categories[2],
+      site.categories[0],
+    ]);
+
+    assert.strictEqual(
+      site.categoriesByCount.length,
+      site.categories.length,
+      "categoriesByCount should change on removal"
+    );
+    assert.strictEqual(
+      site.sortedCategories.length,
+      site.categories.length,
+      "sortedCategories should change on removal"
+    );
+  });
+
+  test("sortedCategories returns categories sorted by topic counts and sorts child categories after parent", function (assert) {
+    const store = getOwner(this).lookup("service:store");
+    const site = store.createRecord("site", {
+      categories: [
+        {
+          id: 1003,
+          name: "Test Sub Sub",
+          parent_category_id: 1002,
+          topic_count: 0,
+        },
+        { id: 1001, name: "Test", topic_count: 1 },
+        { id: 1004, name: "Test Sub Sub Sub", parent_category_id: 1003 },
+        {
+          id: 1002,
+          name: "Test Sub",
+          parent_category_id: 1001,
+          topic_count: 0,
+        },
+        {
+          id: 1005,
+          name: "Test Sub Sub Sub2",
+          parent_category_id: 1003,
+          topic_count: 1,
+        },
+        { id: 1006, name: "Test2", topic_count: 2 },
+        { id: 1000, name: "Test2 Sub", parent_category_id: 1006 },
+        { id: 997, name: "Test2 Sub Sub2", parent_category_id: 1000 },
+        { id: 999, name: "Test2 Sub Sub", parent_category_id: 1000 },
+      ],
+    });
+
+    assert.deepEqual(
+      site.sortedCategories.map((item) => item.name),
+      [
+        "Test2",
+        "Test2 Sub",
+        "Test2 Sub Sub2",
+        "Test2 Sub Sub",
+        "Test",
+        "Test Sub",
+        "Test Sub Sub",
+        "Test Sub Sub Sub2",
+        "Test Sub Sub Sub",
+      ]
+    );
+  });
+
+  test("topTags returns Tag model instances", function (assert) {
+    const store = getOwner(this).lookup("service:store");
+    const site = store.createRecord("site", {
+      top_tags: [
+        { id: 1, name: "bug", slug: "bug" },
+        { id: 2, name: "feature", slug: "feature" },
+      ],
+    });
+
+    const topTags = site.topTags;
+
+    assert.strictEqual(topTags.length, 2);
+    assert.true(topTags[0] instanceof Tag);
+    assert.true(topTags[1] instanceof Tag);
+  });
+
+  test("topTags returns empty array when top_tags is not set", function (assert) {
+    const store = getOwner(this).lookup("service:store");
+    const site = store.createRecord("site", {});
+
+    assert.deepEqual(site.topTags, []);
+  });
+
+  test("categoryTopTags returns Tag model instances", function (assert) {
+    const store = getOwner(this).lookup("service:store");
+    const site = store.createRecord("site", {
+      category_top_tags: [
+        { id: 3, name: "support", slug: "support" },
+        { id: 4, name: "help", slug: "help" },
+      ],
+    });
+
+    const categoryTopTags = site.categoryTopTags;
+
+    assert.strictEqual(categoryTopTags.length, 2);
+    assert.true(categoryTopTags[0] instanceof Tag);
+    assert.true(categoryTopTags[1] instanceof Tag);
+  });
+
+  test("categoryTopTags returns empty array when category_top_tags is not set", function (assert) {
+    const store = getOwner(this).lookup("service:store");
+    const site = store.createRecord("site", {});
+
+    assert.deepEqual(site.categoryTopTags, []);
+  });
+});

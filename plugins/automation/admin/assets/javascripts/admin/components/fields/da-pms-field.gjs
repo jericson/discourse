@@ -2,12 +2,13 @@ import { Input } from "@ember/component";
 import { concat, fn } from "@ember/helper";
 import { on } from "@ember/modifier";
 import { action } from "@ember/object";
+import { trackedArray, trackedObject } from "@ember/reactive/collections";
 import { next } from "@ember/runloop";
-import { inject as service } from "@ember/service";
-import { TrackedArray, TrackedObject } from "@ember-compat/tracked-built-ins";
+import { service } from "@ember/service";
 import DButton from "discourse/components/d-button";
 import DEditor from "discourse/components/d-editor";
-import I18n from "I18n";
+import { removeValueFromArray } from "discourse/lib/array-tools";
+import { i18n } from "discourse-i18n";
 import PlaceholdersList from "../placeholders-list";
 import BaseField from "./da-base-field";
 import DAFieldLabel from "./da-field-label";
@@ -15,17 +16,13 @@ import DAFieldLabel from "./da-field-label";
 export default class PmsField extends BaseField {
   @service dialog;
 
-  noPmCreatedLabel = I18n.t("discourse_automation.fields.pms.no_pm_created");
+  noPmCreatedLabel = i18n("discourse_automation.fields.pms.no_pm_created");
 
-  prefersEncryptLabel = I18n.t(
-    "discourse_automation.fields.pms.prefers_encrypt.label"
-  );
+  delayLabel = i18n("discourse_automation.fields.pms.delay.label");
 
-  delayLabel = I18n.t("discourse_automation.fields.pms.delay.label");
+  pmTitleLabel = i18n("discourse_automation.fields.pms.title.label");
 
-  pmTitleLabel = I18n.t("discourse_automation.fields.pms.title.label");
-
-  rawLabel = I18n.t("discourse_automation.fields.pms.raw.label");
+  rawLabel = i18n("discourse_automation.fields.pms.raw.label");
 
   <template>
     <section class="field pms-field">
@@ -98,24 +95,9 @@ export default class PmsField extends BaseField {
             </div>
           </div>
 
-          <div class="control-group">
-            <label class="control-label">
-              {{this.prefersEncryptLabel}}
-            </label>
-
-            <div class="controls">
-              <Input
-                @type="checkbox"
-                class="pm-prefers-encrypt"
-                @checked={{pm.prefers_encrypt}}
-                {{on "click" (fn this.prefersEncrypt pm)}}
-                disabled={{@field.isDisabled}}
-              />
-            </div>
-          </div>
           <section class="actions">
             <DButton
-              @icon="trash-alt"
+              @icon="trash-can"
               @action={{fn this.removePM pm}}
               class="btn-danger"
               @disabled={{@field.isDisabled}}
@@ -142,9 +124,9 @@ export default class PmsField extends BaseField {
 
     // a hack to prevent warnings about modifying multiple times in the same runloop
     next(() => {
-      this.args.field.metadata.value = new TrackedArray(
+      this.args.field.metadata.value = trackedArray(
         (this.args.field.metadata.value || []).map((pm) => {
-          return new TrackedObject(pm);
+          return trackedObject(pm);
         })
       );
     });
@@ -153,28 +135,22 @@ export default class PmsField extends BaseField {
   @action
   removePM(pm) {
     this.dialog.yesNoConfirm({
-      message: I18n.t("discourse_automation.fields.pms.confirm_remove_pm"),
+      message: i18n("discourse_automation.fields.pms.confirm_remove_pm"),
       didConfirm: () => {
-        return this.args.field.metadata.value.removeObject(pm);
+        return removeValueFromArray(this.args.field.metadata.value, pm);
       },
     });
   }
 
   @action
   insertPM() {
-    this.args.field.metadata.value.pushObject(
-      new TrackedObject({
+    this.args.field.metadata.value.push(
+      trackedObject({
         title: "",
         raw: "",
         delay: 0,
-        prefers_encrypt: true,
       })
     );
-  }
-
-  @action
-  prefersEncrypt(pm, event) {
-    pm.prefers_encrypt = event.target.checked;
   }
 
   @action

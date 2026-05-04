@@ -1,15 +1,42 @@
-.directory-table-top-scroll {
-  width: 100%;
-  overflow-x: auto;
+@use "lib/viewport";
+
+.horizontal-scroll-sync {
+  &__container {
+    width: 100%;
+  }
+
+  &__top-scroll {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  &__fake-content {
+    pointer-events: auto;
+  }
+
+  &__content {
+    overflow-x: auto;
+  }
 }
 
 .directory {
   margin-bottom: 100px;
   background: var(--d-content-background);
 
+  .directory-value-list-item:not(:empty)
+    ~ .directory-value-list-item:not(:empty)::before {
+    content: "| ";
+  }
+
   &.users-directory {
     .directory-group-selector {
       vertical-align: top;
+    }
+
+    @include viewport.until(sm) {
+      .filter-name {
+        width: 100%;
+      }
     }
   }
 
@@ -24,16 +51,35 @@
   .directory-controls {
     display: flex;
     justify-content: space-between;
+
+    @include viewport.until(sm) {
+      display: block;
+    }
+
     .total-rows {
       color: var(--primary-medium);
       font-weight: normal;
+
+      @include viewport.until(sm) {
+        display: block;
+      }
     }
   }
 
   .directory-last-updated {
-    margin-bottom: 0.5em;
     color: var(--primary-medium);
     font-size: var(--font-down-1);
+    margin-bottom: var(--space-2);
+
+    @include viewport.until(sm) {
+      margin-bottom: var(--space-1);
+    }
+  }
+
+  @include viewport.until(md) {
+    .period-chooser .period-chooser-header h2.selected-name {
+      font-size: var(--font-up-1);
+    }
   }
 }
 
@@ -43,16 +89,17 @@
       display: flex;
       justify-content: space-between;
       padding: 12px 0;
-      border-bottom: 1px solid var(--primary-low);
+      border-bottom: 1px solid var(--table-border-color);
 
       .column-name {
         display: flex;
         align-items: center;
         margin-bottom: 0;
       }
+
       .d-icon-heart {
         color: var(--love);
-        margin: 0 0.25em 0 0;
+        margin: 0 var(--space-1) 0 0;
       }
 
       .move-column-up {
@@ -70,13 +117,10 @@
       }
     }
   }
+
   .d-modal__footer {
     justify-content: space-between;
   }
-}
-
-.edit-user-directory-columns-modal .modal-inner-container {
-  min-width: 450px;
 }
 
 @container (min-width: 47em) {
@@ -85,6 +129,7 @@
       &__value {
         white-space: nowrap;
         font-size: var(--font-up-2);
+
         &,
         &--user-field {
           color: var(--primary-medium);
@@ -97,7 +142,8 @@
 .directory-table-container {
   container-type: inline-size;
   container-name: directory-table;
-  transform: translateX(0px);
+  transform: translateX(0);
+
   // transform here creates a containing blocks which
   // is used by fixed-positioned dropdowns
   // if omitted, `overflow-x: auto;` below will clip them
@@ -107,8 +153,7 @@
   display: grid;
   gap: 0;
   width: 100%;
-  margin-top: 1em;
-  overflow-x: auto;
+  margin-top: var(--space-1);
 
   .me {
     .directory-table__cell {
@@ -122,7 +167,9 @@
   &__header,
   &__body,
   &__row {
-    display: contents; // we'll be able to remove this with subgrid support
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
   }
 
   &__column-header,
@@ -130,7 +177,7 @@
   &__cell--empty,
   &__cell--user-field {
     display: flex;
-    border-bottom: 1px solid var(--primary-low);
+    border-bottom: 1px solid var(--table-border-color);
     justify-content: center;
     align-items: center;
     box-sizing: border-box;
@@ -142,9 +189,10 @@
     justify-content: center;
     white-space: nowrap;
     color: var(--primary-medium);
-    padding: 0.5em;
+    padding: var(--space-2);
+
     .d-icon {
-      margin-right: 0.25em;
+      margin-right: var(--space-1);
     }
 
     &:first-child {
@@ -157,12 +205,13 @@
   &__cell {
     &,
     &--user-field {
-      padding: 0.75em 0.5em;
+      padding: var(--space-3) var(--space-2);
     }
   }
 
   &__value {
     white-space: nowrap;
+
     &--user-field {
       max-width: 30em;
     }
@@ -187,17 +236,21 @@
     display: flex;
     min-width: 0;
     width: 100%;
+
     .user-detail {
       padding: 0;
       width: 100%;
-      @include breakpoint(tablet) {
+
+      @include viewport.until(md) {
         // overrides existing media query
         font-size: var(--font-0);
       }
-      @include breakpoint("mobile-medium") {
+
+      @include viewport.until(sm) {
         font-size: var(--font-down-1);
       }
     }
+
     .title {
       margin: 0;
     }
@@ -225,26 +278,28 @@
     &__label {
       display: inline-flex;
       color: var(--primary-medium);
-      padding-right: 0.5em;
+      padding-right: var(--space-2);
       align-items: baseline;
       align-self: start;
       white-space: nowrap;
       overflow: hidden;
-      flex: 1 0 calc(50% - 0.5em + 5%); // 50% - padding + half the gap
+      flex: 1 0 calc(50% - var(--space-2) + 5%); // 50% - padding + half the gap
 
       span {
         // caution: display flex here can interfere with overflow hiding
         flex: 0 1 auto; // can shrink if needed
-        margin-right: 0.25em;
+        margin-right: var(--space-1);
+
         @include ellipsis;
       }
 
       // flexible divider between the label and value
-      &:after {
+      &::after {
         flex: 1 1 0; // can grow or shrink, but should be 0 width if needed
         color: var(--primary-300);
         min-width: 0;
         overflow: hidden;
+
         // this needs to be long to account for all possible widths
         content: "................................................................................................................................................................";
       }
@@ -259,6 +314,7 @@
       font-size: var(--font-0);
       color: var(--primary);
       align-self: start;
+
       &--user-field {
         overflow: hidden;
         text-overflow: ellipsis;
@@ -267,14 +323,15 @@
     }
 
     &__row {
-      &:first-child {
-        border-top: 1px solid var(--primary-low);
-      }
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(11em, 1fr));
-      border-bottom: 1px solid var(--primary-low);
-      padding: 0.85em 0.5em 1em;
+      border-bottom: 1px solid var(--table-border-color);
+      padding: var(--space-3) var(--space-2) var(--space-4);
       gap: 0 10%;
+
+      &:first-child {
+        border-top: 1px solid var(--table-border-color);
+      }
     }
 
     &__header {
@@ -284,12 +341,14 @@
     &__cell {
       &,
       &--user-field {
-        padding: 0.25em;
+        padding: var(--space-1);
         border: none;
+
         &:first-child {
           width: 100%;
-          padding: 0.5em 0.25em 1em;
+          padding: var(--space-2) var(--space-1) var(--space-1);
           justify-content: start;
+
           // force full width of the cell
           grid-column-start: 1;
           grid-column-end: -1;
@@ -299,12 +358,14 @@
       &--user-field {
         display: flex;
         order: 2;
+
         // force full width of the cell
         // because we don't know how much content there is
         grid-column-start: 1;
         grid-column-end: -1;
+
         .directory-table__label {
-          margin-right: 0.25em;
+          margin-right: var(--space-1);
         }
       }
     }

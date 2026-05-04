@@ -1,10 +1,12 @@
 import { tracked } from "@glimmer/tracking";
 import Service, { service } from "@ember/service";
+import { withoutPrefix } from "discourse/lib/get-url";
 import KeyValueStore from "discourse/lib/key-value-store";
 import { withPluginApi } from "discourse/lib/plugin-api";
 import { MAIN_PANEL } from "discourse/lib/sidebar/panels";
 import { defaultHomepage } from "discourse/lib/utilities";
 import { getUserChatSeparateSidebarMode } from "discourse/plugins/chat/discourse/lib/get-user-chat-separate-sidebar-mode";
+import { CHAT_PANEL } from "discourse/plugins/chat/discourse/lib/init-sidebar-state";
 
 const PREFERRED_MODE_KEY = "preferred_mode";
 const PREFERRED_MODE_STORE_NAMESPACE = "discourse_chat_";
@@ -23,9 +25,10 @@ export function resetChatDrawerStateCallbacks() {
 
 export default class ChatStateManager extends Service {
   @service chat;
-  @service chatHistory;
+  @service chatChannelsManager;
   @service router;
   @service site;
+  @service chatDrawerRouter;
 
   @tracked isSidePanelExpanded = false;
   @tracked isDrawerExpanded = false;
@@ -60,14 +63,10 @@ export default class ChatStateManager extends Service {
   }
 
   didOpenDrawer(url = null) {
-    withPluginApi("1.8.0", (api) => {
-      const adminSidebarStateManager = api.container.lookup(
-        "service:admin-sidebar-state-manager"
-      );
-
+    withPluginApi((api) => {
       if (
-        adminSidebarStateManager === undefined ||
-        !adminSidebarStateManager.maybeForceAdminSidebar()
+        api.getSidebarPanel()?.key === MAIN_PANEL ||
+        api.getSidebarPanel()?.key === CHAT_PANEL
       ) {
         if (getUserChatSeparateSidebarMode(this.currentUser).always) {
           api.setSeparatedSidebarMode();
@@ -90,19 +89,15 @@ export default class ChatStateManager extends Service {
   }
 
   didCloseDrawer() {
-    withPluginApi("1.8.0", (api) => {
-      const adminSidebarStateManager = api.container.lookup(
-        "service:admin-sidebar-state-manager"
-      );
-
-      const chatSeparateSidebarMode = getUserChatSeparateSidebarMode(
-        this.currentUser
-      );
-
+    withPluginApi((api) => {
       if (
-        adminSidebarStateManager === undefined ||
-        !adminSidebarStateManager.maybeForceAdminSidebar()
+        api.getSidebarPanel()?.key === MAIN_PANEL ||
+        api.getSidebarPanel()?.key === CHAT_PANEL
       ) {
+        const chatSeparateSidebarMode = getUserChatSeparateSidebarMode(
+          this.currentUser
+        );
+
         api.setSidebarPanel(MAIN_PANEL);
 
         if (chatSeparateSidebarMode.fullscreen) {
@@ -118,6 +113,7 @@ export default class ChatStateManager extends Service {
       }
     });
 
+    this.chatDrawerRouter.currentRouteName = null;
     this.isDrawerActive = false;
     this.isDrawerExpanded = false;
     this.chat.updatePresence();
@@ -153,9 +149,13 @@ export default class ChatStateManager extends Service {
     return !!(
       !this.isFullPagePreferred ||
       (this.site.desktopView &&
-        (!this._store.getObject(PREFERRED_MODE_KEY) ||
+        (this.hasNoPreferredMode ||
           this._store.getObject(PREFERRED_MODE_KEY) === DRAWER_CHAT))
     );
+  }
+
+  get hasNoPreferredMode() {
+    return !this._store.getObject(PREFERRED_MODE_KEY);
   }
 
   get isFullPageActive() {
@@ -164,6 +164,10 @@ export default class ChatStateManager extends Service {
 
   get isActive() {
     return this.isFullPageActive || this.isDrawerActive;
+  }
+
+  get isPinnedMessagesPaneOpen() {
+    return this.router.currentRouteName === "chat.channel.pins";
   }
 
   storeAppURL(url = null) {
@@ -181,17 +185,30 @@ export default class ChatStateManager extends Service {
   }
 
   get lastKnownAppURL() {
-    const url = this._appURL;
+    let url = this._appURL;
 
-    if (url && url !== "/") {
-      return url;
+    if (!url || url === "/") {
+      url = this.router.urlFor(`discovery.${defaultHomepage()}`);
     }
 
-    return this.router.urlFor(`discovery.${defaultHomepage()}`);
+    return withoutPrefix(url);
   }
 
   get lastKnownChatURL() {
-    return this._chatURL || "/chat";
+    if (this._chatURL) {
+      return this._chatURL;
+    }
+
+    // On mobile or drawer mode, default to starred channels if user has any
+    // On desktop fullscreen, starred channels are shown in the sidebar
+    if (
+      (this.site.mobileView || this.isDrawerPreferred) &&
+      this.chatChannelsManager.hasStarredChannels
+    ) {
+      return "/chat/starred-channels";
+    }
+
+    return "/chat";
   }
 
   #publishStateChange() {

@@ -58,7 +58,9 @@ RSpec.describe TopicListItemSerializer do
     it "returns hidden tag to staff" do
       json = TopicListItemSerializer.new(topic, scope: Guardian.new(admin), root: false).as_json
 
-      expect(json[:tags]).to eq([hidden_tag.name])
+      expect(json[:tags]).to eq(
+        [{ id: hidden_tag.id, name: hidden_tag.name, slug: hidden_tag.slug }],
+      )
     end
 
     it "trucates description" do
@@ -94,6 +96,273 @@ RSpec.describe TopicListItemSerializer do
         ).as_json
 
       expect(json[:posters].length).to eq(1)
+    end
+
+    it "uses slug_for_url for tags with empty slugs" do
+      numeric_tag = Fabricate(:tag, name: "7")
+      expect(numeric_tag.slug).to eq("")
+
+      topic.tags << numeric_tag
+      json = TopicListItemSerializer.new(topic, scope: Guardian.new(admin), root: false).as_json
+      entry = json[:tags].find { |t| t[:id] == numeric_tag.id }
+
+      expect(entry[:slug]).to eq("#{numeric_tag.id}-tag")
+    end
+  end
+
+  describe "correctly serializes op_likes data" do
+    let(:user) { Fabricate(:user) }
+    let(:moderator) { Fabricate(:moderator) }
+    let(:first_post) { Fabricate(:post, topic: topic, user: user) }
+    let(:plugin) { Plugin::Instance.new }
+
+    before { topic.update!(first_post: first_post) }
+
+    it "serializes op_can_like when theme modifies the serialize_topic_op_likes_data to true" do
+      allow_any_instance_of(ThemeModifierHelper).to receive(
+        :serialize_topic_op_likes_data,
+      ).and_return(true)
+      json = TopicListItemSerializer.new(topic, scope: Guardian.new(moderator), root: false).as_json
+
+      expect(json[:op_can_like]).to eq(true)
+    end
+
+    it "does not include op_can_like when theme modifier disallows" do
+      allow_any_instance_of(ThemeModifierHelper).to receive(
+        :serialize_topic_op_likes_data,
+      ).and_return(false)
+      json = TopicListItemSerializer.new(topic, scope: Guardian.new(moderator), root: false).as_json
+
+      expect(json.key?(:op_can_like)).to eq(false)
+    end
+
+    it "serializes op_can_like when plugin modifies the serialize_topic_op_likes_data to true" do
+      modifier = :serialize_topic_op_likes_data
+      proc = Proc.new { true }
+      DiscoursePluginRegistry.register_modifier(plugin, modifier, &proc)
+      json = TopicListItemSerializer.new(topic, scope: Guardian.new(moderator), root: false).as_json
+
+      expect(json.key?(:op_can_like)).to eq(true)
+    ensure
+      DiscoursePluginRegistry.unregister_modifier(plugin, modifier, &proc)
+    end
+
+    it "serializes op_liked when theme modifies the serialize_topic_op_likes_data to true" do
+      allow_any_instance_of(ThemeModifierHelper).to receive(
+        :serialize_topic_op_likes_data,
+      ).and_return(true)
+      PostAction.create!(
+        user: user,
+        post: first_post,
+        post_action_type_id: PostActionType.types[:like],
+      )
+      json = TopicListItemSerializer.new(topic, scope: Guardian.new(user), root: false).as_json
+
+      expect(json[:op_liked]).to eq(true)
+    end
+
+    it "does not include op_liked when theme modifier disallows" do
+      allow_any_instance_of(ThemeModifierHelper).to receive(
+        :serialize_topic_op_likes_data,
+      ).and_return(false)
+      PostAction.create!(
+        user: user,
+        post: first_post,
+        post_action_type_id: PostActionType.types[:like],
+      )
+      json = TopicListItemSerializer.new(topic, scope: Guardian.new(user), root: false).as_json
+
+      expect(json.key?(:op_liked)).to eq(false)
+    end
+
+    it "serializes op_liked when plugin modifies the serialize_topic_op_likes_data to true" do
+      modifier = :serialize_topic_op_likes_data
+      proc = Proc.new { true }
+      DiscoursePluginRegistry.register_modifier(plugin, modifier, &proc)
+      PostAction.create!(
+        user: user,
+        post: first_post,
+        post_action_type_id: PostActionType.types[:like],
+      )
+      json = TopicListItemSerializer.new(topic, scope: Guardian.new(user), root: false).as_json
+
+      expect(json[:op_liked]).to eq(true)
+    ensure
+      DiscoursePluginRegistry.unregister_modifier(plugin, modifier, &proc)
+    end
+
+    it "serializes first_post_id when theme modifies the serialize_topic_op_likes_data to true" do
+      allow_any_instance_of(ThemeModifierHelper).to receive(
+        :serialize_topic_op_likes_data,
+      ).and_return(true)
+      json = TopicListItemSerializer.new(topic, scope: Guardian.new(moderator), root: false).as_json
+
+      expect(json[:first_post_id]).to eq(first_post.id)
+    end
+
+    it "does not include first_post_id when theme modifier disallows" do
+      allow_any_instance_of(ThemeModifierHelper).to receive(
+        :serialize_topic_op_likes_data,
+      ).and_return(false)
+      json = TopicListItemSerializer.new(topic, scope: Guardian.new(moderator), root: false).as_json
+
+      expect(json.key?(:first_post_id)).to eq(false)
+    end
+
+    it "serializes first_post_id when plugin modifies the serialize_topic_op_likes_data to true" do
+      modifier = :serialize_topic_op_likes_data
+      proc = Proc.new { true }
+      DiscoursePluginRegistry.register_modifier(plugin, modifier, &proc)
+      json = TopicListItemSerializer.new(topic, scope: Guardian.new(moderator), root: false).as_json
+
+      expect(json[:first_post_id]).to eq(first_post.id)
+    ensure
+      DiscoursePluginRegistry.unregister_modifier(plugin, modifier, &proc)
+    end
+
+    it "serializes op_like_count" do
+      json = TopicListItemSerializer.new(topic, scope: Guardian.new(moderator), root: false).as_json
+      expect(json[:op_like_count]).to eq(first_post.like_count)
+    end
+  end
+
+  describe "tag localization" do
+    fab!(:user)
+    fab!(:localized_tag, :tag) { Fabricate(:tag, name: "cats", locale: "en") }
+    fab!(:localization) do
+      Fabricate(
+        :tag_localization,
+        tag: localized_tag,
+        locale: "ja",
+        name: "猫",
+        description: "猫についてのタグです",
+      )
+    end
+
+    before do
+      SiteSetting.tagging_enabled = true
+      topic.tags << localized_tag
+    end
+
+    def serialize
+      TopicListItemSerializer.new(topic, scope: Guardian.new(user), root: false).as_json
+    end
+
+    it "returns localized tag name when conditions met" do
+      SiteSetting.content_localization_enabled = true
+      localized_tag.update!(locale: "en")
+      I18n.locale = "ja"
+
+      expect(serialize[:tags]).to include(
+        { id: localized_tag.id, name: "猫", slug: localized_tag.slug },
+      )
+    end
+
+    it "returns original tag name when localization disabled" do
+      SiteSetting.content_localization_enabled = false
+      I18n.locale = "ja"
+
+      expect(serialize[:tags]).to include(
+        { id: localized_tag.id, name: "cats", slug: localized_tag.slug },
+      )
+    end
+
+    it "returns original tag name when tag has no locale" do
+      SiteSetting.content_localization_enabled = true
+      localized_tag.update!(locale: nil)
+      I18n.locale = "ja"
+
+      expect(serialize[:tags]).to include(
+        { id: localized_tag.id, name: "cats", slug: localized_tag.slug },
+      )
+    end
+
+    it "uses localized tag name as key in tags_descriptions" do
+      SiteSetting.content_localization_enabled = true
+      localized_tag.update!(locale: "en", description: "A tag about cats")
+      I18n.locale = "ja"
+
+      expect(serialize[:tags_descriptions]).to have_key("猫")
+      expect(serialize[:tags_descriptions]).not_to have_key("cats")
+      expect(serialize[:tags_descriptions]["猫"]).to eq("猫についてのタグです")
+    end
+
+    it "uses original tag name as key when localization disabled" do
+      SiteSetting.content_localization_enabled = false
+      localized_tag.update!(description: "A tag about cats")
+      I18n.locale = "ja"
+
+      expect(serialize[:tags_descriptions]).to have_key("cats")
+      expect(serialize[:tags_descriptions]).not_to have_key("猫")
+      expect(serialize[:tags_descriptions]["cats"]).to eq("A tag about cats")
+    end
+  end
+
+  describe "#is_hot" do
+    describe "including the attr based on theme modifier or plugin registry" do
+      fab!(:hot_topic, :topic)
+
+      # Caching this directly to workaround the limit heuristic.
+      before { Discourse.cache.write(TopicHotScore::CACHE_KEY, Set.new([hot_topic.id])) }
+      after { Discourse.cache.delete(TopicHotScore::CACHE_KEY) }
+
+      context "without opt-in" do
+        before do
+          allow_any_instance_of(ThemeModifierHelper).to receive(:serialize_topic_is_hot).and_return(
+            false,
+          )
+        end
+
+        it "doesn't includes the attr" do
+          serialized =
+            TopicListItemSerializer.new(hot_topic, scope: Guardian.new, root: false).as_json
+
+          expect(serialized.key?(:is_hot)).to eq(false)
+        end
+      end
+
+      context "when theme modifier opts-in" do
+        before do
+          allow_any_instance_of(ThemeModifierHelper).to receive(:serialize_topic_is_hot).and_return(
+            true,
+          )
+        end
+
+        it "returns true if topic is hot" do
+          serialized =
+            TopicListItemSerializer.new(hot_topic, scope: Guardian.new, root: false).as_json
+
+          expect(serialized[:is_hot]).to eq(true)
+        end
+
+        it "returns false if topic is not hot" do
+          serialized = TopicListItemSerializer.new(topic, scope: Guardian.new, root: false).as_json
+
+          expect(serialized[:is_hot]).to eq(false)
+        end
+      end
+
+      context "when plugin registry opts-in" do
+        let(:modifier) { :serialize_topic_is_hot }
+        let(:proc) { Proc.new { true } }
+        let(:plugin) { Plugin::Instance.new }
+
+        before { DiscoursePluginRegistry.register_modifier(plugin, modifier, &proc) }
+        after { DiscoursePluginRegistry.unregister_modifier(plugin, modifier, &proc) }
+
+        it "returns true if topic is hot" do
+          serialized =
+            TopicListItemSerializer.new(hot_topic, scope: Guardian.new, root: false).as_json
+
+          expect(serialized[:is_hot]).to eq(true)
+        end
+
+        it "returns false if topic is not hot" do
+          serialized = TopicListItemSerializer.new(topic, scope: Guardian.new, root: false).as_json
+
+          expect(serialized[:is_hot]).to eq(false)
+        end
+      end
     end
   end
 end

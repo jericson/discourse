@@ -29,6 +29,7 @@ class SiteSerializer < ApplicationSerializer
     :topic_featured_link_allowed_category_ids,
     :user_themes,
     :user_color_schemes,
+    :default_light_color_scheme,
     :default_dark_color_scheme,
     :censored_regexp,
     :shared_drafts_category_id,
@@ -39,7 +40,6 @@ class SiteSerializer < ApplicationSerializer
     :markdown_additional_options,
     :hashtag_configurations,
     :hashtag_icons,
-    :displayed_about_plugin_stat_groups,
     :anonymous_default_navigation_menu_tags,
     :anonymous_sidebar_sections,
     :whispers_allowed_groups_names,
@@ -48,6 +48,11 @@ class SiteSerializer < ApplicationSerializer
     :privacy_policy_url,
     :system_user_avatar_template,
     :lazy_load_categories,
+    :valid_flag_applies_to_types,
+    :full_name_required_for_signup,
+    :full_name_visible_in_signup,
+    :admin_config_login_routes,
+    :email_configured,
   )
 
   has_many :archetypes, embed: :objects, serializer: ArchetypeSerializer
@@ -57,16 +62,27 @@ class SiteSerializer < ApplicationSerializer
 
   def user_themes
     cache_fragment("user_themes") do
-      Theme
-        .where("id = :default OR user_selectable", default: SiteSetting.default_theme_id)
-        .order("lower(name)")
-        .pluck(:id, :name, :color_scheme_id)
-        .map do |id, n, cs|
+      themes =
+        Theme
+          .where("id = :default OR user_selectable", default: SiteSetting.default_theme_id)
+          .order("lower(name)")
+          .pluck(:id, :name, :color_scheme_id, :dark_color_scheme_id)
+
+      modifier_theme_ids =
+        ThemeModifierSet
+          .where(theme_id: themes.map(&:first), only_theme_color_schemes: true)
+          .pluck(:theme_id)
+          .to_set
+
+      themes
+        .map do |id, name, color_scheme_id, dark_color_scheme_id|
           {
             theme_id: id,
-            name: n,
+            name: name,
             default: id == SiteSetting.default_theme_id,
-            color_scheme_id: cs,
+            color_scheme_id: color_scheme_id,
+            dark_color_scheme_id: dark_color_scheme_id,
+            only_theme_color_schemes: modifier_theme_ids.include?(id),
           }
         end
         .as_json
@@ -75,7 +91,16 @@ class SiteSerializer < ApplicationSerializer
 
   def user_color_schemes
     cache_fragment("user_color_schemes") do
-      schemes = ColorScheme.includes(:color_scheme_colors).where("user_selectable").order(:name)
+      theme_ids_with_modifier =
+        ThemeModifierSet.where(only_theme_color_schemes: true).pluck(:theme_id)
+
+      schemes =
+        ColorScheme
+          .includes(:color_scheme_colors)
+          .where(user_selectable: true)
+          .or(ColorScheme.where(theme_id: theme_ids_with_modifier))
+          .order(:name)
+
       ActiveModel::ArraySerializer.new(
         schemes,
         each_serializer: ColorSchemeSelectableSerializer,
@@ -83,8 +108,18 @@ class SiteSerializer < ApplicationSerializer
     end
   end
 
+  def default_light_color_scheme
+    ColorSchemeSerializer.new(
+      ColorScheme.find_by_id(Theme.find_default&.color_scheme_id),
+      root: false,
+    ).as_json
+  end
+
   def default_dark_color_scheme
-    ColorScheme.find_by_id(SiteSetting.default_dark_mode_color_scheme_id).as_json
+    ColorSchemeSerializer.new(
+      ColorScheme.find_by_id(Theme.find_default&.dark_color_scheme_id),
+      root: false,
+    ).as_json
   end
 
   def groups
@@ -92,7 +127,15 @@ class SiteSerializer < ApplicationSerializer
       object
         .groups
         .order(:name)
-        .select(:id, :name, :flair_icon, :flair_upload_id, :flair_bg_color, :flair_color)
+        .select(
+          :id,
+          :name,
+          :flair_icon,
+          :flair_upload_id,
+          :flair_bg_color,
+          :flair_color,
+          :automatic,
+        )
         .map do |g|
           {
             id: g.id,
@@ -100,6 +143,7 @@ class SiteSerializer < ApplicationSerializer
             flair_url: g.flair_url,
             flair_bg_color: g.flair_bg_color,
             flair_color: g.flair_color,
+            automatic: g.automatic,
           }
         end
         .as_json
@@ -107,17 +151,49 @@ class SiteSerializer < ApplicationSerializer
   end
 
   def post_action_types
-    cache_fragment("post_action_types_#{I18n.locale}") do
-      types = ordered_flags(PostActionType.types.values)
-      ActiveModel::ArraySerializer.new(types).as_json
-    end
+    Discourse
+      .cache
+      .fetch("post_action_types_#{I18n.locale}") do
+        if PostActionType.overridden_by_plugin_or_skipped_db?
+          types = ordered_flags(PostActionType.types.values)
+          ActiveModel::ArraySerializer.new(types).as_json
+        else
+          flags = Flag.unscoped.order(:position).where(score_type: false).all
+
+          ActiveModel::ArraySerializer.new(
+            flags,
+            each_serializer: FlagSerializer,
+            target: :post_action,
+            used_flag_ids: self.used_flag_ids(flags.map(&:id)),
+          ).as_json
+        end
+      end
   end
 
   def topic_flag_types
-    cache_fragment("post_action_flag_types_#{I18n.locale}") do
-      types = ordered_flags(PostActionType.topic_flag_types.values)
-      ActiveModel::ArraySerializer.new(types, each_serializer: TopicFlagTypeSerializer).as_json
-    end
+    Discourse
+      .cache
+      .fetch("post_action_flag_types_#{I18n.locale}") do
+        if PostActionType.overridden_by_plugin_or_skipped_db?
+          types = ordered_flags(PostActionType.topic_flag_types.values)
+          ActiveModel::ArraySerializer.new(types, each_serializer: TopicFlagTypeSerializer).as_json
+        else
+          flags =
+            Flag
+              .unscoped
+              .where("'Topic' = ANY(applies_to)")
+              .where(score_type: false)
+              .order(:position)
+              .all
+
+          ActiveModel::ArraySerializer.new(
+            flags,
+            each_serializer: FlagSerializer,
+            target: :topic_flag,
+            used_flag_ids: self.used_flag_ids(flags.map(&:id)),
+          ).as_json
+        end
+      end
   end
 
   def default_archetype
@@ -213,7 +289,7 @@ class SiteSerializer < ApplicationSerializer
   end
 
   def censored_regexp
-    WordWatcher.serialized_regexps_for_action(:censor, engine: :js)
+    WordWatcher.serialized_regexps_for_action(:censor)
   end
 
   def custom_emoji_translation
@@ -229,11 +305,11 @@ class SiteSerializer < ApplicationSerializer
   end
 
   def watched_words_replace
-    WordWatcher.regexps_for_action(:replace, engine: :js)
+    WordWatcher.regexps_for_action(:replace)
   end
 
   def watched_words_link
-    WordWatcher.regexps_for_action(:link, engine: :js)
+    WordWatcher.regexps_for_action(:link)
   end
 
   def categories
@@ -256,19 +332,16 @@ class SiteSerializer < ApplicationSerializer
     HashtagAutocompleteService.data_source_icon_map
   end
 
-  def displayed_about_plugin_stat_groups
-    About.displayed_plugin_stat_groups
-  end
-
   SIDEBAR_TOP_TAGS_TO_SHOW = 5
 
   def navigation_menu_site_top_tags
     if top_tags.present?
-      tag_names = top_tags[0...SIDEBAR_TOP_TAGS_TO_SHOW]
-      serialized = serialize_tags(Tag.where(name: tag_names))
+      top_tag_objects = top_tags[0...SIDEBAR_TOP_TAGS_TO_SHOW]
+      tag_ids = top_tag_objects.map { |t| t[:id] }
+      serialized = serialize_tags(Tag.where(id: tag_ids))
 
       # Ensures order of top tags is preserved
-      serialized.sort_by { |tag| tag_names.index(tag[:name]) }
+      serialized.sort_by { |tag| tag_ids.index(tag[:id]) }
     else
       []
     end
@@ -347,9 +420,41 @@ class SiteSerializer < ApplicationSerializer
     scope.can_lazy_load_categories?
   end
 
+  def valid_flag_applies_to_types
+    Flag.valid_applies_to_types
+  end
+
+  def include_valid_flag_applies_to_types?
+    scope.is_admin?
+  end
+
+  def admin_config_login_routes
+    DiscoursePluginRegistry.admin_config_login_routes
+  end
+
+  def include_admin_config_login_routes?
+    scope.is_admin?
+  end
+
+  def email_configured
+    GlobalSetting.smtp_address.present?
+  end
+
+  def full_name_required_for_signup
+    Site.full_name_required_for_signup
+  end
+
+  def full_name_visible_in_signup
+    Site.full_name_visible_in_signup
+  end
+
   private
 
   def ordered_flags(flags)
     flags.map { |id| PostActionType.new(id: id) }
+  end
+
+  def used_flag_ids(flag_ids)
+    @used_flag_ids ||= Flag.used_flag_ids(flag_ids)
   end
 end

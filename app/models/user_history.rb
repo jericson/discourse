@@ -10,6 +10,7 @@ class UserHistory < ActiveRecord::Base
   belongs_to :post
   belongs_to :topic
   belongs_to :category
+  belongs_to :reviewable, optional: true
 
   # Each value in the context should be shorter than this
   MAX_CONTEXT_LENGTH = 50_000
@@ -28,7 +29,12 @@ class UserHistory < ActiveRecord::Base
   validates :previous_value, length: { maximum: MAX_JSON_LENGTH }
   validates :new_value, length: { maximum: MAX_JSON_LENGTH }
 
-  validates_presence_of :action
+  validates :action, presence: true
+
+  # moderators can only see these if the corresponding site setting is enabled
+  CATEGORY_ACTIONS = %i[create_category change_category_settings delete_category].freeze
+  TRUST_LEVEL_ACTIONS = %i[change_trust_level lock_trust_level unlock_trust_level].freeze
+  EMAIL_ACTIONS = %i[check_email add_email update_email destroy_email].freeze
 
   scope :only_staff_actions, -> { where("action IN (?)", UserHistory.staff_action_ids) }
 
@@ -144,6 +150,23 @@ class UserHistory < ActiveRecord::Base
         create_watched_word_group: 105,
         update_watched_word_group: 106,
         delete_watched_word_group: 107,
+        redirected_to_required_fields: 108,
+        filled_in_required_fields: 109,
+        topic_slow_mode_set: 110,
+        topic_slow_mode_removed: 111,
+        custom_emoji_create: 112,
+        custom_emoji_destroy: 113,
+        delete_post_permanently: 114,
+        delete_topic_permanently: 115,
+        tag_group_create: 116,
+        tag_group_destroy: 117,
+        tag_group_change: 118,
+        delete_associated_accounts: 119,
+        change_theme_site_setting: 120,
+        stop_impersonating: 121,
+        upcoming_change_toggled: 122,
+        change_site_setting_groups: 123,
+        upcoming_change_available: 124,
       )
   end
 
@@ -252,6 +275,25 @@ class UserHistory < ActiveRecord::Base
       create_watched_word_group
       update_watched_word_group
       delete_watched_word_group
+      topic_slow_mode_set
+      topic_slow_mode_removed
+      custom_emoji_create
+      custom_emoji_destroy
+      delete_post_permanently
+      delete_topic_permanently
+      tag_group_create
+      tag_group_destroy
+      tag_group_change
+      delete_associated_accounts
+      toggle_flag
+      delete_flag
+      update_flag
+      create_flag
+      change_theme_site_setting
+      stop_impersonating
+      upcoming_change_toggled
+      change_site_setting_groups
+      upcoming_change_available
     ]
   end
 
@@ -259,8 +301,97 @@ class UserHistory < ActiveRecord::Base
     @staff_action_ids ||= staff_actions.map { |a| actions[a] }
   end
 
+  def self.moderator_visible_actions
+    @moderator_visible_actions ||= [
+      # user account
+      :approve_user,
+      :activate_user,
+      :deactivate_user,
+      :delete_user,
+      # user profile
+      :change_name,
+      :change_username,
+      :change_title,
+      :revoke_title,
+      # trust levels
+      :change_trust_level,
+      :lock_trust_level,
+      :unlock_trust_level,
+      # emails
+      :add_email,
+      :check_email,
+      :update_email,
+      :destroy_email,
+      # suspension
+      :suspend_user,
+      :unsuspend_user,
+      :removed_suspend_user,
+      :removed_unsuspend_user,
+      # silence
+      :silence_user,
+      :unsilence_user,
+      :removed_silence_user,
+      :removed_unsilence_user,
+      # badges
+      :grant_badge,
+      :revoke_badge,
+      # posts
+      :post_approved,
+      :post_rejected,
+      :post_edit,
+      :post_locked,
+      :post_unlocked,
+      :post_staff_note_create,
+      :post_staff_note_destroy,
+      :delete_post,
+      :delete_post_permanently,
+      :permanently_delete_post_revisions,
+      # topics
+      :topic_published,
+      :topic_closed,
+      :topic_opened,
+      :topic_archived,
+      :topic_unarchived,
+      :topic_timestamps_changed,
+      :topic_slow_mode_set,
+      :topic_slow_mode_removed,
+      :recover_topic,
+      :delete_topic,
+      :delete_topic_permanently,
+      # categories
+      :create_category,
+      :change_category_settings,
+      :delete_category,
+      # tags
+      :tag_group_create,
+      :tag_group_change,
+      :tag_group_destroy,
+      # watched words
+      :watched_word_create,
+      :watched_word_destroy,
+      :create_watched_word_group,
+      :update_watched_word_group,
+      :delete_watched_word_group,
+      # misc.
+      :check_personal_message,
+      :reset_bounce_score,
+    ]
+  end
+
+  def self.site_setting_excluded_actions
+    excluded = []
+    excluded.concat(CATEGORY_ACTIONS) unless SiteSetting.moderators_manage_categories
+    excluded.concat(TRUST_LEVEL_ACTIONS) unless SiteSetting.moderators_change_trust_levels
+    excluded.concat(EMAIL_ACTIONS) unless SiteSetting.moderators_view_emails
+    excluded
+  end
+
+  def self.moderator_visible_action_ids
+    (moderator_visible_actions - site_setting_excluded_actions).map { |a| actions[a] }
+  end
+
   def self.admin_only_action_ids
-    @admin_only_action_ids ||= [actions[:change_site_setting]]
+    @admin_only_action_ids ||= staff_action_ids - moderator_visible_action_ids
   end
 
   def self.with_filters(filters)
@@ -307,8 +438,13 @@ class UserHistory < ActiveRecord::Base
         .with_filters(opts.slice(*staff_filters))
         .only_staff_actions
         .order("id DESC")
-        .includes(:acting_user, :target_user)
-    query = query.where(admin_only: false) unless viewer && viewer.admin?
+        .includes(:acting_user, :target_user, :topic, :post, :category)
+
+    query = query.where(action: moderator_visible_action_ids) unless viewer&.admin?
+
+    query = query.where("created_at >= ?", opts[:start_date].to_time) if opts[:start_date]
+    query = query.where("created_at <= ?", opts[:end_date].to_time) if opts[:end_date]
+
     query
   end
 
@@ -318,7 +454,9 @@ class UserHistory < ActiveRecord::Base
   end
 
   def new_value_is_json?
-    [UserHistory.actions[:change_theme], UserHistory.actions[:delete_theme]].include?(action)
+    %i[change_theme delete_theme tag_group_create tag_group_destroy tag_group_change]
+      .map { |i| UserHistory.actions[i] }
+      .include?(action)
   end
 
   def previous_value_is_json?
@@ -348,12 +486,15 @@ end
 #  post_id        :integer
 #  custom_type    :string
 #  category_id    :integer
+#  reviewable_id  :bigint
 #
 # Indexes
 #
 #  index_user_histories_on_acting_user_id_and_action_and_id        (acting_user_id,action,id)
 #  index_user_histories_on_action_and_id                           (action,id)
 #  index_user_histories_on_category_id                             (category_id)
+#  index_user_histories_on_post_id                                 (post_id)
+#  index_user_histories_on_reviewable_id                           (reviewable_id)
 #  index_user_histories_on_subject_and_id                          (subject,id)
 #  index_user_histories_on_target_user_id_and_id                   (target_user_id,id)
 #  index_user_histories_on_topic_id_and_target_user_id_and_action  (topic_id,target_user_id,action)

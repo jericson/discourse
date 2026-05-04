@@ -1,19 +1,18 @@
 # frozen_string_literal: true
 
 RSpec.describe TopicViewSerializer do
-  def serialize_topic(topic, user_arg)
-    topic_view = TopicView.new(topic.id, user_arg)
+  def serialize_topic(topic, user_arg, opts = {})
+    topic_view = TopicView.new(topic.id, user_arg, opts)
+
     serializer =
       TopicViewSerializer.new(topic_view, scope: Guardian.new(user_arg), root: false).as_json
+
     JSON.parse(MultiJson.dump(serializer)).deep_symbolize_keys!
   end
 
-  # Ensure no suggested ids are cached cause that can muck up suggested
-  use_redis_snapshotting
-
   fab!(:topic)
   fab!(:user) { Fabricate(:user, refresh_auto_groups: true) }
-  fab!(:user_2) { Fabricate(:user) }
+  fab!(:user_2, :user)
   fab!(:admin)
 
   describe "#featured_link and #featured_link_root_domain" do
@@ -95,31 +94,23 @@ RSpec.describe TopicViewSerializer do
   end
 
   describe "#suggested_topics" do
-    fab!(:topic2) { Fabricate(:topic) }
+    fab!(:topic2, :topic)
 
     before { TopicUser.update_last_read(user, topic2.id, 0, 0, 0) }
 
-    describe "when loading last chunk" do
-      it "should include suggested topics" do
-        json = serialize_topic(topic, user)
+    it "should include suggested topics if `TopicView#include_suggested` is set to `true`" do
+      json = serialize_topic(topic, user, include_suggested: true)
 
-        expect(json[:suggested_topics].first[:id]).to eq(topic2.id)
-      end
+      expect(json[:suggested_topics].first[:id]).to eq(topic2.id)
     end
 
-    describe "when not loading last chunk" do
-      fab!(:post) { Fabricate(:post, topic: topic) }
-      fab!(:post2) { Fabricate(:post, topic: topic) }
+    it "should not include suggested topics if `TopicView#include_suggested` is set to `false`" do
+      post = Fabricate(:post, topic:)
+      post2 = Fabricate(:post, topic:)
 
-      it "should not include suggested topics" do
-        post
-        post2
-        topic_view = TopicView.new(topic.id, user, post_ids: [post.id])
-        topic_view.next_page
-        json = described_class.new(topic_view, scope: Guardian.new(user), root: false).as_json
+      json = serialize_topic(topic, user, include_suggested: false)
 
-        expect(json[:suggested_topics]).to eq(nil)
-      end
+      expect(json[:suggested_topics]).to eq(nil)
     end
 
     describe "with private messages" do
@@ -226,7 +217,7 @@ RSpec.describe TopicViewSerializer do
     it "should include the tag for staff users" do
       [moderator, admin].each do |user|
         json = serialize_topic(pm, user)
-        expect(json[:tags]).to eq([tag.name])
+        expect(json[:tags]).to eq([{ id: tag.id, name: tag.name, slug: tag.slug }])
       end
     end
 
@@ -235,7 +226,7 @@ RSpec.describe TopicViewSerializer do
 
       user.group_users << Fabricate(:group_user, group: group, user: user)
       json = serialize_topic(pm_between_reg_users, user)
-      expect(json[:tags]).to eq([tag.name])
+      expect(json[:tags]).to eq([{ id: tag.id, name: tag.name, slug: tag.slug }])
 
       json = serialize_topic(pm_between_reg_users, user_2)
       expect(json[:tags]).to eq(nil)
@@ -261,7 +252,9 @@ RSpec.describe TopicViewSerializer do
 
     it "returns hidden tag to staff" do
       json = serialize_topic(topic, admin)
-      expect(json[:tags]).to eq([hidden_tag.name])
+      expect(json[:tags]).to eq(
+        [{ id: hidden_tag.id, name: hidden_tag.name, slug: hidden_tag.slug }],
+      )
     end
 
     it "does not return hidden tag to non-staff" do
@@ -307,7 +300,13 @@ RSpec.describe TopicViewSerializer do
 
     it "tags are automatically sorted by tag popularity" do
       json = serialize_topic(topic, user)
-      expect(json[:tags]).to eq(%w[btag ctag atag])
+      expect(json[:tags]).to eq(
+        [
+          { id: tag2.id, name: "btag", slug: "btag" },
+          { id: tag1.id, name: "ctag", slug: "ctag" },
+          { id: tag3.id, name: "atag", slug: "atag" },
+        ],
+      )
       expect(json[:tags_descriptions]).to eq(
         { btag: "b description", ctag: "c description", atag: "a description" },
       )
@@ -316,7 +315,13 @@ RSpec.describe TopicViewSerializer do
     it "tags can be sorted alphabetically" do
       SiteSetting.tags_sort_alphabetically = true
       json = serialize_topic(topic, user)
-      expect(json[:tags]).to eq(%w[atag btag ctag])
+      expect(json[:tags]).to eq(
+        [
+          { id: tag3.id, name: "atag", slug: "atag" },
+          { id: tag2.id, name: "btag", slug: "btag" },
+          { id: tag1.id, name: "ctag", slug: "ctag" },
+        ],
+      )
     end
   end
 
@@ -384,8 +389,9 @@ RSpec.describe TopicViewSerializer do
 
   context "with details" do
     it "returns the details object" do
-      PostCreator.create!(user, topic_id: topic.id, raw: "this is my post content")
+      post = PostCreator.create!(user, topic_id: topic.id, raw: "this is my post content")
       topic.topic_links.create!(
+        post: post,
         user: user,
         url: "https://discourse.org",
         domain: "discourse.org",
@@ -460,7 +466,10 @@ RSpec.describe TopicViewSerializer do
 
     context "with can_edit" do
       fab!(:group_user)
-      fab!(:category) { Fabricate(:category, reviewable_by_group: group_user.group) }
+      fab!(:category)
+      fab!(:category_moderation_group) do
+        Fabricate(:category_moderation_group, category:, group: group_user.group)
+      end
       fab!(:topic) { Fabricate(:topic, category: category) }
       let(:user) { group_user.user }
 
@@ -649,6 +658,95 @@ RSpec.describe TopicViewSerializer do
       json = serialize_topic(topic, user)
 
       expect(json[:topic_timer][:id]).to eq(topic_timer.id)
+    end
+  end
+
+  describe "#fancy_title" do
+    before { topic.update!(title: "Hur dur this is a title") }
+
+    it "returns the fancy title" do
+      json = serialize_topic(topic, user)
+
+      expect(json[:fancy_title]).to eq("Hur dur this is a title")
+    end
+
+    describe "with localizations" do
+      before do
+        Fabricate(:topic_localization, topic:, fancy_title: "X", locale: "ja")
+        I18n.locale = "ja"
+      end
+
+      it "returns the localized fancy_title" do
+        SiteSetting.content_localization_enabled = false
+        json = serialize_topic(topic, user)
+        expect(json[:fancy_title]).to eq("Hur dur this is a title")
+
+        SiteSetting.content_localization_enabled = true
+        topic.update!(locale: "en")
+
+        json = serialize_topic(topic, user)
+        expect(json[:fancy_title]).to eq("X")
+      end
+
+      it "returns the fancy_title_localized if localized title returned" do
+        SiteSetting.content_localization_enabled = false
+        json = serialize_topic(topic, user)
+        expect(json[:fancy_title_localized]).to eq(nil)
+
+        SiteSetting.content_localization_enabled = true
+        json = serialize_topic(topic, user)
+        expect(json[:fancy_title_localized]).to eq(false)
+
+        topic.update!(locale: "en")
+        json = serialize_topic(topic, user)
+        expect(json[:fancy_title_localized]).to eq(true)
+      end
+
+      it "returns the locale" do
+        topic.update(locale: "ja")
+
+        SiteSetting.content_localization_enabled = false
+        json = serialize_topic(topic, user)
+        expect(json[:locale]).to eq(nil)
+
+        SiteSetting.content_localization_enabled = true
+        json = serialize_topic(topic, user)
+        expect(json[:locale]).to eq("ja")
+      end
+    end
+  end
+
+  describe "#has_localized_content" do
+    before { SiteSetting.content_localization_enabled = true }
+
+    it "returns true if the topic has localization" do
+      Fabricate(:topic_localization, topic:, locale: "ja")
+      I18n.locale = "ja"
+      topic.update!(locale: "en")
+
+      json = serialize_topic(topic, user)
+      expect(json[:has_localized_content]).to eq(true)
+    end
+
+    it "returns true if any post has localization" do
+      loc = Fabricate(:post_localization, locale: "ja")
+      I18n.locale = "ja"
+      loc.post.update!(locale: "en")
+
+      json = serialize_topic(loc.post.topic, user)
+      expect(json[:has_localized_content]).to eq(true)
+    end
+
+    it "returns false if the topic does not have localization" do
+      json = serialize_topic(topic, user)
+      expect(json[:has_localized_content]).to eq(false)
+    end
+
+    it "does not return attribute if setting is disabled" do
+      SiteSetting.content_localization_enabled = false
+
+      json = serialize_topic(topic, user)
+      expect(json[:has_localized_content]).to eq(nil)
     end
   end
 end

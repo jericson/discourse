@@ -20,6 +20,8 @@ module Chat
         item.description = channel.description
         item.slug = channel.slug
         item.icon = icon
+        item.emoji = channel.emoji
+        item.style_type = channel.emoji.present? ? "emoji" : "icon"
         item.colors = [channel.category.color] if channel.category_channel?
         item.relative_url = channel.relative_url
         item.type = "channel"
@@ -56,7 +58,6 @@ module Chat
           guardian,
           filter: term,
           limit: limit,
-          exclude_dm_channels: true,
           match_filter_on_starts_with:
             condition == HashtagAutocompleteService.search_conditions[:starts_with],
         )

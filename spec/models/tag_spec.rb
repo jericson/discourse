@@ -2,11 +2,10 @@
 
 RSpec.describe Tag do
   def make_some_tags(count: 3, tag_a_topic: false)
-    @tags = []
     if tag_a_topic
-      count.times { |i| @tags << Fabricate(:tag, topics: [Fabricate(:topic)]) }
+      Fabricate.times(count, :tag, topics: [Fabricate(:topic)])
     else
-      count.times { |i| @tags << Fabricate(:tag) }
+      Fabricate.times(count, :tag)
     end
   end
 
@@ -25,12 +24,15 @@ RSpec.describe Tag do
       tag_sidebar_section_link = Fabricate(:tag_sidebar_section_link)
       tag_sidebar_section_link_2 =
         Fabricate(:tag_sidebar_section_link, linkable: tag_sidebar_section_link.linkable)
-      category_sidebar_section_link = Fabricate(:category_sidebar_section_link)
 
       expect { tag_sidebar_section_link.linkable.destroy! }.to change {
         SidebarSectionLink.count
-      }.from(12).to(10)
-      expect(SidebarSectionLink.last).to eq(category_sidebar_section_link)
+      }.by(-2)
+      expect(
+        SidebarSectionLink.where(
+          id: [tag_sidebar_section_link.id, tag_sidebar_section_link_2.id],
+        ).count,
+      ).to eq(0)
     end
   end
 
@@ -81,68 +83,100 @@ RSpec.describe Tag do
   end
 
   describe "#top_tags" do
-    it "returns nothing if nothing has been tagged" do
-      make_some_tags(tag_a_topic: false)
-      expect(Tag.top_tags.sort).to be_empty
+    context "when nothing has been tagged" do
+      let!(:tags) { make_some_tags(tag_a_topic: false) }
+
+      it "returns nothing" do
+        expect(Tag.top_tags.sort).to be_empty
+      end
     end
 
-    it "can return all tags" do
-      make_some_tags(tag_a_topic: true)
-      expect(Tag.top_tags.sort).to eq(@tags.map(&:name).sort)
+    context "when something has been tagged" do
+      let!(:tags) { make_some_tags(tag_a_topic: true) }
+
+      it "returns all tags" do
+        expect(Tag.top_tags).to contain_exactly(
+          *tags.map { |t| { id: t.id, name: t.name, slug: t.slug } },
+        )
+      end
     end
 
     context "with categories" do
+      let(:tags) { make_some_tags(count: 4) }
+      let(:category1) { Fabricate(:category) }
+      let(:private_category) { Fabricate(:category) }
+      let!(:topics) do
+        [
+          Fabricate(:topic, category: category1, tags: [tags[0]]),
+          Fabricate(:topic, tags: [tags[1]]),
+          Fabricate(:topic, category: private_category, tags: [tags[2]]),
+        ]
+      end
+
       before do
-        make_some_tags(count: 4) # one tag that isn't used
-        @category1 = Fabricate(:category)
-        @private_category = Fabricate(:category)
-        @private_category.set_permissions(admins: :full)
-        @private_category.save!
-        @topics = []
-        @topics << Fabricate(:topic, category: @category1, tags: [@tags[0]])
-        @topics << Fabricate(:topic, tags: [@tags[1]])
-        @topics << Fabricate(:topic, category: @private_category, tags: [@tags[2]])
+        private_category.set_permissions(admins: :full)
+        private_category.save!
       end
 
       it "works correctly" do
-        expect(Tag.top_tags(category: @category1).sort).to eq([@tags[0].name].sort)
-        expect(Tag.top_tags(guardian: Guardian.new(Fabricate(:admin))).sort).to eq(
-          [@tags[0].name, @tags[1].name, @tags[2].name].sort,
+        expect(Tag.top_tags(category: category1)).to eq(
+          [{ id: tags[0].id, name: tags[0].name, slug: tags[0].slug }],
+        )
+        expect(Tag.top_tags(guardian: Guardian.new(Fabricate(:admin)))).to contain_exactly(
+          { id: tags[0].id, name: tags[0].name, slug: tags[0].slug },
+          { id: tags[1].id, name: tags[1].name, slug: tags[1].slug },
+          { id: tags[2].id, name: tags[2].name, slug: tags[2].slug },
         )
         expect(
-          Tag.top_tags(category: @private_category, guardian: Guardian.new(Fabricate(:admin))).sort,
-        ).to eq([@tags[2].name].sort)
+          Tag.top_tags(category: private_category, guardian: Guardian.new(Fabricate(:admin))),
+        ).to eq([{ id: tags[2].id, name: tags[2].name, slug: tags[2].slug }])
 
-        expect(Tag.top_tags.sort).to eq([@tags[0].name, @tags[1].name].sort)
-        expect(Tag.top_tags(category: @private_category)).to be_empty
+        expect(Tag.top_tags).to contain_exactly(
+          { id: tags[0].id, name: tags[0].name, slug: tags[0].slug },
+          { id: tags[1].id, name: tags[1].name, slug: tags[1].slug },
+        )
+        expect(Tag.top_tags(category: private_category)).to be_empty
 
-        sub_category = Fabricate(:category, parent_category_id: @category1.id)
-        Fabricate(:topic, category: sub_category, tags: [@tags[1]])
-        expect(Tag.top_tags(category: @category1).sort).to eq([@tags[0].name, @tags[1].name].sort)
+        sub_category = Fabricate(:category, parent_category_id: category1.id)
+        Fabricate(:topic, category: sub_category, tags: [tags[1]])
+        expect(Tag.top_tags(category: category1)).to contain_exactly(
+          { id: tags[0].id, name: tags[0].name, slug: tags[0].slug },
+          { id: tags[1].id, name: tags[1].name, slug: tags[1].slug },
+        )
       end
     end
 
     context "with category-specific tags" do
-      before do
-        make_some_tags(count: 3)
-        @category1 = Fabricate(:category, tags: [@tags[0]]) # only one tag allowed in this category
-        @category2 = Fabricate(:category)
-        @topics = []
-        @topics << Fabricate(:topic, category: @category1, tags: [@tags[0]])
-        @topics << Fabricate(:topic, category: @category2, tags: [@tags[1], @tags[2]])
-        @topics << Fabricate(:topic, tags: [@tags[2]]) # uncategorized
+      let(:tags) { make_some_tags(count: 3) }
+      let(:category1) { Fabricate(:category, tags: [tags[0]]) } # only one tag allowed in this category
+      let(:category2) { Fabricate(:category) }
+      let!(:topics) do
+        [
+          Fabricate(:topic, category: category1, tags: [tags[0]]),
+          Fabricate(:topic, category: category2, tags: [tags[1], tags[2]]),
+          Fabricate(:topic, tags: [tags[2]]), # uncategorized
+        ]
       end
 
       it "for category with restricted tags, lists those tags" do
-        expect(Tag.top_tags(category: @category1)).to eq([@tags[0].name])
+        expect(Tag.top_tags(category: category1)).to eq(
+          [{ id: tags[0].id, name: tags[0].name, slug: tags[0].slug }],
+        )
       end
 
       it "for category without tags, lists allowed tags" do
-        expect(Tag.top_tags(category: @category2).sort).to eq([@tags[1].name, @tags[2].name].sort)
+        expect(Tag.top_tags(category: category2)).to contain_exactly(
+          { id: tags[1].id, name: tags[1].name, slug: tags[1].slug },
+          { id: tags[2].id, name: tags[2].name, slug: tags[2].slug },
+        )
       end
 
       it "for no category arg, lists all tags" do
-        expect(Tag.top_tags.sort).to eq([@tags[0].name, @tags[1].name, @tags[2].name].sort)
+        expect(Tag.top_tags).to contain_exactly(
+          { id: tags[2].id, name: tags[2].name, slug: tags[2].slug },
+          { id: tags[0].id, name: tags[0].name, slug: tags[0].slug },
+          { id: tags[1].id, name: tags[1].name, slug: tags[1].slug },
+        )
       end
     end
 
@@ -154,16 +188,76 @@ RSpec.describe Tag do
       let!(:topic2) { Fabricate(:topic, tags: [tag, hidden_tag]) }
 
       it "returns all tags to staff" do
-        expect(Tag.top_tags(guardian: Guardian.new(Fabricate(:admin)))).to include(hidden_tag.name)
+        expect(Tag.top_tags(guardian: Guardian.new(Fabricate(:admin)))).to include(
+          { id: hidden_tag.id, name: hidden_tag.name, slug: hidden_tag.slug },
+        )
       end
 
       it "doesn't return hidden tags to anon" do
-        expect(Tag.top_tags).to_not include(hidden_tag.name)
+        expect(Tag.top_tags).to_not include(
+          { id: hidden_tag.id, name: hidden_tag.name, slug: hidden_tag.slug },
+        )
       end
 
       it "doesn't return hidden tags to non-staff" do
         expect(Tag.top_tags(guardian: Guardian.new(Fabricate(:user)))).to_not include(
-          hidden_tag.name,
+          { id: hidden_tag.id, name: hidden_tag.name, slug: hidden_tag.slug },
+        )
+      end
+    end
+
+    context "with numeric-only tag names" do
+      it "uses id-tag fallback for empty slugs" do
+        numeric_tag = Fabricate(:tag, name: "1")
+        Fabricate(:topic, tags: [numeric_tag])
+        expect(numeric_tag.slug).to eq("")
+
+        result = Tag.top_tags
+        entry = result.find { |t| t[:id] == numeric_tag.id }
+        expect(entry[:slug]).to eq("#{numeric_tag.id}-tag")
+      end
+    end
+
+    context "with localization" do
+      let(:localized_tag) { Fabricate(:tag, name: "cats", locale: "en") }
+      let!(:localization) do
+        Fabricate(:tag_localization, tag: localized_tag, locale: "ja", name: "猫")
+      end
+      let!(:tagged_topic) { Fabricate(:topic, tags: [localized_tag]) }
+
+      it "returns original names when localization disabled" do
+        SiteSetting.content_localization_enabled = false
+        I18n.locale = "ja"
+
+        expect(Tag.top_tags).to include(
+          { id: localized_tag.id, name: "cats", slug: localized_tag.slug },
+        )
+      end
+
+      it "returns localized names when localization enabled and user not in tag locale" do
+        SiteSetting.content_localization_enabled = true
+        I18n.locale = "ja"
+
+        expect(Tag.top_tags).to include(
+          { id: localized_tag.id, name: "猫", slug: localized_tag.slug },
+        )
+      end
+
+      it "returns original name when tag is in user locale" do
+        SiteSetting.content_localization_enabled = true
+        I18n.locale = "en"
+
+        expect(Tag.top_tags).to include(
+          { id: localized_tag.id, name: "cats", slug: localized_tag.slug },
+        )
+      end
+
+      it "falls back to original name when no localization exists for user's locale" do
+        SiteSetting.content_localization_enabled = true
+        I18n.locale = "de"
+
+        expect(Tag.top_tags).to include(
+          { id: localized_tag.id, name: "cats", slug: localized_tag.slug },
         )
       end
     end
@@ -198,7 +292,7 @@ RSpec.describe Tag do
       SiteSetting.pm_tags_allowed_for_groups = "1|2|3"
       tags = Tag.pm_tags(guardian: Guardian.new(admin), allowed_user: regular_user)
       expect(tags.length).to eq(2)
-      expect(tags.map { |t| t[:id] }).to contain_exactly("tag-0", "tag-1")
+      expect(tags.map { |t| t[:name] }).to contain_exactly("tag-0", "tag-1")
     end
   end
 
@@ -253,7 +347,7 @@ RSpec.describe Tag do
       [
         Fabricate(
           :tag,
-          name: "used_publically",
+          name: "used_publicly",
           staff_topic_count: 2,
           public_topic_count: 2,
           pm_topic_count: 0,
@@ -309,8 +403,8 @@ RSpec.describe Tag do
   describe "full_url" do
     let(:tag) { Fabricate(:tag, name: "🚀") }
 
-    it "percent encodes emojis" do
-      expect(tag.full_url).to eq("http://test.localhost/tag/%F0%9F%9A%80")
+    it "uses slug/id format" do
+      expect(tag.full_url).to eq("http://test.localhost/tag/#{tag.id}-tag/#{tag.id}")
     end
   end
 
@@ -384,6 +478,120 @@ RSpec.describe Tag do
     end
   end
 
+  describe ".with_localizations" do
+    fab!(:tag1) { Fabricate(:tag, name: "strategy", locale: "en") }
+    fab!(:tag2) { Fabricate(:tag, name: "design", locale: "en") }
+
+    it "returns tags unchanged when content_localization is disabled" do
+      SiteSetting.content_localization_enabled = false
+      tags = [tag1, tag2]
+      expect(Tag.with_localizations(tags)).to eq(tags)
+    end
+
+    it "returns empty input unchanged" do
+      SiteSetting.content_localization_enabled = true
+      expect(Tag.with_localizations([])).to eq([])
+    end
+
+    it "returns Tag AR instances with localizations preloaded" do
+      SiteSetting.content_localization_enabled = true
+      Fabricate(:tag_localization, tag: tag1, locale: "ja", name: "戦略")
+
+      result = Tag.with_localizations([tag1, tag2])
+
+      expect(result.map(&:id)).to eq([tag1.id, tag2.id])
+      expect(result.all? { |t| t.is_a?(Tag) }).to eq(true)
+      expect(result.first.localizations).to be_loaded
+      expect(result.first.localizations.first.name).to eq("戦略")
+    end
+
+    it "preserves order of input tags" do
+      SiteSetting.content_localization_enabled = true
+
+      result = Tag.with_localizations([tag2, tag1])
+
+      expect(result.map(&:id)).to eq([tag2.id, tag1.id])
+    end
+  end
+
+  describe "slug" do
+    it "generates slug from name on create" do
+      tag = Fabricate(:tag, name: "Hello World")
+      expect(tag.slug).to eq("hello-world")
+    end
+
+    it "uses empty slug for numeric-only names" do
+      tag = Fabricate(:tag, name: "123")
+      expect(tag.slug).to eq("")
+    end
+
+    it "removes apostrophes from names" do
+      tag = Fabricate(:tag, name: "Ruby's Best")
+      expect(tag.slug).to eq("rubys-best")
+    end
+
+    it "converts special characters to dashes" do
+      tag = Fabricate(:tag, name: "hello@world!")
+      expect(tag.slug).to eq("hello-world")
+    end
+
+    it "handles unicode by converting to dashes" do
+      tag = Fabricate(:tag, name: "hello字world")
+      expect(tag.slug).to eq("hello-world")
+    end
+
+    it "uses empty slug for unicode-only names" do
+      tag = Fabricate(:tag, name: "字")
+      expect(tag.slug).to eq("")
+    end
+
+    it "resolves conflicts by setting slug to empty" do
+      tag1 = Fabricate(:tag, name: "test")
+      tag2 = Fabricate(:tag, name: "Test!")
+
+      expect(tag1.slug).to eq("test")
+      expect(tag2.slug).to eq("")
+    end
+
+    it "preserves existing slug when name unchanged" do
+      tag = Fabricate(:tag, name: "original")
+      original_slug = tag.slug
+      tag.update!(description: "new description")
+      expect(tag.slug).to eq(original_slug)
+    end
+
+    it "regenerates slug when name changes" do
+      tag = Fabricate(:tag, name: "original")
+      tag.update!(name: "new-name")
+      expect(tag.slug).to eq("new-name")
+    end
+
+    it "squeezes consecutive dashes and spaces" do
+      tag = Fabricate(:tag, name: "hello   world--test")
+      expect(tag.slug).to eq("hello-world-test")
+    end
+
+    it "trims leading and trailing dashes" do
+      tag = Fabricate(:tag, name: "--hello--")
+      expect(tag.slug).to eq("hello")
+    end
+  end
+
+  describe "#slug_for_url" do
+    it "returns slug when present" do
+      tag = Fabricate(:tag, name: "test")
+      expect(tag.slug_for_url).to eq("test")
+    end
+
+    it "returns id-tag when slug is empty" do
+      Fabricate(:tag, name: "test")
+      tag = Fabricate(:tag, name: "Test!")
+
+      expect(tag.slug).to eq("")
+      expect(tag.slug_for_url).to eq("#{tag.id}-tag")
+    end
+  end
+
   describe "description" do
     it "uses the HTMLSanitizer to remove unsafe tags and attributes" do
       tag.description =
@@ -392,6 +600,37 @@ RSpec.describe Tag do
       expect(tag.description.strip).to eq(
         "<div>hi</div>a=0; <a href=\"https://www.discourse.org\">discourse</a>",
       )
+    end
+  end
+
+  describe "localizations" do
+    fab!(:tag)
+
+    it "can have many localizations" do
+      localization1 = Fabricate(:tag_localization, tag:, locale: "ja")
+      localization2 = Fabricate(:tag_localization, tag:, locale: "es")
+
+      expect(tag.localizations).to contain_exactly(localization1, localization2)
+    end
+
+    describe ".get_localization" do
+      it "returns localization for exact locale match" do
+        localization = Fabricate(:tag_localization, tag:, locale: "ja", name: "テスト")
+
+        expect(tag.get_localization("ja")).to eq(localization)
+      end
+
+      it "returns localization for regionless locale fallback" do
+        localization = Fabricate(:tag_localization, tag:, locale: "en")
+
+        expect(tag.get_localization("en_US")).to eq(localization)
+      end
+
+      it "returns nil when no localization exists" do
+        Fabricate(:tag_localization, tag:, locale: "el")
+
+        expect(tag.get_localization("es")).to be_nil
+      end
     end
   end
 end

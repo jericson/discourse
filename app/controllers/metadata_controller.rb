@@ -2,28 +2,43 @@
 
 class MetadataController < ApplicationController
   layout false
-  skip_before_action :preload_json, :check_xhr, :redirect_to_login_if_required
+  skip_before_action :preload_json,
+                     :check_xhr,
+                     :redirect_to_login_if_required,
+                     :redirect_to_profile_if_required
 
   def manifest
-    expires_in 1.minutes
+    expires_in 1.minute
     render json: default_manifest.to_json, content_type: "application/manifest+json"
   end
 
   def opensearch
-    expires_in 1.minutes
+    expires_in 1.minute
     render template: "metadata/opensearch", formats: [:xml]
   end
 
   def app_association_android
     raise Discourse::NotFound if SiteSetting.app_association_android.blank?
-    expires_in 1.minutes
+    expires_in 1.minute
     render plain: SiteSetting.app_association_android, content_type: "application/json"
   end
 
   def app_association_ios
     raise Discourse::NotFound if SiteSetting.app_association_ios.blank?
-    expires_in 1.minutes
+    expires_in 1.minute
     render plain: SiteSetting.app_association_ios, content_type: "application/json"
+  end
+
+  def discourse_id_challenge
+    token = Discourse.redis.get("discourse_id_challenge_token")
+    raise Discourse::NotFound if token.blank?
+
+    domain = Discourse.current_hostname
+    path = Discourse.base_path.presence
+
+    expires_in 5.minutes
+
+    render json: { token:, domain:, path: }.compact
   end
 
   private
@@ -36,9 +51,6 @@ class MetadataController < ApplicationController
     end
 
     scheme_id = view_context.scheme_id
-    primary_color = ColorScheme.hex_for_name("primary", scheme_id)
-    icon_url_base =
-      UrlHelper.absolute("/svg-sprite/#{Discourse.current_hostname}/icon/#{primary_color}")
 
     manifest = {
       name: SiteSetting.title,
@@ -56,8 +68,9 @@ class MetadataController < ApplicationController
         method: "GET",
         enctype: "application/x-www-form-urlencoded",
         params: {
-          title: "title",
           text: "body",
+          title: "title",
+          url: "title",
         },
       },
       shortcuts: [

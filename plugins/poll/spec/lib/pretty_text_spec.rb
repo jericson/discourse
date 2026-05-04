@@ -19,6 +19,17 @@ RSpec.describe PrettyText do
     )
   end
 
+  it "supports dynamic attribute passthrough" do
+    cooked = PrettyText.cook <<~MD
+      [poll dynamic=true]
+      * A
+      * B
+      [/poll]
+    MD
+
+    expect(cooked).to include('data-poll-dynamic="true"')
+  end
+
   it "can dynamically generate a poll" do
     cooked = PrettyText.cook <<~MD
       [poll type=number min=1 max=20 step=1]
@@ -120,6 +131,40 @@ RSpec.describe PrettyText do
     expect(onebox[:preview]).to include("<a href=\"#{post.url}\">poll</a>")
   end
 
+  it "includes poll options when formatting for email" do
+    post = Fabricate(:post, raw: <<~MD)
+      A post with a poll
+
+      [poll type=regular]
+      * Tabs
+      * Spaces
+      * Whatever my cat walks on the keyboard
+      [/poll]
+    MD
+
+    html = PrettyText.format_for_email(post.cooked, post)
+    expect(html).to include("Tabs")
+    expect(html).to include("Spaces")
+    expect(html).to include("Whatever my cat walks on the keyboard")
+    expect(html).to include(I18n.t("poll.email.link_to_poll"))
+  end
+
+  it "includes poll title when formatting for email" do
+    post = Fabricate(:post, raw: <<~MD)
+      [poll]
+      # Best bug fix excuse?
+      * It works on my machine
+      * That is not a bug, it is a feature
+      [/poll]
+    MD
+
+    html = PrettyText.format_for_email(post.cooked, post)
+    expect(html).to include("Best bug fix excuse?")
+    expect(html).to include("It works on my machine")
+    expect(html).to include("That is not a bug, it is a feature")
+    expect(html).to include(I18n.t("poll.email.link_to_poll"))
+  end
+
   it "can reduce excerpts" do
     post = Fabricate(:post, raw: <<~MD)
       A post with a poll
@@ -218,10 +263,10 @@ RSpec.describe PrettyText do
     HTML
 
     expect(cooked).to include(
-      '<h1><a name="pre-heading-1" class="anchor" href="#pre-heading-1"></a>Pre-heading</h1>',
+      '<h1><a name="pre-heading-1" class="anchor" href="#pre-heading-1" aria-label="Heading link"></a>Pre-heading</h1>',
     )
     expect(cooked).to include(
-      '<h1><a name="post-heading-2" class="anchor" href="#post-heading-2"></a>Post-heading</h1>',
+      '<h1><a name="post-heading-2" class="anchor" href="#post-heading-2" aria-label="Heading link"></a>Post-heading</h1>',
     )
   end
 
@@ -243,11 +288,11 @@ RSpec.describe PrettyText do
     expect(cooked).to include('<div class="poll" data-poll-name="poll" data-poll-status="open">')
 
     expect(cooked).to include(
-      '<h1><a name="pre-heading-1" class="anchor" href="#pre-heading-1"></a>Pre-heading</h1>',
+      '<h1><a name="pre-heading-1" class="anchor" href="#pre-heading-1" aria-label="Heading link"></a>Pre-heading</h1>',
     )
 
     expect(cooked).to include(
-      '<h1><a name="post-heading-2" class="anchor" href="#post-heading-2"></a>Post-heading</h1>',
+      '<h1><a name="post-heading-2" class="anchor" href="#post-heading-2" aria-label="Heading link"></a>Post-heading</h1>',
     )
   end
 end

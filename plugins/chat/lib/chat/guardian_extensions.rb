@@ -13,7 +13,14 @@ module Chat
 
     def can_chat?
       return false if anonymous?
-      @user.bot? || @user.in_any_groups?(Chat.allowed_group_ids)
+      return true if @user.bot?
+
+      if @user.anonymous?
+        SiteSetting.allow_chat_in_anonymous_mode &&
+          AnonymousShadowCreator.get_master(@user)&.guardian&.can_chat?
+      else
+        @user.in_any_groups?(Chat.allowed_group_ids)
+      end
     end
 
     def can_direct_message?
@@ -26,6 +33,35 @@ module Chat
 
     def can_create_direct_message?
       is_staff? || can_direct_message?
+    end
+
+    def can_send_direct_message?(channel)
+      return true if is_staff? || @user.bot?
+
+      can_chat? && channel.chatable.user_can_access?(@user) && !@user.suspended?
+    end
+
+    def allowing_direct_messages?
+      @user.user_option.allow_private_messages
+    end
+
+    def recipient_can_chat?(target)
+      target.guardian.can_chat? && target.user_option.chat_enabled
+    end
+
+    def recipient_not_muted?(target)
+      !is_muting_user?(target)
+    end
+
+    def recipient_not_ignored?(target)
+      !is_ignoring_user?(target)
+    end
+
+    def recipient_allows_direct_messages?(target)
+      return true if is_staff?
+      return false if !target.user_option.allow_private_messages
+
+      !is_ignored_by_user?(target) && !is_muted_by_user?(target) && !target.suspended?
     end
 
     def hidden_tag_names
@@ -44,7 +80,7 @@ module Chat
     # name and description can be edited.
     def can_edit_chat_channel?(channel)
       if channel.direct_message_channel?
-        channel.chatable.group && (is_staff? || channel.chatable.user_can_access?(@user))
+        is_staff? || channel.chatable.user_can_access?(@user)
       elsif channel.category_channel?
         is_staff?
       end
@@ -97,16 +133,20 @@ module Chat
       is_staff? || @user.has_trust_level?(TrustLevel[4])
     end
 
-    def can_preview_chat_channel?(chat_channel)
-      return false unless chat_channel.chatable
-
-      if chat_channel.direct_message_channel?
-        chat_channel.chatable.user_can_access?(@user)
-      elsif chat_channel.category_channel?
-        can_see_category?(chat_channel.chatable)
+    def can_see_chatable?(chatable)
+      case chatable
+      when Category
+        can_see_category?(chatable)
+      when Chat::DirectMessage
+        chatable.user_can_access?(@user)
       else
         true
       end
+    end
+
+    def can_preview_chat_channel?(chat_channel)
+      return false if !chat_channel&.chatable
+      can_see_chatable?(chat_channel.chatable)
     end
 
     def can_join_chat_channel?(chat_channel, post_allowed_category_ids: nil)
@@ -131,7 +171,12 @@ module Chat
           return true if is_admin?
           post_allowed_category_ids.include?(chatable.id)
         else
-          can_post_in_category?(chatable)
+          if is_anonymous?
+            SiteSetting.allow_chat_in_anonymous_mode &&
+              AnonymousShadowCreator.get_master(@user)&.guardian&.can_post_in_category?(chatable)
+          else
+            can_post_in_category?(chatable)
+          end
         end
       when Chat::DirectMessage
         true
@@ -201,7 +246,7 @@ module Chat
       if message.user_id == current_user.id
         case chatable
         when Category
-          return message.deleted_by_id == current_user.id || can_see_category?(chatable)
+          return message.deleted_by_id == current_user.id || can_moderate_chat?(chatable)
         when Chat::DirectMessage
           return message.deleted_by_id == current_user.id || is_staff?
         end
@@ -224,6 +269,25 @@ module Chat
 
     def can_delete_category?(category)
       super && category.deletable_for_chat?
+    end
+
+    def can_remove_members?(channel)
+      is_admin? && (channel.category_channel? || channel.direct_message_group?)
+    end
+
+    def can_manage_chat_channel_pins?(channel)
+      return false unless can_chat?
+      return false unless can_preview_chat_channel?(channel)
+
+      if channel.direct_message_channel?
+        true
+      else
+        @user.in_any_groups?(SiteSetting.chat_pinning_messages_allowed_groups_map)
+      end
+    end
+
+    def can_manage_chat_message_pin?(message)
+      can_manage_chat_channel_pins?(message.chat_channel)
     end
   end
 end

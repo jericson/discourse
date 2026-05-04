@@ -20,7 +20,8 @@ class UserSerializer < UserCardSerializer
              :associated_accounts,
              :profile_background_upload_url,
              :can_upload_profile_header,
-             :can_upload_user_card_background
+             :can_upload_user_card_background,
+             :no_password
 
   has_one :invited_by, embed: :object, serializer: BasicUserSerializer
   has_many :groups, embed: :object, serializer: BasicGroupSerializer
@@ -31,7 +32,7 @@ class UserSerializer < UserCardSerializer
     can_edit
   end
 
-  staff_attributes :post_count, :can_be_deleted, :can_delete_all_posts
+  staff_attributes :post_count, :topic_count, :can_be_deleted, :can_delete_all_posts
 
   private_attributes :locale,
                      :muted_category_ids,
@@ -51,7 +52,9 @@ class UserSerializer < UserCardSerializer
                      :custom_avatar_template,
                      :has_title_badges,
                      :muted_usernames,
+                     :can_mute_users,
                      :ignored_usernames,
+                     :can_ignore_users,
                      :allowed_pm_usernames,
                      :mailing_list_posts_per_day,
                      :can_change_bio,
@@ -75,7 +78,11 @@ class UserSerializer < UserCardSerializer
   ###
   #
   def user_notification_schedule
-    object.user_notification_schedule || UserNotificationSchedule::DEFAULT
+    UserNotificationScheduleSerializer.new(
+      object.user_notification_schedule,
+      scope: scope,
+      root: false,
+    ).as_json || UserNotificationSchedule::DEFAULT
   end
 
   def mailing_list_posts_per_day
@@ -84,7 +91,11 @@ class UserSerializer < UserCardSerializer
   end
 
   def groups
-    object.groups.order(:id).visible_groups(scope.user).members_visible_groups(scope.user)
+    if scope.user == object
+      object.groups.order(:id).visible_groups(scope.user)
+    else
+      object.groups.order(:id).visible_groups(scope.user).members_visible_groups(scope.user)
+    end
   end
 
   def group_users
@@ -147,7 +158,7 @@ class UserSerializer < UserCardSerializer
         .map do |k|
           {
             id: k.id,
-            application_name: k.application_name,
+            application_name: k.client.application_name,
             scopes: k.scopes.map { |s| I18n.t("user_api_key.scopes.#{s.name}") },
             created_at: k.created_at,
             last_used_at: k.last_used_at,
@@ -176,7 +187,7 @@ class UserSerializer < UserCardSerializer
   end
 
   def include_user_passkeys?
-    SiteSetting.enable_passkeys?
+    SiteSetting.enable_passkeys? && user_is_current_user
   end
 
   def bio_raw
@@ -219,6 +230,10 @@ class UserSerializer < UserCardSerializer
     object.user_stat.try(:post_count)
   end
 
+  def topic_count
+    object.user_stat.try(:topic_count)
+  end
+
   def can_be_deleted
     scope.can_delete_user?(object)
   end
@@ -254,8 +269,16 @@ class UserSerializer < UserCardSerializer
     MutedUser.where(user_id: object.id).joins(:muted_user).pluck(:username)
   end
 
+  def can_mute_users
+    scope.can_mute_users?
+  end
+
   def ignored_usernames
     IgnoredUser.where(user_id: object.id).joins(:ignored_user).pluck(:username)
+  end
+
+  def can_ignore_users
+    scope.can_ignore_users?
   end
 
   def allowed_pm_usernames
@@ -325,6 +348,14 @@ class UserSerializer < UserCardSerializer
 
   def can_pick_theme_with_custom_homepage
     ThemeModifierHelper.new(theme_ids: Theme.enabled_theme_and_component_ids).custom_homepage
+  end
+
+  def no_password
+    true
+  end
+
+  def include_no_password?
+    (user_is_current_user || scope.is_staff?) && !object.has_password?
   end
 
   private

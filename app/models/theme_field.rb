@@ -3,21 +3,47 @@
 class ThemeField < ActiveRecord::Base
   MIGRATION_NAME_PART_MAX_LENGTH = 150
 
-  # This string is not 'secret'. It's just randomized to avoid accidental clashes with genuine theme field content.
+  # This string is not 'secret'. It's just randomized to avoid accidental
+  # clashes with genuine theme field content.
   CSP_NONCE_PLACEHOLDER = "__CSP__NONCE__PLACEHOLDER__f72bff1b1768168a34ee092ce759f192__"
 
   belongs_to :upload
-  has_one :javascript_cache, dependent: :destroy
+  has_one :javascript_cache, -> { where(name: nil) }, dependent: :destroy, autosave: true
+  has_many :raw_javascript_caches,
+           -> { where.not(name: nil) },
+           class_name: "JavascriptCache",
+           dependent: :destroy,
+           autosave: true
   has_one :upload_reference, as: :target, dependent: :destroy
-  has_one :theme_settings_migration
+  has_one :theme_settings_migration, dependent: :destroy
 
   validates :value, { length: { maximum: 1024**2 } }
 
   validate :migration_filename_is_valid, if: :migration_field?
 
   after_save do
-    if self.type_id == ThemeField.types[:theme_upload_var] && saved_change_to_upload_id?
+    if (
+         self.type_id == ThemeField.types[:theme_screenshot_upload_var] ||
+           self.type_id == ThemeField.types[:theme_upload_var]
+       ) && saved_change_to_upload_id?
       UploadReference.ensure_exist!(upload_ids: [self.upload_id], target: self)
+    end
+  end
+
+  after_save do
+    dependent_fields.each(&:invalidate_baked!)
+
+    if upload && svg_sprite_field?
+      upsert_svg_sprite!
+      SvgSprite.expire_cache
+    end
+  end
+
+  after_destroy do
+    if svg_sprite_field?
+      ThemeSvgSprite.where(theme_id: theme_id).delete_all
+
+      SvgSprite.expire_cache
     end
   end
 
@@ -69,6 +95,8 @@ class ThemeField < ActiveRecord::Base
         theme_var: 4, # No longer used
         yaml: 5,
         js: 6,
+        theme_screenshot_upload_var: 7,
+        json: 8,
       )
   end
 
@@ -97,119 +125,62 @@ class ThemeField < ActiveRecord::Base
 
   def process_html(html)
     errors = []
-    javascript_cache || build_javascript_cache
-
     errors << I18n.t("themes.errors.optimized_link") if contains_optimized_link?(html)
-
-    js_compiler = ThemeJavascriptCompiler.new(theme_id, self.theme.name)
 
     doc = Nokogiri::HTML5.fragment(html)
 
-    doc
-      .css('script[type="text/x-handlebars"]')
-      .each do |node|
-        name = node["name"] || node["data-template-name"] || "broken"
-        is_raw = name =~ /\.(raw|hbr)\z/
-        hbs_template = node.inner_html
-
-        begin
-          if is_raw
-            js_compiler.append_raw_template(name, hbs_template)
-          else
-            js_compiler.append_ember_template(
-              "discourse/templates/#{name.delete_prefix("/")}",
-              hbs_template,
-            )
-          end
-        rescue ThemeJavascriptCompiler::CompileError => ex
-          js_compiler.append_js_error("discourse/templates/#{name}", ex.message)
-          errors << ex.message
-        end
-
-        node.remove
-      end
-
-    doc
-      .css('script[type="text/discourse-plugin"]')
-      .each_with_index do |node, index|
-        version = node["version"]
-        next if version.blank?
-
-        initializer_name =
-          "theme-field" + "-#{self.id}" + "-#{Theme.targets[self.target_id]}" +
-            "-#{ThemeField.types[self.type_id]}" + "-script-#{index + 1}"
-        begin
-          js = <<~JS
-          import { withPluginApi } from "discourse/lib/plugin-api";
-
-          export default {
-            name: #{initializer_name.inspect},
-            after: "inject-objects",
-
-            initialize() {
-              withPluginApi(#{version.inspect}, (api) => {
-                #{node.inner_html}
-              });
-            }
-          };
-        JS
-
-          js_compiler.append_module(
-            js,
-            "discourse/initializers/#{initializer_name}",
-            "js",
-            include_variables: true,
-          )
-        rescue ThemeJavascriptCompiler::CompileError => ex
-          js_compiler.append_js_error("discourse/initializers/#{initializer_name}", ex.message)
-          errors << ex.message
-        end
-
-        node.remove
-      end
+    unused_raw_caches = Set.new raw_javascript_caches.to_a
 
     doc
       .css("script")
+      .select { |node| inline_javascript?(node) }
       .each_with_index do |node, index|
-        if inline_javascript?(node)
-          js_compiler.append_raw_script(
-            "_html/#{Theme.targets[self.target_id]}/#{name}_#{index + 1}.js",
-            node.inner_html,
-          )
-          node.remove
-        else
-          node["nonce"] = CSP_NONCE_PLACEHOLDER
-        end
+        unique_name =
+          "theme-#{theme_id}-inline-#{Theme.targets[self.target_id]}-#{name}#{"-#{index + 1}" if index > 0}"
+
+        cache =
+          raw_javascript_caches.find { |c| c.name == unique_name } ||
+            raw_javascript_caches.build(name: unique_name)
+        transpiled =
+          begin
+            AssetProcessor.new(skip_module: true).perform(
+              node.inner_html,
+              nil,
+              "theme-#{theme_id}/#{unique_name}.js",
+              generate_map: true,
+            )
+          rescue AssetProcessor::TranspileError => e
+            message = "[THEME #{theme_id} '#{theme.name}'] Compile error: #{e.message}"
+            errors << message
+            { "code" => "console.error(#{message.to_json});\n", "map" => nil }
+          end
+        cache.content = transpiled["code"]
+        cache.source_map = transpiled["map"]
+        cache.save!
+        unused_raw_caches.delete(cache)
+
+        node.replace "<script defer src='#{cache.url}' data-theme-id='#{theme_id}'></script>"
       end
 
-    settings_hash = theme.build_settings_hash
-    if js_compiler.has_content? && settings_hash.present?
-      js_compiler.prepend_settings(settings_hash)
-    end
-    javascript_cache.content = js_compiler.content
-    javascript_cache.source_map = js_compiler.source_map
-    javascript_cache.save!
+    doc.css("script").each { |node| node["nonce"] = CSP_NONCE_PLACEHOLDER }
 
-    doc.add_child(<<~HTML.html_safe) if javascript_cache.content.present?
-      <script defer src='#{javascript_cache.url}' data-theme-id='#{theme_id}' nonce="#{CSP_NONCE_PLACEHOLDER}"></script>
-    HTML
+    unused_raw_caches.each(&:destroy!)
+
     [doc.to_s, errors&.join("\n")]
   end
 
   def validate_svg_sprite_xml
-    upload =
-      begin
-        Upload.find(self.upload_id)
-      rescue StandardError
-        nil
-      end
+    upload = Upload.find_by(id: self.upload_id)
+
+    return "Error with #{self.name}: No upload found for the provided upload_id" if upload.nil?
 
     if Discourse.store.external?
-      external_copy = Discourse.store.download_safe(upload)
-      path = external_copy&.path
+      path = Discourse.store.download(upload)
     else
       path = Discourse.store.path_for(upload)
     end
+
+    return "Error with #{self.name}: Could not download icon sprite" if path.nil?
 
     error = nil
 
@@ -223,6 +194,7 @@ class ThemeField < ActiveRecord::Base
     rescue => e
       error = "Error with #{self.name}: #{e.inspect}"
     end
+
     error
   end
 
@@ -262,46 +234,27 @@ class ThemeField < ActiveRecord::Base
   def process_translation
     errors = []
     javascript_cache || build_javascript_cache
-    js_compiler = ThemeJavascriptCompiler.new(theme_id, self.theme.name)
-    begin
-      data = translation_data
 
-      js = <<~JS
-        export default {
-          name: "theme-#{theme_id}-translations",
-          initialize() {
-            /* Translation data for theme #{self.theme_id} (#{self.name})*/
-            const data = #{data.to_json};
+    data = translation_data
 
-            for (let lang in data){
-              let cursor = I18n.translations;
-              for (let key of [lang, "js", "theme_translations"]){
-                cursor = cursor[key] = cursor[key] || {};
-              }
-              cursor[#{self.theme_id}] = data[lang];
-            }
-          }
-        };
-      JS
+    js = <<~JS
+      /* Translation data for theme #{self.theme_id} (#{self.name})*/
+      const localeData = window._discourse_locale_data ??= {};
+      localeData.theme ??= {};
+      localeData.theme[#{self.theme_id}] = #{data.to_json};
+    JS
 
-      js_compiler.append_module(
-        js,
-        "discourse/pre-initializers/theme-#{theme_id}-translations",
-        "js",
-        include_variables: false,
-      )
-    rescue ThemeTranslationParser::InvalidYaml => e
-      errors << e.message
-    end
-
-    javascript_cache.content = js_compiler.content
-    javascript_cache.source_map = js_compiler.source_map
+    javascript_cache.content = js
+    javascript_cache.source_map = nil
     javascript_cache.save!
+
     doc = ""
     doc = <<~HTML.html_safe if javascript_cache.content.present?
-          <script defer src="#{javascript_cache.url}" data-theme-id="#{theme_id}" nonce="#{ThemeField::CSP_NONCE_PLACEHOLDER}"></script>
+          <script type="module" src="#{javascript_cache.url}" data-theme-id="#{theme_id}" nonce="#{ThemeField::CSP_NONCE_PLACEHOLDER}"></script>
         HTML
     [doc, errors&.join("\n")]
+  rescue ThemeTranslationParser::InvalidYaml => e
+    ["", e.message]
   end
 
   def validate_yaml!
@@ -454,6 +407,21 @@ class ThemeField < ActiveRecord::Base
         error: error,
       )
     end
+  rescue ActiveRecord::ReadOnlyError
+    # Just noop if ActiveRecord is preventing writes for now. In an ideal world, this method will not be called in GET
+    # requests.
+  end
+
+  def scss_entrypoint_name
+    if name == "scss"
+      self.target_name
+    elsif target_name == "common" && name == "color_definitions"
+      "color_definitions"
+    elsif target_name == "common" && name == "embedded_scss"
+      "embedded"
+    else
+      raise "Unknown entrypoint for #{target_name}/#{name}"
+    end
   end
 
   def compile_scss(prepended_scss = nil)
@@ -461,7 +429,11 @@ class ThemeField < ActiveRecord::Base
 
     self.theme.with_scss_load_paths do |load_paths|
       Stylesheet::Compiler.compile(
-        "#{prepended_scss} #{self.theme.scss_variables} #{self.value}",
+        <<~SCSS,
+          #{prepended_scss}
+          #{self.theme.scss_variables}
+          @import \"theme-entrypoint/#{scss_entrypoint_name}\";
+        SCSS
         "#{Theme.targets[self.target_id]}.scss",
         theme: self.theme,
         load_paths: load_paths,
@@ -473,11 +445,11 @@ class ThemeField < ActiveRecord::Base
     css, _source_map =
       begin
         compile_scss(prepended_scss)
-      rescue SassC::SyntaxError => e
+      rescue SassC::SyntaxError, AssetProcessor::TranspileError => e
         # We don't want to raise a blocking error here
         # admin theme editor or discourse_theme CLI will show it nonetheless
         Rails.logger.error "SCSS compilation error: #{e.message}"
-        ["", nil]
+        ["/* SCSS compilation error: #{e.message} */", nil]
       end
     css
   end
@@ -493,7 +465,7 @@ class ThemeField < ActiveRecord::Base
       else
         self.error = nil unless error.nil?
       end
-    rescue SassC::SyntaxError, SassC::NotRenderedError => e
+    rescue SassC::SyntaxError, SassC::NotRenderedError, AssetProcessor::TranspileError => e
       self.error = e.message unless self.destroyed?
     end
     self.compiler_version = Theme.compiler_version
@@ -603,6 +575,13 @@ class ThemeField < ActiveRecord::Base
       names: nil,
       types: :js,
       canonical: ->(h) { "test/#{h[:name]}" },
+    ),
+    ThemeFileMatcher.new(
+      regex: /\Aabout\.json\z/,
+      names: "about",
+      types: :json,
+      targets: :about,
+      canonical: ->(h) { "about.json" },
     ),
     ThemeFileMatcher.new(
       regex: /\Asettings\.ya?ml\z/,
@@ -717,21 +696,8 @@ class ThemeField < ActiveRecord::Base
     end
   end
 
-  after_save do
-    dependent_fields.each(&:invalidate_baked!)
-
-    if upload && svg_sprite_field?
-      upsert_svg_sprite!
-      SvgSprite.expire_cache
-    end
-  end
-
-  after_destroy do
-    if svg_sprite_field?
-      ThemeSvgSprite.where(theme_id: theme_id).delete_all
-
-      SvgSprite.expire_cache
-    end
+  def upload_url
+    self.upload&.url
   end
 
   private

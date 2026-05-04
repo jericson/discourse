@@ -17,15 +17,15 @@ jobs:
   build:
     if: github.event_name == 'pull_request' || github.repository != 'discourse/discourse-private-mirror'
     name: run
-    runs-on: ubuntu-latest
-    container: discourse/discourse_test:slim
+    runs-on: ${{ (github.repository_owner == 'discourse' && 'cdck-linux-8-core') || 'ubuntu-latest' }}
+    container: discourse/discourse_test:release
     timeout-minutes: 30
 
     steps:
       - name: Set working directory owner
         run: chown root:root .
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
@@ -34,40 +34,35 @@ jobs:
           git config --global user.email "ci@ci.invalid"
           git config --global user.name "Discourse CI"
 
-      - name: Bundler cache
-        uses: actions/cache@v4
-        with:
-          path: vendor/bundle
-          key: ${{ runner.os }}-gem-${{ hashFiles('**/Gemfile.lock') }}
-          restore-keys: ${{ runner.os }}-gem-
+      - name: Symlink vendor/bundle from image
+        run: |
+          ln -s /var/www/discourse/vendor/bundle vendor/bundle
 
       - name: Setup gems
         run: |
-          gem install bundler --conservative -v $(awk '/BUNDLED WITH/ { getline; gsub(/ /,""); print $0 }' Gemfile.lock)
           bundle config --local path vendor/bundle
           bundle config --local deployment true
           bundle config --local without development
+          bundle config --local lockfile_checksums true
           bundle install --jobs 4
           bundle clean
 
-      - name: Get yarn cache directory
-        id: yarn-cache-dir
-        run: echo "dir=$(yarn cache dir)" >> $GITHUB_OUTPUT
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
 
-      - name: Yarn cache
-        uses: actions/cache@v4
-        id: yarn-cache
-        with:
-          path: ${{ steps.yarn-cache-dir.outputs.dir }}
-          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
-          restore-keys: ${{ runner.os }}-yarn-
-
-      - name: Yarn install
-        run: yarn install --frozen-lockfile
+      - name: Bundler checksums
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          bundle lock --add-checksums
+          bundle lock --normalize-platforms
+          if [[ $(git status -s Gemfile.lock) ]]; then
+            echo "Gemfile.lock is not up to date. Please run 'bundle lock --add-checksums' and 'bundle lock --normalize-platforms'." && false
+          fi
 
       - name: Rubocop
         if: ${{ !cancelled() }}
-        run: bundle exec rubocop --parallel .
+        run: bundle exec rubocop
 
       - name: syntax_tree
         if: ${{ !cancelled() }}
@@ -75,23 +70,27 @@ jobs:
           set -E
           bundle exec stree check Gemfile $(git ls-files '*.rb') $(git ls-files '*.rake') $(git ls-files '*.thor')
 
-      - name: ESLint (core)
+      - name: ESLint
         if: ${{ !cancelled() }}
-        run: yarn lint:js
+        run: pnpm lint:js --max-warnings 0
 
-      - name: ESLint (core plugins)
+      - name: Types
         if: ${{ !cancelled() }}
-        run: yarn lint:js-plugins
+        run: pnpm lint:types
 
       - name: Prettier
         if: ${{ !cancelled() }}
         run: |
-          yarn prettier -v
-          yarn lint:prettier
+          pnpm prettier -v
+          pnpm lint:prettier
 
       - name: Ember template lint
         if: ${{ !cancelled() }}
-        run: yarn lint:hbs
+        run: pnpm lint:hbs
+
+      - name: Stylelint
+        if: ${{ !cancelled() }}
+        run: pnpm lint:css
 
       - name: English locale lint (core)
         if: ${{ !cancelled() }}

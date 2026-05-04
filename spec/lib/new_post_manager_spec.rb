@@ -19,10 +19,10 @@ RSpec.describe NewPostManager do
   end
 
   describe "default action" do
-    fab!(:other_user) { Fabricate(:user) }
+    fab!(:other_user, :user)
 
     it "doesn't enqueue private messages" do
-      SiteSetting.approve_unless_trust_level = 4
+      SiteSetting.approve_unless_allowed_groups = "1|2|14"
 
       manager =
         NewPostManager.new(
@@ -258,17 +258,25 @@ RSpec.describe NewPostManager do
     end
 
     context "with a fast typer" do
-      before { user.update!(trust_level: 0) }
+      before do
+        user.update!(trust_level: 0)
+        SiteSetting.notify_mods_when_user_silenced = true
+      end
 
       it "adds the silence reason in the system locale" do
         manager = build_manager_with("this is new post content")
 
         I18n.with_locale(:fr) do # Simulate french user
-          result = NewPostManager.default_handler(manager)
+          expect { NewPostManager.default_handler(manager) }.to change { user.silenced? }.to(
+            true,
+          ).and change { user.silence_reason }.to(
+                  I18n.t("user.new_user_typed_too_fast", locale: :en),
+                ).and change {
+                        Topic.where(
+                          "subtype = 'system_message' AND title LIKE '%silenced%' AND excerpt LIKE '%Reason - New user typed too fast%'",
+                        ).count
+                      }.by(1)
         end
-
-        expect(user.silenced?).to eq(true)
-        expect(user.silence_reason).to eq(I18n.t("user.new_user_typed_too_fast", locale: :en))
       end
 
       it "runs the watched words check before checking if the user is a fast typer" do
@@ -490,9 +498,13 @@ RSpec.describe NewPostManager do
   end
 
   context "when posting in the category requires approval" do
-    let!(:user) { Fabricate(:user, refresh_auto_groups: true) }
-    let!(:review_group) { Fabricate(:group) }
-    let!(:category) { Fabricate(:category, reviewable_by_group_id: review_group.id) }
+    fab!(:user) { Fabricate(:user, refresh_auto_groups: true) }
+    fab!(:review_group, :group)
+    fab!(:posting_review_group, :group)
+    fab!(:category)
+    fab!(:category_moderation_group) do
+      Fabricate(:category_moderation_group, category:, group: review_group)
+    end
 
     context "when new topics require approval" do
       before do
@@ -618,6 +630,78 @@ RSpec.describe NewPostManager do
           end
         end
       end
+
+      it "creates the post when the user is in the exempt group and category's posting review mode is everyone_except" do
+        posting_review_group.add(user)
+        category.update!(
+          topic_posting_review_mode: :everyone_except,
+          topic_posting_review_group_ids: [posting_review_group.id],
+        )
+
+        result =
+          NewPostManager.new(
+            user,
+            raw: "this is a new topic",
+            title: "Let's start a new topic!",
+            category: category.id,
+          ).perform
+
+        expect(result.action).to eq(:create_post)
+      end
+
+      it "enqueues when the user is not in the exempt group and category's posting review mode is everyone_except" do
+        category.update!(
+          topic_posting_review_mode: :everyone_except,
+          topic_posting_review_group_ids: [posting_review_group.id],
+        )
+
+        result =
+          NewPostManager.new(
+            user,
+            raw: "this is a new topic",
+            title: "Let's start a new topic!",
+            category: category.id,
+          ).perform
+
+        expect(result.action).to eq(:enqueued)
+        expect(result.reason).to eq(:category)
+      end
+
+      it "enqueues when the user is in the listed group and category's posting review mode is no_one_except" do
+        posting_review_group.add(user)
+        category.update!(
+          topic_posting_review_mode: :no_one_except,
+          topic_posting_review_group_ids: [posting_review_group.id],
+        )
+
+        result =
+          NewPostManager.new(
+            user,
+            raw: "this is a new topic",
+            title: "Let's start a new topic!",
+            category: category.id,
+          ).perform
+
+        expect(result.action).to eq(:enqueued)
+        expect(result.reason).to eq(:category)
+      end
+
+      it "creates the post when the user is not in the listed group and category's posting review mode is no_one_except" do
+        category.update!(
+          topic_posting_review_mode: :no_one_except,
+          topic_posting_review_group_ids: [posting_review_group.id],
+        )
+
+        result =
+          NewPostManager.new(
+            user,
+            raw: "this is a new topic",
+            title: "Let's start a new topic!",
+            category: category.id,
+          ).perform
+
+        expect(result.action).to eq(:create_post)
+      end
     end
 
     context "when new posts require approval" do
@@ -652,6 +736,54 @@ RSpec.describe NewPostManager do
         result = manager.perform
         expect(result.action).to eq(:create_post)
         expect(result).to be_success
+      end
+
+      it "creates the post when the user is in the exempt group and category's posting review mode is everyone_except" do
+        posting_review_group.add(user)
+        category.update!(
+          reply_posting_review_mode: :everyone_except,
+          reply_posting_review_group_ids: [posting_review_group.id],
+        )
+
+        result = NewPostManager.new(user, raw: "this is a new post", topic_id: topic.id).perform
+
+        expect(result.action).to eq(:create_post)
+      end
+
+      it "enqueues when the user is not in the exempt group and category's posting review mode is everyone_except" do
+        category.update!(
+          reply_posting_review_mode: :everyone_except,
+          reply_posting_review_group_ids: [posting_review_group.id],
+        )
+
+        result = NewPostManager.new(user, raw: "this is a new post", topic_id: topic.id).perform
+
+        expect(result.action).to eq(:enqueued)
+        expect(result.reason).to eq(:category)
+      end
+
+      it "enqueues when the user is in the listed group and category's posting review mode is no_one_except" do
+        posting_review_group.add(user)
+        category.update!(
+          reply_posting_review_mode: :no_one_except,
+          reply_posting_review_group_ids: [posting_review_group.id],
+        )
+
+        result = NewPostManager.new(user, raw: "this is a new post", topic_id: topic.id).perform
+
+        expect(result.action).to eq(:enqueued)
+        expect(result.reason).to eq(:category)
+      end
+
+      it "creates the post when the user is not in the listed group and category's posting review mode is no_one_except" do
+        category.update!(
+          reply_posting_review_mode: :no_one_except,
+          reply_posting_review_group_ids: [posting_review_group.id],
+        )
+
+        result = NewPostManager.new(user, raw: "this is a new post", topic_id: topic.id).perform
+
+        expect(result.action).to eq(:create_post)
       end
     end
   end
@@ -689,6 +821,8 @@ RSpec.describe NewPostManager do
     let(:user) { Fabricate(:user, refresh_auto_groups: true) }
     let(:admin) { Fabricate(:admin) }
 
+    before { SiteSetting.notify_mods_when_user_silenced = true }
+
     it "silences users if its their first post" do
       manager =
         NewPostManager.new(
@@ -700,9 +834,12 @@ RSpec.describe NewPostManager do
           first_post_checks: true,
         )
 
-      result = manager.perform
-      expect(result.action).to eq(:enqueued)
-      expect(user.silenced?).to be(true)
+      expect { @result = manager.perform }.to change { user.silenced? }.to(true).and change {
+              Topic.where(
+                "subtype = 'system_message' AND title LIKE '%silenced%' AND excerpt LIKE '%first email was flagged as spam%'",
+              ).count
+            }.by(1)
+      expect(@result.action).to eq(:enqueued)
     end
 
     it "doesn't silence or enqueue exempt users" do

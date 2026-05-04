@@ -1,5 +1,5 @@
-import { TextArea } from "@ember/legacy-built-in-components";
 import { action } from "@ember/object";
+import TextArea from "discourse/components/textarea";
 import PlaceholdersList from "../placeholders-list";
 import BaseField from "./da-base-field";
 import DAFieldDescription from "./da-field-description";
@@ -24,8 +24,8 @@ export default class MessageField extends BaseField {
             {{#if this.displayPlaceholders}}
               <PlaceholdersList
                 @currentValue={{@field.metadata.value}}
-                @placeholders={{@placeholder}}
-                @onCopy={{this.test}}
+                @placeholders={{@placeholders}}
+                @onCopy={{this.mutValue}}
               />
             {{/if}}
           </div>

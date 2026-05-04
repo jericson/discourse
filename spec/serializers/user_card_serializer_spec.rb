@@ -65,49 +65,119 @@ RSpec.describe UserCardSerializer do
       it "serializes pending_posts_count" do
         expect(json[:pending_posts_count]).to eq 0
       end
+
+      context "when the user is in a group with PMs enabled" do
+        before { SiteSetting.personal_message_enabled_groups = Group::AUTO_GROUPS[:everyone] }
+
+        it "can_send_private_message_to_user is true" do
+          expect(json[:can_send_private_message_to_user]).to eq true
+        end
+      end
+
+      context "when the user is not in a group with PMs enabled" do
+        before { SiteSetting.personal_message_enabled_groups = Group::AUTO_GROUPS[:moderators] }
+
+        it "can_send_private_message_to_user is false" do
+          expect(json[:can_send_private_message_to_user]).to eq false
+        end
+      end
     end
   end
 
   describe "#status" do
     fab!(:user_status)
-    fab!(:user) { Fabricate(:user, user_status: user_status) }
-    let(:serializer) { described_class.new(user, scope: Guardian.new(user), root: false) }
+    fab!(:user) { Fabricate(:user, user_status:) }
 
-    it "adds user status when enabled" do
-      SiteSetting.enable_user_status = true
+    def serialize_status
+      described_class.new(user, scope: Guardian.new(user), root: false).as_json[:status]
+    end
 
-      json = serializer.as_json
+    context "when user status is disabled" do
+      before { SiteSetting.enable_user_status = false }
 
-      expect(json[:status]).to_not be_nil do |status|
-        expect(status.description).to eq(user_status.description)
-        expect(status.emoji).to eq(user_status.emoji)
+      it "doesn't include status" do
+        expect(serialize_status).to be_nil
       end
     end
 
-    it "doesn't add user status when disabled" do
-      SiteSetting.enable_user_status = false
-      json = serializer.as_json
-      expect(json.keys).not_to include :status
+    context "when user status is enabled" do
+      before { SiteSetting.enable_user_status = true }
+
+      it "includes status" do
+        expect(serialize_status).to be_present
+        expect(serialize_status[:description]).to eq(user_status.description)
+        expect(serialize_status[:emoji]).to eq(user_status.emoji)
+      end
+
+      it "doesn't include expired status" do
+        user.user_status.ends_at = 1.minute.ago
+        expect(serialize_status).to be_nil
+      end
+
+      it "doesn't include status if user doesn't have it set" do
+        user.clear_status!
+        user.reload
+        expect(serialize_status).to be_nil
+      end
     end
+  end
 
-    it "doesn't add expired user status" do
-      SiteSetting.enable_user_status = true
+  describe "#featured_topic" do
+    fab!(:user)
+    fab!(:featured_topic, :topic)
 
-      user.user_status.ends_at = 1.minutes.ago
+    before { user.user_profile.update(featured_topic_id: featured_topic.id) }
+
+    it "includes the featured topic" do
       serializer = described_class.new(user, scope: Guardian.new(user), root: false)
       json = serializer.as_json
 
-      expect(json.keys).not_to include :status
+      expect(json[:featured_topic]).to_not be_nil
+      expect(json[:featured_topic][:id]).to eq(featured_topic.id)
+      expect(json[:featured_topic][:title]).to eq(featured_topic.title)
+      expect(json[:featured_topic].keys).to contain_exactly(
+        :id,
+        :title,
+        :fancy_title,
+        :slug,
+        :posts_count,
+      )
     end
+  end
 
-    it "doesn't return status if user doesn't have it set" do
-      SiteSetting.enable_user_status = true
+  describe "#user_fields" do
+    fab!(:user)
 
-      user.clear_status!
-      user.reload
+    it "includes the user field" do
+      user_field = Fabricate(:user_field, show_on_profile: true, show_on_user_card: true)
+      user.set_user_field(user_field.id, "foo")
+
+      serializer = described_class.new(user, scope: Guardian.new(user), root: false)
       json = serializer.as_json
 
-      expect(json.keys).not_to include :status
+      expect(json[:user_fields]).to_not be_nil
+      expect(json[:user_fields][user_field.id.to_s]).to eq("foo")
+    end
+
+    it "converts confirm fields to boolean" do
+      user_field =
+        Fabricate(
+          :user_field,
+          field_type: "confirm",
+          show_on_profile: true,
+          show_on_user_card: true,
+        )
+
+      test_values = { "true" => true, "T" => true, "1" => true, "false" => false, "lol" => false }
+
+      test_values.each do |value, expected|
+        user.set_user_field(user_field.id, value)
+        serializer = described_class.new(user, scope: Guardian.new(user), root: false)
+        json = serializer.as_json
+
+        expect(json[:user_fields]).to_not be_nil
+        expect(json[:user_fields][user_field.id.to_s]).to eq(expected)
+      end
     end
   end
 end

@@ -2,9 +2,10 @@
 
 RSpec.describe Chat::CreateMessage do
   describe described_class::Contract, type: :model do
-    subject(:contract) { described_class.new(upload_ids: upload_ids) }
+    subject(:contract) { described_class.new(upload_ids: upload_ids, blocks: blocks) }
 
     let(:upload_ids) { nil }
+    let(:blocks) { nil }
 
     it { is_expected.to validate_presence_of :chat_channel_id }
 
@@ -17,13 +18,26 @@ RSpec.describe Chat::CreateMessage do
 
       it { is_expected.not_to validate_presence_of :message }
     end
+
+    context "when blocks are provided" do
+      let(:blocks) { [{ type: "actions" }] }
+
+      it { is_expected.not_to validate_presence_of :message }
+    end
+
+    describe "client_created_at parameter" do
+      it "accepts client_created_at parameter" do
+        contract = described_class.new(client_created_at: 1.minute.ago.iso8601)
+        expect(contract.attributes.keys).to include("client_created_at")
+      end
+    end
   end
 
   describe ".call" do
-    subject(:result) { described_class.call(params) }
+    subject(:result) { described_class.call(params:, options:, **dependencies) }
 
     fab!(:user)
-    fab!(:other_user) { Fabricate(:user) }
+    fab!(:other_user, :user)
     fab!(:channel) { Fabricate(:chat_channel, threading_enabled: true) }
     fab!(:thread) { Fabricate(:chat_thread, channel: channel) }
     fab!(:upload) { Fabricate(:upload, user: user) }
@@ -33,18 +47,20 @@ RSpec.describe Chat::CreateMessage do
     let(:content) { "A new message @#{other_user.username_lower}" }
     let(:context_topic_id) { nil }
     let(:context_post_ids) { nil }
+    let(:upload_ids) { [upload.id] }
+    let(:blocks) { nil }
     let(:params) do
       {
-        enforce_membership: false,
-        guardian: guardian,
         chat_channel_id: channel.id,
         message: content,
-        upload_ids: [upload.id],
-        context_topic_id: context_topic_id,
-        context_post_ids: context_post_ids,
-        force_thread: false,
+        upload_ids:,
+        context_topic_id:,
+        context_post_ids:,
+        blocks:,
       }
     end
+    let(:options) { { enforce_membership: false, force_thread: false } }
+    let(:dependencies) { { guardian: } }
     let(:message) { result[:message_instance].reload }
 
     before { channel.add(guardian.user) }
@@ -74,9 +90,12 @@ RSpec.describe Chat::CreateMessage do
       end
 
       context "when strip_whitespace is disabled" do
-        it "doesn't strip newlines" do
-          params[:strip_whitespaces] = false
+        before do
+          options[:strip_whitespaces] = false
           params[:message] = "aaaaaaa\n"
+        end
+
+        it "doesn't strip newlines" do
           expect(message.message).to eq("aaaaaaa\n")
         end
       end
@@ -84,7 +103,7 @@ RSpec.describe Chat::CreateMessage do
       context "when coming from a webhook" do
         let(:incoming_webhook) { Fabricate(:incoming_chat_webhook, chat_channel: channel) }
 
-        before { params[:incoming_chat_webhook] = incoming_webhook }
+        before { dependencies[:incoming_chat_webhook] = incoming_webhook }
 
         it "creates a webhook event" do
           expect { result }.to change { Chat::WebhookEvent.count }.by(1)
@@ -104,15 +123,21 @@ RSpec.describe Chat::CreateMessage do
         result
       end
 
-      it "can enqueue a job to process message" do
-        params[:process_inline] = false
-        expect_enqueued_with(job: Jobs::Chat::ProcessMessage) { result }
+      context "when process_inline is false" do
+        before { options[:process_inline] = false }
+
+        it "enqueues a job to process message" do
+          expect_enqueued_with(job: Jobs::Chat::ProcessMessage) { result }
+        end
       end
 
-      it "can process a message inline" do
-        params[:process_inline] = true
-        Jobs::Chat::ProcessMessage.any_instance.expects(:execute).once
-        expect_not_enqueued_with(job: Jobs::Chat::ProcessMessage) { result }
+      context "when process_inline is true" do
+        before { options[:process_inline] = true }
+
+        it "processes a message inline" do
+          Jobs::Chat::ProcessMessage.any_instance.expects(:execute).once
+          expect_not_enqueued_with(job: Jobs::Chat::ProcessMessage) { result }
+        end
       end
 
       it "triggers a Discourse event" do
@@ -127,11 +152,11 @@ RSpec.describe Chat::CreateMessage do
         result
       end
 
-      context "when context given" do
+      context "when a context is given" do
         let(:context_post_ids) { [1, 2] }
         let(:context_topic_id) { 3 }
 
-        it "triggers a Discourse event with context if given" do
+        it "triggers a Discourse event with context" do
           DiscourseEvent.expects(:trigger).with(
             :chat_message_created,
             instance_of(Chat::Message),
@@ -213,6 +238,48 @@ RSpec.describe Chat::CreateMessage do
       it { is_expected.to fail_a_policy(:no_silenced_user) }
     end
 
+    context "when providing blocks" do
+      let(:blocks) do
+        [
+          {
+            type: "actions",
+            elements: [{ type: "button", value: "foo", text: { type: "plain_text", text: "Foo" } }],
+          },
+        ]
+      end
+
+      context "when user is not a bot" do
+        it { is_expected.to fail_a_policy(:accept_blocks) }
+      end
+
+      context "when user is a bot" do
+        fab!(:user) { Discourse.system_user }
+
+        it { is_expected.to run_successfully }
+
+        it "saves the blocks" do
+          result
+
+          expect(message.blocks[0]).to include(
+            "type" => "actions",
+            "schema_version" => 1,
+            "elements" => [
+              {
+                "schema_version" => 1,
+                "type" => "button",
+                "value" => "foo",
+                "action_id" => an_instance_of(String),
+                "text" => {
+                  "type" => "plain_text",
+                  "text" => "Foo",
+                },
+              },
+            ],
+          )
+        end
+      end
+    end
+
     context "when user is not silenced" do
       context "when mandatory parameters are missing" do
         before { params[:chat_channel_id] = "" }
@@ -237,23 +304,21 @@ RSpec.describe Chat::CreateMessage do
           context "when user is a bot" do
             fab!(:user) { Discourse.system_user }
 
-            it { is_expected.to be_a_success }
+            it { is_expected.to run_successfully }
           end
 
           context "when membership is enforced" do
-            fab!(:user) { Fabricate(:user) }
+            fab!(:user)
 
             before do
-              SiteSetting.chat_allowed_groups = [Group::AUTO_GROUPS[:everyone]]
-              params[:enforce_membership] = true
+              SiteSetting.chat_allowed_groups = Group::AUTO_GROUPS[:everyone]
+              options[:enforce_membership] = true
             end
 
-            it { is_expected.to be_a_success }
+            it { is_expected.to run_successfully }
           end
 
           context "when user can join channel" do
-            before { user.groups << Group.find(Group::AUTO_GROUPS[:trust_level_1]) }
-
             context "when user can't create a message in the channel" do
               before { channel.closed!(Discourse.system_user) }
 
@@ -275,7 +340,7 @@ RSpec.describe Chat::CreateMessage do
                   before { params[:in_reply_to_id] = reply_to.id }
 
                   context "when reply is not part of the channel" do
-                    fab!(:reply_to) { Fabricate(:chat_message) }
+                    fab!(:reply_to, :chat_message)
 
                     it { is_expected.to fail_a_policy(:ensure_reply_consistency) }
                   end
@@ -290,6 +355,8 @@ RSpec.describe Chat::CreateMessage do
 
                       it_behaves_like "creating a new message"
                       it_behaves_like "a message in a thread"
+
+                      it { is_expected.to run_successfully }
 
                       it "assigns the thread to the new message" do
                         expect(message).to have_attributes(
@@ -311,6 +378,8 @@ RSpec.describe Chat::CreateMessage do
                       it_behaves_like "a message in a thread" do
                         let(:original_user) { reply_to.user }
                       end
+
+                      it { is_expected.to run_successfully }
 
                       it "creates a new thread" do
                         expect { result }.to change { Chat::Thread.count }.by(1)
@@ -341,7 +410,7 @@ RSpec.describe Chat::CreateMessage do
                         end
 
                         context "when thread is forced" do
-                          before { params[:force_thread] = true }
+                          before { options[:force_thread] = true }
 
                           it "publishes the new thread" do
                             Chat::Publisher.expects(:publish_thread_created!).with(
@@ -389,6 +458,8 @@ RSpec.describe Chat::CreateMessage do
                         it_behaves_like "creating a new message"
                         it_behaves_like "a message in a thread"
 
+                        it { is_expected.to run_successfully }
+
                         it "does not publish the thread" do
                           Chat::Publisher.expects(:publish_thread_created!).never
                           result
@@ -399,6 +470,8 @@ RSpec.describe Chat::CreateMessage do
                     context "when not replying to an existing message" do
                       it_behaves_like "creating a new message"
                       it_behaves_like "a message in a thread"
+
+                      it { is_expected.to run_successfully }
 
                       it "does not publish the thread" do
                         Chat::Publisher.expects(:publish_thread_created!).never
@@ -417,6 +490,8 @@ RSpec.describe Chat::CreateMessage do
 
                   context "when message is valid" do
                     it_behaves_like "creating a new message"
+
+                    it { is_expected.to run_successfully }
 
                     it "updates membership last_read_message attribute" do
                       expect { result }.to change { membership.reload.last_read_message }
@@ -438,6 +513,77 @@ RSpec.describe Chat::CreateMessage do
                         instance_of(Chat::Message),
                       )
                       result
+                    end
+
+                    context "when upload was created by another user" do
+                      fab!(:another_upload) do
+                        Fabricate(:upload, user: other_user, uploaders: [user])
+                      end
+
+                      let(:upload_ids) { [upload.id, another_upload.id] }
+
+                      it "attaches the upload created by the other user" do
+                        expect(message.uploads).to contain_exactly(upload, another_upload)
+                      end
+                    end
+
+                    context "when client_created_at is provided" do
+                      let(:client_timestamp) { 30.seconds.ago }
+
+                      before do
+                        params[:client_created_at] = client_timestamp.iso8601
+                        params[:upload_ids] = [] # Remove uploads to avoid ID conflicts
+                      end
+
+                      it "uses the client timestamp for created_at" do
+                        expect(result).to run_successfully
+                        expect(message.created_at).to be_within(1.second).of(client_timestamp)
+                      end
+
+                      context "when client timestamp is too old" do
+                        let(:client_timestamp) { 2.minutes.ago }
+
+                        it "falls back to server timestamp" do
+                          expect(result).to run_successfully
+                          expect(message.created_at).to be_within(5.seconds).of(Time.zone.now)
+                        end
+                      end
+
+                      context "when client timestamp is in the future" do
+                        let(:client_timestamp) { 2.minutes.from_now }
+
+                        it "falls back to server timestamp" do
+                          expect(result).to run_successfully
+                          expect(message.created_at).to be_within(5.seconds).of(Time.zone.now)
+                        end
+                      end
+
+                      context "when client timestamp is invalid format" do
+                        before { params[:client_created_at] = "invalid-timestamp" }
+
+                        it "falls back to server timestamp" do
+                          expect(result).to run_successfully
+                          expect(message.created_at).to be_within(5.seconds).of(Time.zone.now)
+                        end
+                      end
+
+                      context "when client timestamp is empty" do
+                        before { params[:client_created_at] = "" }
+
+                        it "falls back to server timestamp" do
+                          expect(result).to run_successfully
+                          expect(message.created_at).to be_within(5.seconds).of(Time.zone.now)
+                        end
+                      end
+                    end
+
+                    context "when client_created_at is not provided" do
+                      before { params[:upload_ids] = [] } # Remove uploads to avoid ID conflicts
+
+                      it "uses server timestamp" do
+                        expect(result).to run_successfully
+                        expect(message.created_at).to be_within(5.seconds).of(Time.zone.now)
+                      end
                     end
                   end
                 end

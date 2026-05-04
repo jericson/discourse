@@ -37,6 +37,38 @@ module Chat
         "#{Discourse.current_hostname}-chat-#{type}-#{chat_channel_id}"
       end
 
+      # Builds the `actions`/`action_data` fields that enable a "Reply"
+      # quick-action button on web push notifications for a chat message.
+      # The chat plugin's service worker dispatches on the "chat-reply"
+      # action name (see plugins/chat/assets/service-worker/chat-service-worker-extensions.js).
+      def push_notification_reply_action(chat_message, user)
+        I18n.with_locale(user.effective_locale) do
+          {
+            actions: [
+              {
+                action: "chat-reply",
+                title: I18n.t("discourse_push_notifications.actions.chat_reply.title"),
+                placeholder: I18n.t("discourse_push_notifications.actions.chat_reply.placeholder"),
+                type: "text",
+                icon:
+                  ActionController::Base.helpers.image_url("push-notifications/inline_reply.png"),
+              },
+            ],
+            action_data: {
+              channel_id: chat_message.chat_channel_id,
+              message_id: chat_message.id,
+              thread_id: chat_message.thread_id,
+            }.compact,
+          }
+        end
+      rescue => e
+        # Never let a quick-reply payload failure abort the notify job —
+        # the job creates DB notifications before sending alerts, and a
+        # Sidekiq retry would re-create them.
+        Discourse.warn_exception(e, message: "Failed to build chat push notification reply action")
+        {}
+      end
+
       def notify_edit(chat_message:, timestamp:)
         Jobs.enqueue(
           Jobs::Chat::SendMessageNotifications,
@@ -104,8 +136,6 @@ module Chat
       to_notify
     end
 
-    private
-
     def list_users_to_notify
       skip_notifications = @parsed_mentions.count > SiteSetting.max_mentions_per_chat_message
 
@@ -126,6 +156,8 @@ module Chat
 
       [to_notify, inaccessible, all_mentioned_user_ids]
     end
+
+    private
 
     def expand_global_mention(to_notify, already_covered_ids)
       has_all_mention = @parsed_mentions.has_global_mention
@@ -172,8 +204,8 @@ module Chat
 
       {
         members: members || [],
-        welcome_to_join: welcome_to_join || [],
-        unreachable: unreachable || [],
+        welcome_to_join: (welcome_to_join || []).select(&:human?),
+        unreachable: (unreachable || []).select(&:human?),
       }
     end
 
@@ -236,7 +268,12 @@ module Chat
       end
 
       # Notify when mentioned users are not able to access the channel
-      publish_unreachable_mentions(inaccessible[:unreachable]) if inaccessible[:unreachable].any?
+      # When user does not have permission to see group members, use the group name instead
+      if show_group_warning(inaccessible[:unreachable])
+        publish_unreachable_group_warning(hidden_member_groups.first.name)
+      elsif inaccessible[:unreachable].any?
+        publish_unreachable_mentions(inaccessible[:unreachable])
+      end
 
       # Notify when `@all` or `@here` is used when channel has global mentions disabled
       publish_global_mentions_disabled if global_mentions_disabled
@@ -248,6 +285,16 @@ module Chat
       # Notify when large groups are mentioned, exceeding `max_users_notified_per_group_mention`
       too_many_members = @parsed_mentions.groups_with_too_many_members.to_a
       publish_too_many_members_in_group_mention(too_many_members) if too_many_members.any?
+    end
+
+    def hidden_member_groups
+      @hidden_member_groups ||=
+        @parsed_mentions.groups_to_mention -
+          Group.where(id: @parsed_mentions.groups_to_mention.ids).members_visible_groups(@user)
+    end
+
+    def show_group_warning(users)
+      users.any? { |user| GroupUser.exists?(group: hidden_member_groups, user: user) }
     end
 
     def publish_inaccessible_mentions(users)
@@ -287,7 +334,8 @@ module Chat
       Chat::Publisher.publish_notice(
         user_id: @user.id,
         channel_id: @chat_channel.id,
-        text_content: I18n.t("chat.mention_warning.global_mentions_disallowed"),
+        text_content:
+          I18n.t("chat.mention_warning.global_mentions_disallowed", locale: @user.effective_locale),
       )
     end
 
@@ -301,6 +349,19 @@ module Chat
             multiple: "chat.mention_warning.cannot_see_multiple",
             first_identifier: users.first.username,
             count: users.count,
+          ),
+      )
+    end
+
+    def publish_unreachable_group_warning(group_name)
+      Chat::Publisher.publish_notice(
+        user_id: @user.id,
+        channel_id: @chat_channel.id,
+        text_content:
+          I18n.t(
+            "chat.mention_warning.cannot_see_group",
+            group_name: group_name,
+            locale: @user.effective_locale,
           ),
       )
     end
@@ -321,7 +382,12 @@ module Chat
 
     def mention_warning_text(single:, multiple:, first_identifier:, count:)
       translation_key = count == 1 ? single : multiple
-      I18n.t(translation_key, first_identifier: first_identifier, count: count - 1)
+      I18n.t(
+        translation_key,
+        first_identifier: first_identifier,
+        count: count - 1,
+        locale: @user.effective_locale,
+      )
     end
 
     def global_mentions_disabled
@@ -370,7 +436,8 @@ module Chat
     end
 
     def notify_watching_users(except: [])
-      Jobs.enqueue(
+      Jobs.enqueue_in(
+        5.seconds,
         Jobs::Chat::NotifyWatching,
         { chat_message_id: @chat_message.id, except_user_ids: except, timestamp: @timestamp.to_s },
       )

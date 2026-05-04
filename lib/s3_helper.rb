@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "aws-sdk-s3"
+require "aws-sdk-sts"
 
 class S3Helper
   FIFTEEN_MEGABYTES = 15 * 1024 * 1024
@@ -23,7 +24,7 @@ class S3Helper
   # Controls the following:
   #
   # * presigned put_object URLs for direct S3 uploads
-  UPLOAD_URL_EXPIRES_AFTER_SECONDS ||= 10.minutes.to_i
+  UPLOAD_URL_EXPIRES_AFTER_SECONDS = 10.minutes.to_i
 
   def initialize(s3_bucket_name, tombstone_prefix = "", options = {})
     @s3_client = options.delete(:client)
@@ -50,6 +51,7 @@ class S3Helper
     options[:client] = s3_client if s3_client.present?
     options[:use_accelerate_endpoint] = !for_backup &&
       SiteSetting.Upload.enable_s3_transfer_acceleration
+    options[:use_dualstack_endpoint] = SiteSetting.Upload.use_dualstack_endpoint
 
     bucket =
       if for_backup
@@ -80,6 +82,14 @@ class S3Helper
           options[:body] = file
           obj.put(options).etag
         end
+      rescue Aws::S3::Errors::MetadataTooLarge
+        if options[:content_disposition].present?
+          options.delete(:content_disposition)
+          file.rewind if file.respond_to?(:rewind)
+          retry
+        else
+          raise
+        end
       end
 
     [path, etag.gsub('"', "")]
@@ -109,13 +119,27 @@ class S3Helper
   end
 
   def delete_objects(keys)
-    s3_bucket.delete_objects({ delete: { objects: keys.map { |k| { key: k } }, quiet: true } })
+    return if keys.empty?
+
+    response =
+      s3_bucket.delete_objects({ delete: { objects: keys.map { |k| { key: k } }, quiet: false } })
+
+    if response.errors.any?
+      error_codes = response.errors.map(&:code).tally.map { |code, n| "#{code} (#{n})" }.join(", ")
+      sample = response.errors.first(5).map { |err| "  #{err.key}: #{err.code} - #{err.message}" }
+      sample << "  ... and #{response.errors.size - 5} more" if response.errors.size > 5
+      raise "Failed to delete #{response.errors.size} S3 objects: #{error_codes}\n#{sample.join("\n")}"
+    end
+
+    response
   end
 
   def copy(source, destination, options: {})
     if options[:apply_metadata_to_destination]
       options = options.except(:apply_metadata_to_destination).merge(metadata_directive: "REPLACE")
     end
+
+    options[:tagging_directive] = "REPLACE" if options[:tagging]
 
     destination = get_path_for_s3_upload(destination)
     source_object =
@@ -243,15 +267,22 @@ class S3Helper
     s3_bucket.objects(options)
   end
 
-  def tag_file(key, tags)
-    tag_array = []
-    tags.each { |k, v| tag_array << { key: k.to_s, value: v.to_s } }
+  def upsert_tag(key, tag_key:, tag_value:)
+    key = get_path_for_s3_upload(key)
+    tags = s3_resource.client.get_object_tagging(bucket: @s3_bucket_name, key:).tag_set
+    tag_index = tags.find_index { |tag| tag[:key].to_s == tag_key.to_s }
+
+    if tag_index
+      tags[tag_index][:value] = tag_value.to_s
+    else
+      tags << { key: tag_key.to_s, value: tag_value.to_s }
+    end
 
     s3_resource.client.put_object_tagging(
       bucket: @s3_bucket_name,
       key: key,
       tagging: {
-        tag_set: tag_array,
+        tag_set: tags,
       },
     )
   end
@@ -265,13 +296,35 @@ class S3Helper
 
     opts[:endpoint] = SiteSetting.s3_endpoint if SiteSetting.s3_endpoint.present?
     opts[:http_continue_timeout] = SiteSetting.s3_http_continue_timeout
+    opts[:use_dualstack_endpoint] = SiteSetting.Upload.use_dualstack_endpoint
 
-    unless obj.s3_use_iam_profile
-      opts[:access_key_id] = obj.s3_access_key_id
-      opts[:secret_access_key] = obj.s3_secret_access_key
-    end
+    creds = s3_credentials(obj)
+    opts[:credentials] = creds if creds
 
     opts
+  end
+
+  def self.s3_credentials(obj, stub_responses: false)
+    return nil if obj.s3_use_iam_profile
+
+    if obj.s3_role_arn.present?
+      # RoleSessionName max 64 chars: https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html
+      session_name = obj.s3_role_session_name.presence || Discourse.os_hostname[0...64]
+      sts_client =
+        Aws::STS::Client.new(
+          region: obj.s3_region,
+          access_key_id: obj.s3_access_key_id,
+          secret_access_key: obj.s3_secret_access_key,
+          stub_responses: stub_responses,
+        )
+      Aws::AssumeRoleCredentials.new(
+        role_arn: obj.s3_role_arn,
+        role_session_name: session_name,
+        client: sts_client,
+      )
+    else
+      Aws::Credentials.new(obj.s3_access_key_id, obj.s3_secret_access_key)
+    end
   end
 
   def download_file(filename, destination_path, failure_message = nil)
@@ -298,15 +351,17 @@ class S3Helper
     s3_client.abort_multipart_upload(bucket: s3_bucket_name, key: key, upload_id: upload_id)
   end
 
-  def create_multipart(key, content_type, metadata: {})
+  def create_multipart(key, content_type, metadata: {}, acl: nil, tagging: nil)
     response =
       s3_client.create_multipart_upload(
-        acl: SiteSetting.s3_use_acls ? "private" : nil,
+        acl:,
+        tagging:,
         bucket: s3_bucket_name,
         key: key,
         content_type: content_type,
         metadata: metadata,
       )
+
     { upload_id: response.upload_id, key: key }
   end
 
@@ -362,6 +417,7 @@ class S3Helper
         key: key,
         expires_in: expires_in,
         use_accelerate_endpoint: @s3_options[:use_accelerate_endpoint],
+        use_dualstack_endpoint: @s3_options[:use_dualstack_endpoint],
       }.merge(opts),
     )
   end
@@ -380,6 +436,7 @@ class S3Helper
         key: key,
         expires_in: expires_in,
         use_accelerate_endpoint: @s3_options[:use_accelerate_endpoint],
+        use_dualstack_endpoint: @s3_options[:use_dualstack_endpoint],
       }.merge(opts),
     )
   end

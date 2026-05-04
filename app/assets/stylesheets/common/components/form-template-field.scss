@@ -7,7 +7,6 @@
     width: 100%;
   }
 
-  // TODO(@keegan): Remove after updating dropdown/multi-select to use select-kit
   &__dropdown {
     border: 1px solid var(--primary-medium);
     border-radius: var(--d-input-border-radius);
@@ -21,8 +20,8 @@
     padding: 0.5em 0.65em;
     font-size: var(--font-0);
   }
-  // END of what should be removed after updating dropdown/multi-select to use select-kit
 
+  // END of what should be removed after updating dropdown/multi-select to use select-kit
   &__required-indicator {
     color: var(--danger);
     margin-left: 0.5em;
@@ -69,5 +68,21 @@
     margin-bottom: 0.25rem;
     font-size: var(--font-down-1);
     color: var(--primary-medium);
+  }
+
+  &__upload-hidden-input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  &__composer {
+    // same default effective height (150px) than a text control
+    height: 189px;
+    width: 100%;
+
+    .d-editor-preview-wrapper {
+      display: none;
+    }
   }
 }

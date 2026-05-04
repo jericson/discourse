@@ -24,7 +24,9 @@ class Admin::BadgesController < Admin::AdminController
   end
 
   def preview
-    return render json: "preview not allowed", status: 403 unless SiteSetting.enable_badge_sql
+    unless SiteSetting.enable_badge_sql
+      return render json: "preview not allowed", status: :forbidden
+    end
 
     render json:
              BadgeGranter.preview(
@@ -188,7 +190,7 @@ class Admin::BadgesController < Admin::AdminController
     errors = []
     Badge.transaction do
       allowed = Badge.column_names.map(&:to_sym)
-      allowed -= %i[id created_at updated_at grant_count]
+      allowed -= %i[id created_at updated_at grant_count system]
       allowed -= Badge.protected_system_fields if badge.system?
       allowed -= [:query] unless SiteSetting.enable_badge_sql
 
@@ -214,10 +216,10 @@ class Admin::BadgesController < Admin::AdminController
       badge.save!
     end
 
-    if opts[:new].blank?
+    if opts[:new].blank? && badge.name_previously_changed?
       Jobs.enqueue(
         :bulk_user_title_update,
-        new_title: badge.name,
+        new_title: badge.display_name,
         granted_badge_id: badge.id,
         action: Jobs::BulkUserTitleUpdate::UPDATE_ACTION,
       )

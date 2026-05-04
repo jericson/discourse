@@ -6,9 +6,14 @@ class ReviewableSerializer < ApplicationSerializer
   attributes(
     :id,
     :type,
+    :type_source,
     :topic_id,
     :topic_url,
+    :target_type,
+    :target_id,
     :target_url,
+    :target_created_at,
+    :target_deleted_at,
     :topic_tags,
     :category_id,
     :created_at,
@@ -22,12 +27,15 @@ class ReviewableSerializer < ApplicationSerializer
   attribute :status_for_database, key: :status
 
   has_one :created_by, serializer: UserWithCustomFieldsSerializer, root: "users"
-  has_one :target_created_by, serializer: UserWithCustomFieldsSerializer, root: "users"
+  has_one :target_created_by, root: "users"
+  has_one :target_deleted_by, serializer: BasicUserSerializer, root: "users"
   has_one :topic, serializer: ListableTopicSerializer
   has_many :editable_fields, serializer: ReviewableEditableFieldSerializer, embed: :objects
   has_many :reviewable_scores, serializer: ReviewableScoreSerializer
   has_many :bundled_actions, serializer: ReviewableBundledActionSerializer
-  has_one :claimed_by, serializer: UserWithCustomFieldsSerializer, root: "users"
+  has_many :reviewable_notes, serializer: ReviewableNoteSerializer
+  has_many :reviewable_histories, serializer: ReviewableHistorySerializer
+  has_one :claimed_by, serializer: ReviewableClaimedTopicSerializer
 
   # Used to keep track of our payload attributes
   class_attribute :_payload_for_serialization
@@ -102,11 +110,19 @@ class ReviewableSerializer < ApplicationSerializer
   end
 
   def topic_tags
-    object.topic.tags.map(&:name)
+    object.topic.tags.map { |t| { id: t.id, name: t.name, slug: t.slug } }
   end
 
   def include_topic_tags?
     object.topic.present? && SiteSetting.tagging_enabled?
+  end
+
+  def target_created_at
+    object.target&.created_at
+  end
+
+  def include_target_created_at?
+    object.target_type == "Post"
   end
 
   def target_url
@@ -138,5 +154,45 @@ class ReviewableSerializer < ApplicationSerializer
 
   def target_created_by_trust_level
     object&.target_created_by&.trust_level
+  end
+
+  def target_deleted_at
+    target = target_post_with_deleted
+    return target.deleted_at if target&.deleted_at.present?
+    target.revisions.order(created_at: :desc).pick(:created_at) if target&.user_deleted?
+  end
+
+  def include_target_deleted_at?
+    include_target_deleted_by? && target_deleted_at.present?
+  end
+
+  def target_deleted_by
+    target = target_post_with_deleted
+    target&.deleted_by || (target if target&.user_deleted?)&.user
+  end
+
+  def include_target_deleted_by?
+    return false unless object.target_type == "Post"
+    target = target_post_with_deleted
+    target&.deleted_by_id.present? || target&.user_deleted?
+  end
+
+  def target_post_with_deleted
+    return @target_post_with_deleted if defined?(@target_post_with_deleted)
+    @target_post_with_deleted =
+      object.target_type == "Post" ? Post.with_deleted.find_by(id: object.target_id) : nil
+  end
+
+  def target_created_by
+    user =
+      if object.target_type == "User"
+        object.target
+      else
+        object.target_created_by
+      end
+
+    return if user.blank?
+
+    FlaggedUserSerializer.new(user, scope: scope, root: false)
   end
 end

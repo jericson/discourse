@@ -1,15 +1,12 @@
 import Component from "@glimmer/component";
 import { LinkTo } from "@ember/routing";
-import { service } from "@ember/service";
-import { htmlSafe } from "@ember/template";
+import { trustHTML } from "@ember/template";
+import icon from "discourse/helpers/d-icon";
 import replaceEmoji from "discourse/helpers/replace-emoji";
-import dIcon from "discourse-common/helpers/d-icon";
 import ChatEmojiAvatar from "./chat-emoji-avatar";
 import ChatUserAvatar from "./chat-user-avatar";
 
 export default class ChatMessageInReplyToIndicator extends Component {
-  @service router;
-
   get route() {
     if (this.hasThread) {
       return "chat.channel.thread";
@@ -46,7 +43,7 @@ export default class ChatMessageInReplyToIndicator extends Component {
         @models={{this.model}}
         class="chat-reply is-direct-reply"
       >
-        {{dIcon "share" title="chat.in_reply_to"}}
+        {{icon "share" title="chat.in_reply_to"}}
 
         {{#if @message.inReplyTo.chatWebhookEvent.emoji}}
           <ChatEmojiAvatar
@@ -57,7 +54,7 @@ export default class ChatMessageInReplyToIndicator extends Component {
         {{/if}}
 
         <span class="chat-reply__excerpt">
-          {{replaceEmoji (htmlSafe @message.inReplyTo.excerpt)}}
+          {{replaceEmoji (trustHTML @message.inReplyTo.excerpt)}}
         </span>
       </LinkTo>
     {{/if}}

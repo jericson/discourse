@@ -11,9 +11,7 @@ module PageObjects
       end
 
       def visit_topic(topic, post_number: nil)
-        url = "/t/#{topic.id}"
-        url += "/#{post_number}" if post_number
-        page.visit(url)
+        page.visit(topic.url(post_number))
         self
       end
 
@@ -41,16 +39,44 @@ module PageObjects
         ::Topic.find(current_topic_id)
       end
 
+      def topic_title
+        find("#topic-title .fancy-title")
+      end
+
       def has_topic_title?(text)
         has_css?("h1 .fancy-title", text: text)
       end
 
-      def has_post_content?(post)
-        post_by_number(post).has_content? post.raw
+      def has_topic_title_editor?
+        has_css?("#topic-title input#edit-title")
+      end
+
+      def has_no_topic_title_editor?
+        has_no_css?("#topic-title input#edit-title")
+      end
+
+      def has_post_content?(post_number:, content:)
+        find(post_by_number_selector(post_number)).has_content?(content)
+      end
+
+      def has_deleted_post?(post)
+        has_css?(".topic-post.deleted:has(#post_#{post.post_number})")
+      end
+
+      def has_no_deleted_post?(post)
+        has_no_css?(".topic-post.deleted:has(#post_#{post.post_number})")
       end
 
       def has_post_number?(number)
         has_css?("#post_#{number}")
+      end
+
+      def has_replies_expanded?(post)
+        within_post(post) { has_css?(".embedded-posts") }
+      end
+
+      def has_replies_collapsed?(post)
+        within_post(post) { has_no_css?(".embedded-posts") }
       end
 
       def post_by_number(post_or_number, wait: Capybara.default_max_wait_time)
@@ -60,6 +86,10 @@ module PageObjects
 
       def post_by_number_selector(post_number)
         ".topic-post:not(.staged) #post_#{post_number}"
+      end
+
+      def has_no_post_more_actions?(post)
+        within_post(post) { has_no_css?(".show-more-actions") }
       end
 
       def has_post_more_actions?(post)
@@ -78,23 +108,67 @@ module PageObjects
         post_by_number(post).find(".show-more-actions").click
       end
 
+      def click_post_author_avatar(post)
+        within_post(post) { find(".main-avatar[data-user-card='#{post.user.username}']").click }
+      end
+
       def click_post_action_button(post, button)
-        case button
-        when :bookmark
-          within_post(post) { find(".bookmark").click }
-        when :reply
-          within_post(post) { find(".post-controls .reply").click }
-        when :flag
-          within_post(post) { find(".post-controls .create-flag").click }
-        when :copy_link
-          within_post(post) { find(".post-controls .post-action-menu__copy-link").click }
-        when :edit
-          within_post(post) { find(".post-controls .edit").click }
+        find_post_action_button(post, button).click
+      end
+
+      def find_post_action_buttons(post)
+        within_post(post) { find(".post-controls .actions") }
+      end
+
+      def find_post_action_button(post, button)
+        button_selector = selector_for_post_action_button(button)
+        within_post(post) { find(button_selector) }
+      end
+
+      def has_post_action_button?(post, button)
+        button_selector = selector_for_post_action_button(button)
+        within_post(post) { has_css?(button_selector) }
+      end
+
+      def has_no_post_action_button?(post, button)
+        button_selector = selector_for_post_action_button(button)
+        within_post(post) { has_no_css?(button_selector) }
+      end
+
+      def has_who_liked_on_post?(post, count: nil)
+        return has_css?(".post-users-popup .post-users-popup__item", count: count) if count
+
+        has_css?(".post-users-popup")
+      end
+
+      def has_no_who_liked_on_post?(post)
+        has_no_css?(".post-users-popup")
+      end
+
+      def has_who_read_on_post?(post, count: nil)
+        if count
+          return(
+            within_post(post) { has_css?(".who-read.--expanded a.trigger-user-card", count: count) }
+          )
         end
+
+        within_post(post) { has_css?(".who-read.--expanded") }
+      end
+
+      def has_no_who_read_on_post?(post)
+        within_post(post) { has_no_css?(".who-read.--expanded") }
       end
 
       def expand_post_admin_actions(post)
-        within_post(post) { find(".show-post-admin-menu").click }
+        click_post_action_button(post, :admin)
+      end
+
+      def has_post_admin_menu?()
+        has_css?("[data-content][data-identifier='admin-post-menu']")
+      end
+
+      def has_no_post_admin_menu?()
+        has_no_css?("[data-content][data-identifier='admin-post-menu']")
       end
 
       def click_post_admin_action_button(post, button)
@@ -104,18 +178,50 @@ module PageObjects
           element_klass += " .grant-badge"
         when :change_owner
           element_klass += " .change-owner"
+        when :permanently_delete
+          element_klass += " .permanently-delete"
         end
 
         find(element_klass).click
+      end
+
+      def permanently_delete_post(post)
+        expand_post_actions(post)
+        expand_post_admin_actions(post)
+        click_post_admin_action_button(post, :permanently_delete)
+      end
+
+      def open_post_history(post)
+        post_by_number(post).find(".post-info.edits").click
       end
 
       def click_topic_bookmark_button
         within_topic_footer_buttons { find(".bookmark-menu-trigger").click }
       end
 
+      def click_topic_edit_title
+        find("#topic-title .fancy-title").click
+      end
+
+      def click_topic_title_submit_edit
+        find("#topic-title .submit-edit").click
+      end
+
+      def click_topic_title_cancel_edit
+        find("#topic-title .cancel-edit").click
+      end
+
+      def has_editing_localization_indicator?
+        has_css?("#topic-title .editing-localization-indicator")
+      end
+
+      def has_no_editing_localization_indicator?
+        has_no_css?("#topic-title .editing-localization-indicator")
+      end
+
       def has_topic_bookmarked?(topic)
         within_topic_footer_buttons do
-          has_css?(".bookmark-menu-trigger.bookmarked", text: "Edit Bookmark")
+          has_css?(".bookmark-menu-trigger.bookmarked", text: "Edit bookmark")
         end
       end
 
@@ -123,13 +229,62 @@ module PageObjects
         within_topic_footer_buttons { has_no_css?(".bookmark-menu-trigger.bookmarked") }
       end
 
+      def has_topic_status_bookmark?
+        has_css?("#topic-title .topic-status.--bookmarked")
+      end
+
+      def has_no_topic_status_bookmark?
+        has_no_css?("#topic-title .topic-status.--bookmarked")
+      end
+
       def click_reply_button
         within_topic_footer_buttons { find(".create").click }
         has_expanded_composer?
       end
 
+      def click_floating_reply_button
+        find(".embed-floating-reply-button").click
+      end
+
+      def has_floating_reply_button?
+        has_css?(".embed-floating-reply-button")
+      end
+
+      def has_no_floating_reply_button?
+        has_no_css?(".embed-floating-reply-button")
+      end
+
+      def click_floating_timeline_button
+        find(".embed-floating-timeline-button").click
+      end
+
+      def has_floating_timeline_button?
+        has_css?(".embed-floating-timeline-button")
+      end
+
+      def has_no_floating_timeline_button?
+        has_no_css?(".embed-floating-timeline-button")
+      end
+
+      def has_docked_composer?
+        has_css?(".embed-mode-composer .docked-composer")
+      end
+
+      def has_no_docked_composer?
+        has_no_css?(".embed-mode-composer .docked-composer")
+      end
+
+      def click_embed_reply_button
+        within_topic_footer_buttons { find(".create").click }
+        self
+      end
+
       def has_expanded_composer?
         has_css?("#reply-control.open")
+      end
+
+      def composer
+        @composer_component
       end
 
       def type_in_composer(input)
@@ -186,7 +341,9 @@ module PageObjects
       end
 
       def click_footer_reply
-        find("#topic-footer-buttons .btn-primary", text: "Reply").click
+        button = find("#topic-footer-buttons .btn-primary", text: "Reply")
+        page.execute_script("arguments[0].scrollIntoView();", button)
+        button.click
         self
       end
 
@@ -207,16 +364,17 @@ module PageObjects
       end
 
       def click_notifications_button
-        find(".topic-notifications-button .select-kit-header").click
+        find(".topic-notifications-button .notifications-tracking-trigger").click
       end
 
       def click_admin_menu_button
-        within_topic_footer_buttons { find(".topic-admin-menu-button").click }
+        within_topic_footer_buttons { find(".toggle-admin-menu").click }
+        PageObjects::Components::TopicAdminMenu.new
       end
 
       def watch_topic
         click_notifications_button
-        find('li[data-name="watching"]').click
+        find('.notifications-tracking-btn[data-level-name="watching"]').click
       end
 
       def close_topic
@@ -244,18 +402,69 @@ module PageObjects
         find(".modal.convert-to-public-topic")
       end
 
-      def open_flag_topic_modal
-        find(".flag-topic").click
+      def has_no_flag_button?
+        has_no_css?(".post-action-menu__flag.create-flag")
       end
 
-      private
+      def open_flag_topic_modal
+        expect(page).to have_css(".flag-topic", wait: Capybara.default_max_wait_time * 3)
+        find(".flag-topic").click
+      end
 
       def within_post(post)
         within(post_by_number(post)) { yield }
       end
 
+      def has_filtered_notice_text?(text)
+        find(".posts-filtered-notice").has_text?(text, exact: false)
+      end
+
+      def topic_tags
+        tags_selector = ".title-wrapper .topic-category .list-tags .discourse-tags .discourse-tag"
+        all(tags_selector).map(&:text)
+      end
+
+      private
+
       def within_topic_footer_buttons
         within("#topic-footer-buttons") { yield }
+      end
+
+      def selector_for_post_action_button(button)
+        case button
+        when :add_translation
+          ".post-controls .post-action-menu-edit-translations-trigger"
+        when :admin
+          ".post-controls .post-action-menu__admin"
+        when :bookmark
+          ".post-controls .post-action-menu__bookmark"
+        when :copy_link, :copyLink
+          ".post-controls .post-action-menu__copy-link"
+        when :delete
+          ".post-controls .post-action-menu__delete"
+        when :edit
+          ".post-controls .post-action-menu__edit"
+        when :flag
+          ".post-controls .post-action-menu__flag"
+        when :like
+          ".post-controls .post-action-menu__like"
+        when :like_count
+          ".post-controls .post-action-menu__like-count"
+        when :read
+          ".post-controls .post-action-menu__read"
+        when :recover
+          ".post-controls .post-action-menu__recover"
+        when :replies
+          ".post-controls .post-action-menu__show-replies"
+        when :reply
+          ".post-controls .post-action-menu__reply"
+        when :share
+          ".post-controls .post-action-menu__share"
+        when :show_more
+          ".post-controls .post-action-menu__show-more"
+        else
+          raise "Unknown post menu button type: #{button}"
+        end
       end
 
       def is_post_bookmarked(post, bookmarked:, with_reminder: false)

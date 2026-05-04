@@ -13,6 +13,7 @@ ug:
     poll_create_allowed_groups: "راي سىناشقا ئىجازەت بېرىلگەن گۇرۇپپىلار."
     poll_groupable_user_fields: "راي سىناش نەتىجىسىنى گۇرۇپپىلاش ۋە سۈزۈشكە ئىشلىتىدىغان بىر يۈرۈش ئىشلەتكۈچى ئىسىم توپلىمى."
     poll_export_data_explorer_query_id: "راي سىناش نەتىجىسىنى چىقىرىشقا ئىشلىتىدىغان سانلىق مەلۇمات مەنبە باشقۇرغۇچ سۈرۈشتۈرىدىغان كىملىك (0 چەكلەيدۇ)."
+    poll_export_ranked_choice_data_explorer_query_id: "شۇئان ئاخىرقى راي سىناش نەتىجىسىنى چىقىرىشقا ئىشلىتىدىغان سانلىق مەلۇمات مەنبە باشقۇرغۇچ سۈرۈشتۈرىدىغان كىملىك."
     poll_default_public: "يېڭى راي سىناش قۇرغاندا، كۆڭۈلدىكى ئەھۋالدا «كىمنىڭ بېلەت تاشلىغانلىقىنى كۆرسىتىش» تاللانمىسى قوزغىتىلىدۇ."
   keywords:
     poll_create_allowed_groups: "poll_minimum_trust_level_to_create"
@@ -36,6 +37,7 @@ ug:
     default_poll_with_multiple_choices_has_invalid_parameters: "كۆپ تاللاشلىق راي سىناشنىڭ ئىناۋەتسىز پارامېتىرى بار."
     named_poll_with_multiple_choices_has_invalid_parameters: "<strong>%{name}</strong> ئاتلىق كۆپ تاللاشلىق راي سىناشنىڭ ئىناۋەتسىز پارامېتىرى بار."
     requires_at_least_1_valid_option: "كەم دېگەندە 1 ئۈنۈملۈك تاللانمىنى تاللىشىڭىز كېرەك."
+    requires_that_at_least_one_option_is_ranked: "رەتكە تىزىدىغان راي سىناشتا چوقۇم كەم دېگەندە بىر تاللاشنى تاللىغان بولۇشىڭىز كېرەك."
     edit_window_expired:
       cannot_edit_default_poll_with_votes: "راي سىناش قۇرۇلۇپ %{minutes} مىنۇتتىن كېيىن ئۆزگەرتەلمەيسىز."
       cannot_edit_named_poll_with_votes: "راي سىناش قۇرۇلۇپ %{minutes} مىنۇتتىن كېيىن <strong>${name}</strong> ئاتلىق راي سىناشنى ئۆزگەرتەلمەيسىز."
@@ -51,8 +53,13 @@ ug:
     min_vote_per_user:
       one: بۇ راي سىناشقا كەم دېگەندە %{count} بېلەت تاشلاش كېرەك.
       other: بۇ راي سىناشقا كەم دېگەندە %{count} بېلەت تاشلاش كېرەك.
+    ranked_choice:
+      vote_options_mismatch: "شۇئان ئاخىرقى راي سىناش نەتىجخسىدە، بېلەت تاشلىغاندىكى تاللاش سانى چوقۇم تاللانما سانىغا ماس كېلىشى كېرەك. تاللانما سانى %{count}، بېلەت تاشلىغاندىكى تاللاش سانى %{provided}."
+      no_group_results_support: "راي سىناش تۈرى ئىناۋەتسىز. ranked_choice گۇرۇپپىلانغان نەتىجىنى قوللىمايدۇ."
     topic_must_be_open_to_toggle_status: "تېما بېلەت تاشلاشقا ئوچۇق بولغاندىلا ھالىتىنى ئالماشتۇرغىلى بولىدۇ."
     only_staff_or_op_can_toggle_status: "پەقەت خىزمەتچى ئەزالار ياكى ئەسلى يازما يوللىغۇچى بېلەت تاشلاش ھالىتىنى ئۆزگەرتەلەيدۇ."
+    errors:
+      poll_not_found: "راي سىناش تېپىلمىدى، پارامېتىرلارنى جەزملەڭ."
     insufficient_rights_to_create: "راي سىناش قۇرۇش ئىجازىتىڭىز يوق."
     email:
       link_to_poll: "چېكىلسە راي سىناشنى كۆرسىتىدۇ."

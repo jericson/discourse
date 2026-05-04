@@ -4,13 +4,19 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    commit-message:
+      prefix: "DEPS"
   - package-ecosystem: bundler
     directory: "/"
     schedule:
       interval: daily
       time: "08:00"
       timezone: Australia/Sydney
-    open-pull-requests-limit: 20
+    commit-message:
+      prefix: "DEPS"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 40
     versioning-strategy: lockfile-only
     allow:
       - dependency-type: direct
@@ -40,37 +46,40 @@ updates:
         versions:
           - "> 1.2.0"
           - "< 2"
+      - dependency-name: aws-sdk-mediaconvert
+        versions:
+          - "> 1.160.0"
+          - "< 2"
     groups:
       rails:
         patterns:
           - "actionmailer"
           - "actionpack"
           - "actionview"
-          - "actionmodel"
+          - "activemodel"
           - "activerecord"
+          - "activejob"
           - "activesupport"
           - "railties"
-          - "sprockets-rails"
+      sass:
+        patterns:
+          - "sass*"
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: daily
       time: "08:00"
       timezone: Australia/Sydney
-    open-pull-requests-limit: 20
+    commit-message:
+      prefix: "DEPS"
+    cooldown:
+      default-days: 7
+      exclude:
+        - "@discourse/*"
+    open-pull-requests-limit: 40
     versioning-strategy: increase
-    ignore: # These are all vendored so need to be updated manually. See lib/tasks/javascript.rake
-      - dependency-name: "ace-builds"
-      - dependency-name: "@json-editor/json-editor"
-      - dependency-name: "chart.js"
-      - dependency-name: "chartjs-plugin-datalabels"
-      - dependency-name: "diffhtml"
-      - dependency-name: "magnific-popup"
-      - dependency-name: "pikaday"
-      - dependency-name: "moment"
-      - dependency-name: "moment-timezone"
-      - dependency-name: "@discourse/moment-timezon-names-translations"
-      - dependency-name: "squoosh"
+    ignore:
+      - dependency-name: "webpack" # Recent versions have bugs with `/static` loading. We're working to move away from webpack anyway.
     groups:
       babel:
         patterns:
@@ -78,14 +87,28 @@ updates:
       embroider:
         patterns:
           - "@embroider*"
+      highlightjs:
+        patterns:
+          - "@highlightjs/cdn-assets"
+          - "highlight.js"
+      prosemirror:
+        patterns:
+          - "prosemirror-*"
       types:
         patterns:
           - "@types/*"
-#  - package-ecosystem: "bundler"
-#    directory: "migrations/config/gemfiles/convert"
-#    schedule:
-#      interval: "weekly"
-#      day: "wednesday"
-#      time: "10:00"
-#      timezone: "Europe/Vienna"
-#    versioning-strategy: "increase"
+          - "@glint/*"
+          - "typescript"
+      uppy:
+        patterns:
+          - "@uppy*"
+      fullcalendar:
+        patterns:
+          - "@fullcalendar/*"
+      lint:
+        patterns:
+          - "@discourse/lint-configs"
+          - "eslint"
+          - "prettier"
+          - "ember-template-lint"
+          - "stylelint"

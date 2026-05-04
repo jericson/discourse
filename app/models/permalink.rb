@@ -10,6 +10,15 @@ class Permalink < ActiveRecord::Base
   before_validation :normalize_url, :encode_url
 
   validates :url, uniqueness: true
+  validate :exactly_one_association
+
+  def internal?
+    external_url.blank?
+  end
+
+  def external?
+    external_url.present?
+  end
 
   class Normalizer
     attr_reader :source
@@ -97,6 +106,16 @@ class Permalink < ActiveRecord::Base
 
   def relative_external_url
     external_url.match?(%r{\A/[^/]}) ? "#{Discourse.base_path}#{external_url}" : external_url
+  end
+
+  def exactly_one_association
+    associations = [topic_id, post_id, category_id, tag_id, user_id, external_url]
+    if associations.compact.size != 1
+      errors.add(
+        :base,
+        "Exactly one of topic_id, post_id, category_id, tag_id, user_id, or external_url must be set",
+      )
+    end
   end
 end
 

@@ -1,8 +1,8 @@
-import { setOwner } from "@ember/application";
+import { setOwner } from "@ember/owner";
 import { service } from "@ember/service";
 import { popupAjaxError } from "discourse/lib/ajax-error";
-import getURL from "discourse-common/lib/get-url";
-import I18n from "discourse-i18n";
+import getURL from "discourse/lib/get-url";
+import { i18n } from "discourse-i18n";
 
 export default class ChatMessageFlag {
   @service chatApi;
@@ -35,9 +35,9 @@ export default class ChatMessageFlag {
     return flags.map((flag) => {
       flag.set(
         "description",
-        I18n.t(`chat.flags.${flag.name_key}`, {
+        i18n(`chat.flags.${flag.name_key}`, {
           basePath: getURL(""),
-          defaultValue: "",
+          defaultValue: flag.description,
         })
       );
       return flag;
@@ -48,14 +48,15 @@ export default class ChatMessageFlag {
     let flagsAvailable = flagModal.site.flagTypes;
 
     flagsAvailable = flagsAvailable.filter((flag) => {
-      return flagModal.args.model.flagModel.availableFlags.includes(
-        flag.name_key
+      return (
+        flagModal.args.model.flagModel.availableFlags.includes(flag.name_key) &&
+        flag.applies_to.includes("Chat::Message")
       );
     });
 
     // "message user" option should be at the top
-    const notifyUserIndex = flagsAvailable.indexOf(
-      flagsAvailable.filterBy("name_key", "notify_user")[0]
+    const notifyUserIndex = flagsAvailable.findIndex(
+      (flag) => flag.name_key === "notify_user"
     );
 
     if (notifyUserIndex !== -1) {

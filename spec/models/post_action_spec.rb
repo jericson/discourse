@@ -95,11 +95,17 @@ RSpec.describe PostAction do
     context "with category group moderators" do
       fab!(:group_user)
       let(:group) { group_user.group }
+      let(:moderators_group) { Group.find(Group::AUTO_GROUPS[:moderators]) }
 
       before do
         SiteSetting.enable_category_group_moderation = true
         group.update!(messageable_level: Group::ALIAS_LEVELS[:nobody])
-        post.topic.category.update!(reviewable_by_group_id: group.id)
+        Fabricate(:category_moderation_group, category: post.topic.category, group:)
+        Fabricate(
+          :category_moderation_group,
+          category: post.topic.category,
+          group: moderators_group,
+        )
       end
 
       it "notifies via pm" do
@@ -237,9 +243,9 @@ RSpec.describe PostAction do
     end
 
     describe "likes consolidation" do
-      fab!(:liker) { Fabricate(:user) }
-      fab!(:liker2) { Fabricate(:user) }
-      fab!(:likee) { Fabricate(:user) }
+      fab!(:liker, :user)
+      fab!(:liker2, :user)
+      fab!(:likee, :user)
 
       it "can be disabled" do
         SiteSetting.notification_consolidation_threshold = 0
@@ -432,14 +438,13 @@ RSpec.describe PostAction do
     end
 
     it "shouldn't change given_likes unless likes are given or removed" do
-      freeze_time(Time.zone.now)
+      freeze_time
 
       PostActionCreator.like(codinghorror, post)
       expect(value_for(codinghorror.id, Date.today)).to eq(1)
 
       PostActionType.types.each do |type_name, type_id|
         post = Fabricate(:post)
-
         PostActionCreator.create(codinghorror, post, type_name)
         actual_count = value_for(codinghorror.id, Date.today)
         expected_count = type_name == :like ? 2 : 1
@@ -767,7 +772,7 @@ RSpec.describe PostAction do
 
   # flags are already being tested
   all_types_except_flags =
-    PostActionType.types.except(*PostActionType.flag_types_without_custom.keys)
+    PostActionType.types.except(*PostActionType.flag_types_without_additional_message.keys)
   all_types_except_flags.values.each do |action|
     it "prevents user to act twice at the same time" do
       expect(PostActionCreator.new(eviltrout, post, action).perform).to be_success
@@ -783,6 +788,25 @@ RSpec.describe PostAction do
       expect(result.reviewable_score.meta_topic_id).to be_nil
     end
 
+    it "does not create a message for custom flag when message is not required" do
+      flag_without_message =
+        Fabricate(:flag, name: "flag without message", notify_type: true, require_message: false)
+
+      result =
+        PostActionCreator.new(
+          Discourse.system_user,
+          post,
+          PostActionType.types[:custom_flag_without_message],
+          message: "WAT",
+        ).perform
+
+      expect(result).to be_success
+      expect(result.post_action.related_post_id).to be_nil
+      expect(result.reviewable_score.meta_topic_id).to be_nil
+    ensure
+      flag_without_message.destroy!
+    end
+
     %i[notify_moderators notify_user spam].each do |post_action_type|
       it "creates a message for #{post_action_type}" do
         result =
@@ -795,6 +819,25 @@ RSpec.describe PostAction do
         expect(result).to be_success
         expect(result.post_action.related_post_id).to be_present
       end
+    end
+
+    it "creates a message for custom flags when message is required" do
+      flag_with_message =
+        Fabricate(:flag, name: "flag with message", notify_type: true, require_message: true)
+
+      result =
+        PostActionCreator.new(
+          Discourse.system_user,
+          post,
+          PostActionType.types[:custom_flag_with_message],
+          message: "WAT",
+        ).perform
+
+      expect(result).to be_success
+      expect(result.post_action.related_post_id).to be_present
+      expect(result.reviewable_score.meta_topic_id).to be_present
+
+      flag_with_message.destroy!
     end
 
     it "should raise the right errors when it fails to create a post" do
@@ -855,20 +898,34 @@ RSpec.describe PostAction do
       expect(user_notifications.last.topic).to eq(topic)
     end
 
-    skip "should not add a moderator post when post is flagged via private message" do
-      Jobs.run_immediately!
-      user = Fabricate(:user)
-      result = PostActionCreator.create(user, post, :notify_user, message: "WAT")
-      action = result.post_action
-      action.reload.related_post.topic
-      expect(user.notifications.count).to eq(0)
+    %i[agree_and_keep disagree ignore_and_do_nothing].each do |disposition|
+      it "should bump the topic when performing #{disposition}" do
+        SiteSetting.auto_respond_to_flag_actions = true
+        user = Fabricate(:user, refresh_auto_groups: true)
+        result = PostActionCreator.create(user, post, :spam, message: "WAT")
+        topic = result.post_action.related_post.topic
+
+        original_bumped_at = topic.reload.bumped_at
+
+        freeze_time 1.hour.from_now
+
+        result.reviewable.perform(admin, disposition)
+
+        expect(topic.reload.bumped_at).to be > original_bumped_at
+      end
+    end
+
+    it "does not add a moderator post to the notify_user PM topic when an unrelated flag is agreed" do
+      user = Fabricate(:user, refresh_auto_groups: true)
+      notify_result = PostActionCreator.create(user, post, :notify_user, message: "WAT")
+      pm_topic = notify_result.post_action.related_post.topic
+
+      flag_result = PostActionCreator.create(user, post, :spam)
 
       SiteSetting.auto_respond_to_flag_actions = true
-      result.reviewable.perform(admin, :agree_and_keep)
-      expect(user.reload.user_stat.flags_agreed).to eq(0)
+      flag_result.reviewable.perform(admin, :agree_and_keep)
 
-      user_notifications = user.notifications
-      expect(user_notifications.count).to eq(0)
+      expect(pm_topic.reload.posts.count).to eq(1)
     end
   end
 

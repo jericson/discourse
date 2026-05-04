@@ -6,33 +6,35 @@ import { action } from "@ember/object";
 import { LinkTo } from "@ember/routing";
 import { service } from "@ember/service";
 import { modifier } from "ember-modifier";
+import DButton from "discourse/components/d-button";
+import FilterInput from "discourse/components/filter-input";
+import icon from "discourse/helpers/d-icon";
+import discourseDebounce from "discourse/lib/debounce";
+import { bind } from "discourse/lib/decorators";
+import { INPUT_DELAY } from "discourse/lib/environment";
 import isElementInViewport from "discourse/lib/is-element-in-viewport";
 import DiscourseURL, { userPath } from "discourse/lib/url";
 import autoFocus from "discourse/modifiers/auto-focus";
-import { INPUT_DELAY } from "discourse-common/config/environment";
-import icon from "discourse-common/helpers/d-icon";
-import i18n from "discourse-common/helpers/i18n";
-import discourseDebounce from "discourse-common/lib/debounce";
-import I18n from "discourse-i18n";
+import { i18n } from "discourse-i18n";
 import MessageCreator from "discourse/plugins/chat/discourse/components/chat/message-creator";
 import { MODES } from "discourse/plugins/chat/discourse/components/chat/message-creator/constants";
 import ChatUserInfo from "discourse/plugins/chat/discourse/components/chat-user-info";
-import DcFilterInput from "discourse/plugins/chat/discourse/components/dc-filter-input";
 
 export default class ChatRouteChannelInfoMembers extends Component {
-  @service appEvents;
   @service chatApi;
-  @service modal;
+  @service chatGuardian;
+  @service currentUser;
   @service loadingSlider;
   @service site;
 
   @tracked filter = "";
+  @tracked updatedAt = Date.now();
   @tracked showAddMembers = false;
 
-  addMemberLabel = I18n.t("chat.members_view.add_member");
-  filterPlaceholder = I18n.t("chat.members_view.filter_placeholder");
-  noMembershipsFoundLabel = I18n.t("chat.channel.no_memberships_found");
-  noMembershipsLabel = I18n.t("chat.channel.no_memberships");
+  addMemberLabel = i18n("chat.members_view.add_member");
+  filterPlaceholder = i18n("chat.members_view.filter_placeholder");
+  noMembershipsFoundLabel = i18n("chat.channel.no_memberships_found");
+  noMembershipsLabel = i18n("chat.channel.no_memberships");
 
   onEnter = modifier((element, [callback]) => {
     const handler = (event) => {
@@ -83,6 +85,7 @@ export default class ChatRouteChannelInfoMembers extends Component {
     if (this.filter?.length) {
       params.username = this.filter;
     }
+    this.updatedAt;
 
     return this.chatApi.listChannelMemberships(this.args.channel.id, params);
   }
@@ -114,6 +117,20 @@ export default class ChatRouteChannelInfoMembers extends Component {
     DiscourseURL.routeTo(userPath(user.username_lower));
   }
 
+  @action
+  async removeMember(user) {
+    await this.chatApi.removeMemberFromChannel(this.args.channel.id, user.id);
+    this.updatedAt = Date.now();
+    this.load();
+  }
+
+  @bind
+  canRemoveMember(user) {
+    return (
+      this.args.channel.canRemoveMembers && user.id !== this.currentUser.id
+    );
+  }
+
   async debouncedLoad() {
     this.loadingSlider.transitionStarted();
     await this.members.load({ limit: 20 });
@@ -124,77 +141,102 @@ export default class ChatRouteChannelInfoMembers extends Component {
     return MODES.add_members;
   }
 
-  <template>
-    {{#if this.site.mobileView}}
-      <LinkTo
-        class="c-back-button"
-        @route="chat.channel.info.settings"
-        @model={{@channel}}
-      >
-        {{icon "chevron-left"}}
-        {{i18n "chat.members_view.back_to_settings"}}
-      </LinkTo>
-    {{/if}}
-    {{#if this.showAddMembers}}
-      <MessageCreator
-        @mode={{this.addMembersMode}}
-        @channel={{@channel}}
-        @onClose={{this.hideAddMember}}
-        @onCancel={{this.hideAddMember}}
-      />
-    {{else}}
-      <div class="c-channel-members">
-        <DcFilterInput
-          {{autoFocus}}
-          @filterAction={{this.mutFilter}}
-          @icons={{hash right="search"}}
-          @containerClass="c-channel-members__filter"
-          placeholder={{this.filterPlaceholder}}
-        />
+  get canAddMembers() {
+    if (
+      !this.args.channel.isDirectMessageChannel ||
+      !this.chatGuardian.canUseGroupChat()
+    ) {
+      return false;
+    }
 
-        <ul class="c-channel-members__list" {{this.fill}}>
-          {{#if @channel.chatable.group}}
-            <li
-              class="c-channel-members__list-item -add-member"
-              role="button"
-              {{on "click" this.addMember}}
-              {{this.onEnter this.addMember}}
-              tabindex="0"
-            >
-              {{icon "plus"}}
-              <span>{{this.addMemberLabel}}</span>
-            </li>
-          {{/if}}
-          {{#each this.members as |membership|}}
-            <li
-              class="c-channel-members__list-item -member"
-              {{on "click" (fn this.openMemberCard membership.user)}}
-              {{this.onEnter (fn this.openMemberCard membership.user)}}
-              tabindex="0"
-            >
-              <ChatUserInfo
-                @user={{membership.user}}
-                @avatarSize="tiny"
-                @interactive={{false}}
-                @showStatus={{true}}
-                @showStatusDescription={{true}}
-              />
-            </li>
-          {{else}}
-            {{#if this.noResults}}
+    return (
+      this.args.channel.chatable.group ||
+      !this.args.channel.lastMessage?.message
+    );
+  }
+
+  <template>
+    <div class="c-routes --channel-info-members">
+      {{#if this.site.mobileView}}
+        <LinkTo
+          class="c-back-button"
+          @route="chat.channel.info.settings"
+          @model={{@channel}}
+        >
+          {{icon "chevron-left"}}
+          {{i18n "chat.members_view.back_to_settings"}}
+        </LinkTo>
+      {{/if}}
+      {{#if this.showAddMembers}}
+        <MessageCreator
+          @mode={{this.addMembersMode}}
+          @channel={{@channel}}
+          @onClose={{this.hideAddMember}}
+          @onCancel={{this.hideAddMember}}
+        />
+      {{else}}
+        <div class="c-channel-members">
+          <FilterInput
+            {{autoFocus}}
+            @filterAction={{this.mutFilter}}
+            @icons={{hash right="magnifying-glass"}}
+            @containerClass="c-channel-members__filter"
+            placeholder={{this.filterPlaceholder}}
+          />
+
+          <ul class="c-channel-members__list" {{this.fill}}>
+            {{#if this.canAddMembers}}
               <li
-                class="c-channel-members__list-item -no-results alert alert-info"
+                class="c-channel-members__list-item -add-member"
+                role="button"
+                {{on "click" this.addMember}}
+                {{this.onEnter this.addMember}}
+                tabindex="0"
               >
-                {{this.noMembershipsFoundLabel}}
+                {{icon "plus"}}
+                <span>{{this.addMemberLabel}}</span>
               </li>
             {{/if}}
-          {{/each}}
-        </ul>
+            {{#each this.members as |membership|}}
+              <li class="c-channel-members__list-item -member" tabindex="0">
+                <div
+                  class="c-channel-members__list-item -user-info"
+                  role="button"
+                  {{on "click" (fn this.openMemberCard membership.user)}}
+                  {{this.onEnter (fn this.openMemberCard membership.user)}}
+                >
+                  <ChatUserInfo
+                    @user={{membership.user}}
+                    @avatarSize="tiny"
+                    @interactive={{false}}
+                    @showStatus={{true}}
+                    @showStatusDescription={{true}}
+                  />
+                </div>
+                {{#if (this.canRemoveMember membership.user)}}
+                  <DButton
+                    @action={{fn this.removeMember membership.user}}
+                    @label="chat.channel_info.remove_member"
+                    class="btn-flat -remove-member"
+                  />
+                {{/if}}
+              </li>
+            {{else}}
+              {{#if this.noResults}}
+                <li
+                  class="c-channel-members__list-item -no-results alert alert-info"
+                >
+                  {{this.noMembershipsFoundLabel}}
+                </li>
+              {{/if}}
+            {{/each}}
+          </ul>
 
-        <div {{this.loadMore}}>
-          <br />
+          <div {{this.loadMore}}>
+            <br />
+          </div>
         </div>
-      </div>
-    {{/if}}
+      {{/if}}
+    </div>
   </template>
 }

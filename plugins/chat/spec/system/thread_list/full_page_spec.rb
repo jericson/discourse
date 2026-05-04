@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
-describe "Thread list in side panel | full page", type: :system do
-  fab!(:current_user) { Fabricate(:user) }
+describe "Thread list in side panel | full page" do
+  fab!(:current_user, :user)
   fab!(:channel) { Fabricate(:chat_channel, threading_enabled: true) }
-  fab!(:other_user) { Fabricate(:user) }
+  fab!(:other_user, :user)
 
   let(:side_panel_page) { PageObjects::Pages::ChatSidePanel.new }
   let(:chat_page) { PageObjects::Pages::Chat.new }
@@ -11,6 +11,7 @@ describe "Thread list in side panel | full page", type: :system do
   let(:side_panel) { PageObjects::Pages::ChatSidePanel.new }
   let(:thread_page) { PageObjects::Pages::ChatThread.new }
   let(:thread_list_page) { PageObjects::Components::Chat::ThreadList.new }
+  let(:cdp) { PageObjects::CDP.new }
 
   before do
     chat_system_bootstrap(current_user, [channel])
@@ -50,9 +51,12 @@ describe "Thread list in side panel | full page", type: :system do
         chat_page.visit_channel(channel)
         channel_page.reply_to(thread_om)
         thread_page.send_message
+
         expect(channel_page).to have_thread_indicator(thread_om)
+
         thread_page.close
         channel_page.open_thread_list
+
         expect(page).to have_css(
           thread_list_page.item_by_id_selector(thread_om.reload.thread_id),
           count: 1,
@@ -181,24 +185,12 @@ describe "Thread list in side panel | full page", type: :system do
       end
 
       it "shows the thread in the list when another user restores the original message" do
-        # This is necessary because normal users can't see deleted messages
-        other_user.update!(admin: true)
-        current_user.update!(admin: true)
-
-        thread_1.original_message.trash!
+        trash_message!(thread_1.original_message, user: other_user)
         chat_page.visit_threads_list(channel)
 
         expect(thread_list_page).to have_no_thread(thread_1)
 
-        using_session(:tab_2) do
-          sign_in(other_user)
-          chat_page.visit_channel(channel)
-          expect(channel_page).to have_no_loading_skeleton
-          channel_page.expand_deleted_message(thread_1.original_message)
-          channel_page.message_thread_indicator(thread_1.original_message).click
-          expect(side_panel_page).to have_open_thread(thread_1)
-          thread_page.messages.restore(thread_1.original_message)
-        end
+        restore_message!(thread_1.original_message, user: other_user)
 
         expect(thread_list_page).to have_thread(thread_1)
       end

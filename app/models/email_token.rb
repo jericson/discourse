@@ -40,8 +40,6 @@ class EmailToken < ActiveRecord::Base
     end
   end
 
-  self.ignored_columns = %w[token] # TODO: Remove when 20240212034010_drop_deprecated_columns has been promoted to pre-deploy
-
   def self.scopes
     @scopes ||= Enum.new(signup: 1, password_reset: 2, email_login: 3, email_update: 4)
   end
@@ -67,7 +65,7 @@ class EmailToken < ActiveRecord::Base
       user.save!
       user.create_reviewable if !skip_reviewable
       user.set_automatic_groups
-      DiscourseEvent.trigger(:user_confirmed_email, user)
+      DiscourseEvent.trigger(:user_confirmed_email, user, scope)
       Invite.redeem_for_existing_user(user) if scope == EmailToken.scopes[:signup]
 
       user.reload

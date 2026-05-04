@@ -31,11 +31,15 @@ zh_TW:
       chat_channels_count: "聊天頻道"
       chat_users_count: "聊天使用者"
     chat:
+      edit_category:
+        tab_title: "聊天"
+        description: "描述"
+        actions: "動作"
+        settings: "設定"
       back_to_forum: "論壇"
       deleted_chat_username: 已刪除
       dates:
         yesterday: "昨天"
-        time_tiny: "h:mm"
       all_loaded: "顯示所有訊息"
       already_enabled: "此主題已啟用聊天功能。請重新整理。"
       disabled_for_topic: "此主題的聊天功能已停用。"
@@ -44,6 +48,7 @@ zh_TW:
       cancel: "取消"
       cancel_reply: "取消回覆"
       chat_channels: "頻道"
+      pinned: "已釘選"
       browse_all_channels: "瀏覽所有頻道"
       move_to_channel:
         title: "將訊息移至頻道"
@@ -58,6 +63,7 @@ zh_TW:
         delete_channel: "刪除頻道"
         join_channel: "加入頻道"
         leave_channel: "離開頻道"
+        notification_settings_context: "通知"
         join: "加入"
         leave: "離開"
         save_label:
@@ -93,11 +99,6 @@ zh_TW:
       heading: "聊天"
       join: "加入"
       last_visit: "上次到訪"
-      summarization:
-        title: "摘要訊息"
-        summarize: "總結"
-        since:
-          other: "前 %{count} 小時"
       no_public_channels_cta: "瀏覽頻道"
       remove_upload: "移除檔案"
       react: "用表情符號反應"
@@ -105,6 +106,7 @@ zh_TW:
       edit: "編輯"
       copy_link: "複製連結"
       rebake_message: "重建 HTML"
+      message_too_long: "訊息過長，不得超過 %{count} 個字元。"
       retry_staged_message:
         title: "網路錯誤"
         action: "再次發送？"
@@ -123,7 +125,6 @@ zh_TW:
       title: "聊天"
       title_capitalized: "聊天"
       upload_to_channel: "上傳至 %{title}"
-      exit: "上一步"
       channel_status:
         read_only_header: "頻道為唯讀"
         read_only: "唯讀"
@@ -141,6 +142,8 @@ zh_TW:
       chat_message_separator:
         today: 今天
         yesterday: 昨天
+      search_view:
+        filter_placeholder: 搜尋訊息
       about_view:
         associated_topic: 連結的主題
         associated_category: 連結的類別
@@ -153,6 +156,8 @@ zh_TW:
         tabs:
           members: 成員
           settings: 設定
+          search: 搜索
+        remove_member: "移除"
       new_message_modal:
         title: 傳送訊息
         add_user_short: <span>新增使用者</span>
@@ -212,6 +217,11 @@ zh_TW:
         export_messages:
           title: "匯出聊天訊息"
           create_export: "建立匯出"
+      search:
+        short_title: 搜索
+        sort:
+          relevance: "最相關"
+          latest: "最新版本"
       direct_messages:
         create: "開始"
         cannot_create: "抱歉，您無法傳送私訊。"
@@ -264,6 +274,8 @@ zh_TW:
             title: "一般"
           tracking:
             title: "跟蹤"
+          watching:
+            title: "關注中"
         participants_other_count:
           other: "+%{count}"
       threads:

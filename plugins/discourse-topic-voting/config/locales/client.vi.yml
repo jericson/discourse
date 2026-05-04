@@ -1,0 +1,47 @@
+# WARNING: Never edit this file.
+# It will be overwritten when translations are pulled from Crowdin.
+#
+# To work with us on translations, join this project:
+# https://translate.discourse.org/
+
+vi:
+  js:
+    category:
+      sort_options:
+        votes: "Ủng hộ"
+    topic_voting:
+      title: "Ủng hộ chủ đề"
+      reached_limit: "Bạn đã hết lượt ủng hộ, hãy bỏ bớt lượt ủng hộ trước của bạn!"
+      list_votes: "Liệt kê lượt ủng hộ của bạn"
+      voted: "Bạn đã ủng hộ cho chủ đề này"
+      allow_topic_voting: "Cho phép thành viên ủng hộ chủ đề trong chuyên mục này"
+      vote_title: "Ủng hộ"
+      vote_title_plural: "Ủng hộ"
+      see_votes: "Bạn còn %{count}/%{max} lượt ủng hộ"
+      locked: "Đã khóa"
+      locked_description: "Tăng độ tin cậy của bạn để ủng hộ"
+      votes:
+        other: "%{count} lượt ủng hộ"
+      anonymous_button:
+        other: "Ủng hộ"
+      remove_vote: "Bỏ ủng hộ"
+      no_votes_title_self: "Bạn chưa ủng hộ chủ đề nào"
+      no_votes_title_others: "%{username} chưa ủng hộ chủ đề nào"
+    filters:
+      votes:
+        title: "Bình chọn"
+      my_votes:
+        title: "Ủng hộ của tôi"
+        help: "Những chủ đề bạn đã ủng hộ"
+    search:
+      most_votes: "Ủng hộ nhiều nhất"
+      advanced:
+        vote:
+          count:
+            label: "Ủng hộ ít nhất"
+    admin:
+      web_hooks:
+        voting_event:
+          group_name: "Sự kiện ủng hộ chủ đề"
+          topic_upvote: "Khi thành viên ủng hộ cho một chủ đề"
+          topic_unvote: "Khi thành viên hủy ủng hộ cho một chủ đề"

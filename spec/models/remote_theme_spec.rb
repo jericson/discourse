@@ -1,12 +1,24 @@
 # frozen_string_literal: true
 
 RSpec.describe RemoteTheme do
+  before do
+    FastImage
+      .stubs(:size)
+      .with { |arg| arg.match(%r{/screenshots/light\.jpeg}) }
+      .returns([800, 600])
+    FastImage
+      .stubs(:size)
+      .with { |arg| arg.match(%r{/screenshots/dark\.jpeg}) }
+      .returns([1024, 768])
+  end
+
   describe "#import_theme" do
     def about_json(
       love_color: "FAFAFA",
       tertiary_low_color: "FFFFFF",
       color_scheme_name: "Amazing",
-      about_url: "https://www.site.com/about"
+      about_url: "https://www.site.com/about",
+      screenshots: %w[screenshots/light.jpeg screenshots/dark.jpeg]
     )
       <<~JSON
         {
@@ -25,8 +37,17 @@ RSpec.describe RemoteTheme do
             }
           },
           "modifiers": {
-            "serialize_topic_excerpts": true
-          }
+            "serialize_topic_excerpts": true,
+            "custom_homepage": {
+              "type": "setting",
+              "value": "boolean_setting"
+            },
+            "serialize_post_user_badges": {
+              "type": "setting",
+              "value": "list_setting"
+            }
+          },
+          "screenshots": #{screenshots.to_json}
         }
       JSON
     end
@@ -42,6 +63,12 @@ RSpec.describe RemoteTheme do
       JS
 
     let :initial_repo do
+      settings = <<~YAML
+        boolean_setting: true
+        list_setting:
+          type: list
+          default: ""
+      YAML
       setup_git_repo(
         "about.json" => about_json,
         "desktop/desktop.scss" => scss_data,
@@ -55,9 +82,11 @@ RSpec.describe RemoteTheme do
         "common/embedded.scss" => "EMBED",
         "common/color_definitions.scss" => ":root{--color-var: red}",
         "assets/font.woff2" => "FAKE FONT",
-        "settings.yaml" => "boolean_setting: true",
+        "settings.yaml" => settings,
         "locales/en.yml" => "sometranslations",
         "migrations/settings/0001-some-migration.js" => migration_js,
+        "screenshots/light.jpeg" => file_from_fixtures("logo.jpg", "images"),
+        "screenshots/dark.jpeg" => file_from_fixtures("logo.jpg", "images"),
       )
     end
 
@@ -175,8 +204,9 @@ RSpec.describe RemoteTheme do
       expect(remote.minimum_discourse_version).to eq("1.0.0")
 
       expect(theme.theme_modifier_set.serialize_topic_excerpts).to eq(true)
+      expect(theme.theme_modifier_set.custom_homepage).to eq(true)
 
-      expect(theme.theme_fields.length).to eq(12)
+      expect(theme.theme_fields.length).to eq(15)
 
       mapped = Hash[*theme.theme_fields.map { |f| ["#{f.target_id}-#{f.name}", f.value] }.flatten]
 
@@ -187,7 +217,9 @@ RSpec.describe RemoteTheme do
 
       expect(mapped["0-font"]).to eq("")
 
-      expect(mapped["3-yaml"]).to eq("boolean_setting: true")
+      expect(mapped["3-yaml"]).to eq(
+        "boolean_setting: true\nlist_setting:\n  type: list\n  default: \"\"\n",
+      )
 
       expect(mapped["4-en"]).to eq("sometranslations")
       expect(mapped["7-acceptance/theme-test.js"]).to eq("assert.ok(true);")
@@ -195,11 +227,20 @@ RSpec.describe RemoteTheme do
         "export default function migrate(settings) {\n  return settings;\n}\n",
       )
 
-      expect(mapped.length).to eq(12)
+      expect(mapped.length).to eq(15)
 
-      expect(theme.settings.length).to eq(1)
+      expect(theme.settings.length).to eq(2)
       expect(theme.settings[:boolean_setting].value).to eq(true)
+      expect(theme.settings[:list_setting].value).to eq("")
 
+      # lets change the setting to see modifier reflects
+      theme.update_setting(:boolean_setting, false)
+      theme.update_setting(:list_setting, "badge1|badge2")
+      theme.save!
+      theme.reload
+
+      expect(theme.theme_modifier_set.custom_homepage).to eq(false)
+      expect(theme.theme_modifier_set.serialize_post_user_badges).to eq(%w[badge1 badge2])
       expect(remote.remote_updated_at).to eq_time(time)
 
       scheme = ColorScheme.find_by(theme_id: theme.id)
@@ -329,7 +370,7 @@ RSpec.describe RemoteTheme do
       stub_const(RemoteTheme, "MAX_THEME_FILE_COUNT", 1) do
         expect { RemoteTheme.import_theme(initial_repo_url) }.to raise_error(
           RemoteTheme::ImportError,
-          I18n.t("themes.import_error.too_many_files", count: 15, limit: 1),
+          I18n.t("themes.import_error.too_many_files", count: 17, limit: 1),
         )
       end
     end
@@ -340,7 +381,7 @@ RSpec.describe RemoteTheme do
           RemoteTheme::ImportError,
           I18n.t(
             "themes.import_error.asset_too_big",
-            filename: "common/color_definitions.scss",
+            filename: "about.json",
             limit: ActiveSupport::NumberHelper.number_to_human_size(1),
           ),
         )
@@ -356,6 +397,221 @@ RSpec.describe RemoteTheme do
             limit: ActiveSupport::NumberHelper.number_to_human_size(1),
           ),
         )
+      end
+    end
+
+    describe "screenshots" do
+      it "fails if any of the provided screenshots is not an accepted file type" do
+        stub_const(ThemeScreenshotsHandler, "THEME_SCREENSHOT_ALLOWED_FILE_TYPES", [".bmp"]) do
+          expect { RemoteTheme.import_theme(initial_repo_url) }.to raise_error(
+            RemoteTheme::ImportError,
+            I18n.t(
+              "themes.import_error.screenshot_invalid_type",
+              file_name: "light.jpeg",
+              accepted_formats: ".bmp",
+            ),
+          )
+        end
+      end
+
+      it "fails if any of the provided screenshots is too big" do
+        stub_const(ThemeScreenshotsHandler, "MAX_THEME_SCREENSHOT_FILE_SIZE", 1.byte) do
+          expect { RemoteTheme.import_theme(initial_repo_url) }.to raise_error(
+            RemoteTheme::ImportError,
+            I18n.t(
+              "themes.import_error.screenshot_invalid_size",
+              file_name: "light.jpeg",
+              max_size: "1 Bytes",
+            ),
+          )
+        end
+      end
+
+      it "fails if any of the provided screenshots has dimensions that are too big" do
+        FastImage
+          .expects(:size)
+          .with { |arg| arg.match(%r{/screenshots/light\.jpeg}) }
+          .returns([512, 512])
+        stub_const(ThemeScreenshotsHandler, "MAX_THEME_SCREENSHOT_DIMENSIONS", [1, 1]) do
+          expect { RemoteTheme.import_theme(initial_repo_url) }.to raise_error(
+            RemoteTheme::ImportError,
+            I18n.t(
+              "themes.import_error.screenshot_invalid_dimensions",
+              file_name: "light.jpeg",
+              width: 512,
+              height: 512,
+              max_width: 1,
+              max_height: 1,
+            ),
+          )
+        end
+      end
+
+      it "creates uploads and associated theme fields for all theme screenshots" do
+        theme = RemoteTheme.import_theme(initial_repo_url)
+
+        screenshot_1 = theme.theme_fields.find_by(name: "screenshot_light")
+        screenshot_2 = theme.theme_fields.find_by(name: "screenshot_dark")
+
+        expect(screenshot_1).to be_present
+        expect(screenshot_1.type_id).to eq(ThemeField.types[:theme_screenshot_upload_var])
+        expect(screenshot_2).to be_present
+        expect(screenshot_2.type_id).to eq(ThemeField.types[:theme_screenshot_upload_var])
+        expect(screenshot_1.upload).to be_present
+        expect(screenshot_2.upload).to be_present
+
+        expect(UploadReference.exists?(target: screenshot_1)).to eq(true)
+        expect(UploadReference.exists?(target: screenshot_2)).to eq(true)
+
+        expect(screenshot_1.upload.original_filename).to eq("light.jpeg")
+        expect(screenshot_2.upload.original_filename).to eq("dark.jpeg")
+      end
+    end
+
+    describe "theme site settings" do
+      it "creates theme site settings defined in about.json" do
+        add_to_git_repo(
+          initial_repo,
+          "about.json" =>
+            JSON
+              .parse(about_json)
+              .merge("theme_site_settings" => { "enable_welcome_banner" => false })
+              .to_json,
+        )
+
+        theme = RemoteTheme.import_theme(initial_repo_url)
+        expect(theme.theme_site_settings.count).to eq(1)
+        expect(theme.theme_site_settings.first.name).to eq("enable_welcome_banner")
+        expect(theme.theme_site_settings.first.value).to eq("f")
+        expect(theme.theme_site_settings.first.data_type).to eq(SiteSetting.types[:bool])
+      end
+
+      it "does not remove theme site settings that are no longer in about.json" do
+        add_to_git_repo(
+          initial_repo,
+          "about.json" =>
+            JSON
+              .parse(about_json)
+              .merge(
+                "theme_site_settings" => {
+                  "enable_welcome_banner" => false,
+                  "search_experience" => "search_field",
+                },
+              )
+              .to_json,
+        )
+
+        theme = RemoteTheme.import_theme(initial_repo_url)
+        expect(theme.theme_site_settings.count).to eq(2)
+
+        add_to_git_repo(
+          initial_repo,
+          "about.json" =>
+            JSON
+              .parse(about_json)
+              .merge("theme_site_settings" => { "enable_welcome_banner" => false })
+              .to_json,
+        )
+
+        theme.remote_theme.update_from_remote
+        theme.reload
+
+        expect(theme.theme_site_settings.count).to eq(2)
+        expect(theme.theme_site_settings.first.name).to eq("enable_welcome_banner")
+        expect(theme.theme_site_settings.first.value).to eq("f")
+        expect(theme.theme_site_settings.second.name).to eq("search_experience")
+        expect(theme.theme_site_settings.second.value).to eq("search_field")
+      end
+
+      it "ignores non-themeable site settings" do
+        add_to_git_repo(
+          initial_repo,
+          "about.json" =>
+            JSON
+              .parse(about_json)
+              .merge("theme_site_settings" => { "min_admin_password_length" => 20 })
+              .to_json,
+        )
+
+        theme = nil
+
+        theme = RemoteTheme.import_theme(initial_repo_url)
+
+        expect(theme.theme_site_settings.count).to eq(0)
+      end
+
+      it "does not override user modified theme site settings" do
+        add_to_git_repo(
+          initial_repo,
+          "about.json" =>
+            JSON
+              .parse(about_json)
+              .merge("theme_site_settings" => { "search_experience" => "search_field" })
+              .to_json,
+        )
+
+        theme = RemoteTheme.import_theme(initial_repo_url)
+        expect(theme.theme_site_settings.first.value).to eq("search_field")
+
+        theme.theme_site_settings.first.update!(value: "search_icon")
+
+        add_to_git_repo(initial_repo, "common/header.html" => "a new header")
+
+        theme.remote_theme.update_from_remote
+        theme.reload
+
+        expect(theme.theme_site_settings.first.value).to eq("search_icon")
+      end
+
+      it "does not update the existing theme site setting" do
+        add_to_git_repo(
+          initial_repo,
+          "about.json" =>
+            JSON
+              .parse(about_json)
+              .merge("theme_site_settings" => { "search_experience" => "search_field" })
+              .to_json,
+        )
+
+        theme = RemoteTheme.import_theme(initial_repo_url)
+        expect(theme.theme_site_settings.first.name).to eq("search_experience")
+        expect(theme.theme_site_settings.first.value).to eq("search_field")
+
+        add_to_git_repo(
+          initial_repo,
+          "about.json" =>
+            JSON
+              .parse(about_json)
+              .merge("theme_site_settings" => { "search_experience" => "search_icon" })
+              .to_json,
+        )
+
+        theme.remote_theme.update_from_remote
+        theme.reload
+
+        expect(theme.theme_site_settings.first.value).to eq("search_field")
+      end
+
+      it "makes sure to refresh the site setting theme site setting cache so we have full data there for each theme" do
+        add_to_git_repo(
+          initial_repo,
+          "about.json" =>
+            JSON
+              .parse(about_json)
+              .merge("theme_site_settings" => { "enable_welcome_banner" => false })
+              .to_json,
+        )
+        theme = RemoteTheme.import_theme(initial_repo_url)
+
+        expect(SiteSetting.theme_site_settings[theme.id][:enable_welcome_banner]).to eq(false)
+        expect(SiteSetting.theme_site_settings[theme.id][:search_experience]).to eq("search_icon")
+      end
+
+      it "makes sure to set the theme site setting cache with defaults correctly when the theme has no theme_site_settings overrides defined" do
+        theme = RemoteTheme.import_theme(initial_repo_url)
+
+        expect(SiteSetting.theme_site_settings[theme.id][:enable_welcome_banner]).to eq(true)
+        expect(SiteSetting.theme_site_settings[theme.id][:search_experience]).to eq("search_icon")
       end
     end
   end
@@ -494,7 +750,7 @@ RSpec.describe RemoteTheme do
       theme = RemoteTheme.import_theme_from_directory(theme_dir)
 
       expect(theme.name).to eq("Header Icons")
-      expect(theme.theme_fields.count).to eq(6)
+      expect(theme.theme_fields.count).to eq(7)
     end
   end
 end

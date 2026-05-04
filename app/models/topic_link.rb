@@ -17,11 +17,11 @@ class TopicLink < ActiveRecord::Base
   belongs_to :link_topic, class_name: "Topic"
   belongs_to :link_post, class_name: "Post"
 
-  validates_presence_of :url
+  validates :url, presence: true
 
-  validates_length_of :url, maximum: 500
+  validates :url, length: { maximum: 500 }
 
-  validates_uniqueness_of :url, scope: %i[topic_id post_id]
+  validates :url, uniqueness: { scope: %i[topic_id post_id] }
 
   has_many :topic_link_clicks, dependent: :destroy
 
@@ -48,14 +48,20 @@ class TopicLink < ActiveRecord::Base
       FROM topic_links AS ftl
       LEFT JOIN topics AS ft ON ftl.link_topic_id = ft.id
       LEFT JOIN categories AS c ON c.id = ft.category_id
+      LEFT JOIN posts AS target_posts ON ftl.link_post_id = target_posts.id
       /*where*/
       GROUP BY ftl.url, ft.title, ftl.title, ftl.link_topic_id, ftl.reflection, ftl.internal, ftl.domain
       ORDER BY clicks DESC, count(*) DESC
-      LIMIT 50
+      LIMIT 51
     SQL
 
     builder.where("ftl.topic_id = :topic_id", topic_id: topic_id)
-    builder.where("ft.deleted_at IS NULL")
+    apply_link_visibility_filters(
+      builder,
+      link: "ftl",
+      target_topic: "ft",
+      target_posts: "target_posts",
+    )
     builder.where("ftl.extension IS NULL OR ftl.extension NOT IN ('png','jpg','gif')")
     builder.where(
       "COALESCE(ft.archetype, 'regular') <> :archetype",
@@ -86,12 +92,18 @@ class TopicLink < ActiveRecord::Base
               FROM topic_links l
               LEFT JOIN topics t ON t.id = l.link_topic_id
               LEFT JOIN categories AS c ON c.id = t.category_id
+              LEFT JOIN posts AS target_posts ON l.link_post_id = target_posts.id
               /*left_join*/
               /*where*/
               ORDER BY reflection ASC, clicks DESC",
       )
 
-    builder.where("t.deleted_at IS NULL")
+    apply_link_visibility_filters(
+      builder,
+      link: "l",
+      target_topic: "t",
+      target_posts: "target_posts",
+    )
     builder.where(
       "COALESCE(t.archetype, 'regular') <> :archetype",
       archetype: Archetype.private_message,
@@ -171,6 +183,7 @@ class TopicLink < ActiveRecord::Base
         .joins(:post, :user)
         .where("posts.id IS NOT NULL AND users.id IS NOT NULL")
         .where(topic_id: topic.id, reflection: false)
+        .where(posts: { hidden: false })
         .last(200)
 
     lookup = {}
@@ -186,6 +199,15 @@ class TopicLink < ActiveRecord::Base
 
     lookup
   end
+
+  def self.apply_link_visibility_filters(builder, link:, target_topic:, target_posts:)
+    builder.where(<<~SQL)
+      #{target_topic}.deleted_at IS NULL
+      AND (#{link}.internal = false OR #{target_topic}.id IS NOT NULL)
+      AND (#{link}.link_post_id IS NULL OR (#{target_posts}.id IS NOT NULL AND #{target_posts}.deleted_at IS NULL))
+    SQL
+  end
+  private_class_method :apply_link_visibility_filters
 
   private
 
@@ -288,7 +310,7 @@ class TopicLink < ActiveRecord::Base
       internal = Discourse.store.internal?
       # Store the same URL that will be used in the cooked version of the post
       url = UrlHelper.cook_url(upload.url, secure: upload.secure?)
-    elsif route = Discourse.route_for(parsed)
+    elsif route = Discourse.route_for(parsed.to_s[...TopicLink.max_url_length])
       # this is a special case for the silent flag
       # in internal links
       return nil if url && (url.split("?")[1] == "silent=true")

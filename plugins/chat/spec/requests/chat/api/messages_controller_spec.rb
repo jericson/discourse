@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 RSpec.describe Chat::Api::ChannelMessagesController do
-  fab!(:current_user) { Fabricate(:user) }
+  fab!(:current_user, :user)
   fab!(:admin)
 
   before do
@@ -67,7 +67,7 @@ RSpec.describe Chat::Api::ChannelMessagesController do
     end
 
     describe "for category" do
-      fab!(:user_2) { Fabricate(:user) }
+      fab!(:user_2, :user)
       fab!(:chat_channel)
       fab!(:message) { Fabricate(:chat_message, chat_channel: chat_channel, user: current_user) }
       fab!(:user_2_message) { Fabricate(:chat_message, chat_channel: chat_channel, user: user_2) }
@@ -87,7 +87,7 @@ RSpec.describe Chat::Api::ChannelMessagesController do
     end
 
     describe "for dm channel" do
-      fab!(:user_2) { Fabricate(:user) }
+      fab!(:user_2, :user)
       fab!(:chat_channel) { Fabricate(:direct_message_channel, users: [current_user, user_2]) }
       fab!(:message) { Fabricate(:chat_message, chat_channel: chat_channel, user: current_user) }
       fab!(:user_2_message) { Fabricate(:chat_message, chat_channel: chat_channel, user: user_2) }
@@ -179,17 +179,28 @@ RSpec.describe Chat::Api::ChannelMessagesController do
     end
 
     fab!(:admin)
-    fab!(:another_user) { Fabricate(:user) }
+    fab!(:another_user, :user)
 
     describe "for category" do
       fab!(:category)
       fab!(:chat_channel) { Fabricate(:category_channel, chatable: category) }
 
       it_behaves_like "chat_message_restoration"
+
+      it "doesn't allow a regular user to restore their own message deleted by staff" do
+        message = Fabricate(:chat_message, chat_channel: chat_channel, user: current_user)
+        message.trash!(admin)
+
+        sign_in(current_user)
+
+        put "/chat/api/channels/#{chat_channel.id}/messages/#{message.id}/restore.json"
+        expect(response.status).to eq(403)
+        expect(message.reload.deleted_at).not_to be_nil
+      end
     end
 
     describe "for dm channel" do
-      fab!(:user_2) { Fabricate(:user) }
+      fab!(:user_2, :user)
       fab!(:chat_channel) do
         Fabricate(:direct_message_channel, users: [current_user, another_user])
       end
@@ -217,7 +228,7 @@ RSpec.describe Chat::Api::ChannelMessagesController do
       context "when current user is silenced" do
         before { UserSilencer.new(user).silence }
 
-        it "raises invalid acces" do
+        it "raises invalid access" do
           post "/chat/#{chat_channel.id}.json", params: { message: message }
           expect(response.status).to eq(403)
         end
@@ -247,7 +258,7 @@ RSpec.describe Chat::Api::ChannelMessagesController do
       end
 
       context "when the user is staff" do
-        fab!(:user) { Fabricate(:admin) }
+        fab!(:user, :admin)
 
         it "errors when the channel is not open or closed" do
           chat_channel.update(status: :closed)
@@ -361,8 +372,8 @@ RSpec.describe Chat::Api::ChannelMessagesController do
     end
 
     describe "for direct message" do
-      fab!(:user1) { Fabricate(:user) }
-      fab!(:user2) { Fabricate(:user) }
+      fab!(:user1) { Fabricate(:user, refresh_auto_groups: true) }
+      fab!(:user2) { Fabricate(:user, refresh_auto_groups: true) }
       fab!(:chatable) { Fabricate(:direct_message, users: [user1, user2]) }
       fab!(:direct_message_channel) { Fabricate(:direct_message_channel, chatable: chatable) }
 
@@ -406,7 +417,7 @@ RSpec.describe Chat::Api::ChannelMessagesController do
           UserSilencer.new(user1).silence
         end
 
-        it "raises invalid acces" do
+        it "raises invalid access" do
           post "/chat/#{direct_message_channel.id}.json", params: { message: message }
           expect(response.status).to eq(403)
         end

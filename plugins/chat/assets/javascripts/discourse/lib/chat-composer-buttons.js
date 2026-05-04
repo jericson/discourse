@@ -1,4 +1,4 @@
-import I18n from "discourse-i18n";
+import { i18n } from "discourse-i18n";
 
 let _chatComposerButtons = {};
 
@@ -27,6 +27,7 @@ export function registerChatComposerButton(button) {
     displayed: true,
     disabled: false,
     priority: 0,
+    synchronous: false,
   };
 
   const normalizedButton = Object.assign(defaultButton, button);
@@ -61,7 +62,7 @@ function isFunction(descriptor) {
 export function chatComposerButtonsDependentKeys() {
   return [].concat(
     ...Object.values(_chatComposerButtons)
-      .mapBy("dependentKeys")
+      .map((item) => item.dependentKeys)
       .filter(Boolean)
   );
 }
@@ -89,7 +90,7 @@ export function chatComposerButtons(composer, position, context) {
 
       const ariaLabel = computeButton(composer, button, "ariaLabel");
       if (ariaLabel) {
-        result.ariaLabel = I18n.t(ariaLabel);
+        result.ariaLabel = i18n(ariaLabel);
       } else {
         const translatedAriaLabel = computeButton(
           composer,
@@ -101,7 +102,7 @@ export function chatComposerButtons(composer, position, context) {
 
       const title = computeButton(composer, button, "title");
       result.title = title
-        ? I18n.t(title)
+        ? i18n(title)
         : computeButton(composer, button, "translatedTitle");
 
       result.classNames = (
@@ -111,6 +112,7 @@ export function chatComposerButtons(composer, position, context) {
       result.icon = computeButton(composer, button, "icon");
       result.disabled = computeButton(composer, button, "disabled");
       result.priority = computeButton(composer, button, "priority");
+      result.synchronous = computeButton(composer, button, "synchronous");
 
       if (isFunction(button.action)) {
         result.action = () => {

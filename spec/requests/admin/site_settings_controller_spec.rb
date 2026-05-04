@@ -1,5 +1,4 @@
 # frozen_string_literal: true
-
 RSpec.describe Admin::SiteSettingsController do
   fab!(:admin)
   fab!(:moderator)
@@ -21,23 +20,12 @@ RSpec.describe Admin::SiteSettingsController do
         expect(locale.length).to eq(1)
       end
 
-      describe "the filter_names param" do
-        it "only returns settings that are specified in the filter_names param" do
-          get "/admin/site_settings.json",
-              params: {
-                filter_names: %w[title site_description notification_email],
-              }
-
-          expect(response.status).to eq(200)
-
-          json = response.parsed_body
-          expect(json["site_settings"].size).to eq(3)
-          expect(json["site_settings"].map { |s| s["setting"] }).to contain_exactly(
-            "title",
-            "site_description",
-            "notification_email",
-          )
-        end
+      it "does not return hidden site settings" do
+        get "/admin/site_settings.json"
+        expect(response.status).to eq(200)
+        expect(
+          response.parsed_body["site_settings"].find { |s| s["setting"] == "max_category_nesting" },
+        ).to be_nil
       end
     end
 
@@ -64,11 +52,17 @@ RSpec.describe Admin::SiteSettingsController do
   end
 
   describe "#user_count" do
-    fab!(:staged_user) { Fabricate(:staged) }
+    fab!(:staged_user, :staged)
     let(:tracking) { NotificationLevels.all[:tracking] }
 
     context "when logged in as an admin" do
       before { sign_in(admin) }
+
+      it "returns 404 when site_setting_id is not a valid site setting" do
+        put "/admin/site_settings/default_scopes/user_count.json", params: { default_scopes: "" }
+
+        expect(response.status).to eq(404)
+      end
 
       it "should return correct user count for default categories change" do
         category_id = Fabricate(:category).id
@@ -242,18 +236,45 @@ RSpec.describe Admin::SiteSettingsController do
 
       it "sets the value when the param is present" do
         put "/admin/site_settings/title.json", params: { title: "hello" }
-        expect(response.status).to eq(200)
+        expect(response.status).to eq(204)
         expect(SiteSetting.title).to eq("hello")
       end
 
-      it "works for deprecated settings" do
-        put "/admin/site_settings/search_tokenize_chinese_japanese_korean.json",
+      it "bulk updates settings" do
+        put "/admin/site_settings/bulk_update.json",
             params: {
-              search_tokenize_chinese_japanese_korean: true,
+              settings: {
+                title: {
+                  value: "hello",
+                },
+                site_description: {
+                  value: "world",
+                },
+              },
             }
+        expect(response.status).to eq(204)
+        expect(SiteSetting.title).to eq("hello")
+        expect(SiteSetting.site_description).to eq("world")
+      end
 
-        expect(response.status).to eq(200)
-        expect(SiteSetting.search_tokenize_chinese).to eq(true)
+      it "throws an error for hard deprecated settings" do
+        stub_deprecated_settings!(override: false) do
+          put "/admin/site_settings/old_one.json", params: { old_one: true }
+
+          expect(response.status).to eq(422)
+          expect(response.parsed_body["errors"]).to contain_exactly(
+            "The following settings are deprecated: old_one. Use new_one instead",
+          )
+        end
+      end
+
+      it "works for soft deprecated settings" do
+        stub_deprecated_settings!(override: true) do
+          put "/admin/site_settings/old_one.json", params: { old_one: true }
+
+          expect(response.status).to eq(204)
+          expect(SiteSetting.new_one).to eq(true)
+        end
       end
 
       it "throws an error when the parameter is not a configurable site setting" do
@@ -284,28 +305,28 @@ RSpec.describe Admin::SiteSettingsController do
 
       it "allows value to be a blank string" do
         put "/admin/site_settings/title.json", params: { title: "" }
-        expect(response.status).to eq(200)
+        expect(response.status).to eq(204)
         expect(SiteSetting.title).to eq("")
       end
 
       it "allows value to be a blank string for selectable_avatars" do
         SiteSetting.selectable_avatars = [Fabricate(:image_upload)]
         put "/admin/site_settings/selectable_avatars.json", params: { selectable_avatars: "" }
-        expect(response.status).to eq(200)
+        expect(response.status).to eq(204)
         expect(SiteSetting.selectable_avatars).to eq([])
       end
 
       it "sanitizes integer values" do
         put "/admin/site_settings/suggested_topics.json", params: { suggested_topics: "1,000" }
 
-        expect(response.status).to eq(200)
+        expect(response.status).to eq(204)
         expect(SiteSetting.suggested_topics).to eq(1000)
       end
 
       it "sanitizes file_size_restriction values" do
         put "/admin/site_settings/max_image_size_kb.json", params: { max_image_size_kb: "4096" }
 
-        expect(response.status).to eq(200)
+        expect(response.status).to eq(204)
         expect(SiteSetting.max_image_size_kb).to eq(4096)
       end
 
@@ -315,7 +336,7 @@ RSpec.describe Admin::SiteSettingsController do
               pending_users_reminder_delay_minutes: "-1",
             }
 
-        expect(response.status).to eq(200)
+        expect(response.status).to eq(204)
         expect(SiteSetting.pending_users_reminder_delay_minutes).to eq(-1)
       end
 
@@ -377,7 +398,7 @@ RSpec.describe Admin::SiteSettingsController do
                   default_navigation_menu_categories: "1|2",
                 }
 
-            expect(response.status).to eq(200)
+            expect(response.status).to eq(204)
           end
         end
 
@@ -398,7 +419,7 @@ RSpec.describe Admin::SiteSettingsController do
                   update_existing_user: true,
                 }
 
-            expect(response.status).to eq(200)
+            expect(response.status).to eq(204)
           end
         end
 
@@ -419,15 +440,15 @@ RSpec.describe Admin::SiteSettingsController do
                   update_existing_user: true,
                 }
 
-            expect(response.status).to eq(200)
+            expect(response.status).to eq(204)
           end
         end
       end
 
       context "with default categories" do
-        fab!(:user1) { Fabricate(:user) }
-        fab!(:user2) { Fabricate(:user) }
-        fab!(:staged_user) { Fabricate(:staged) }
+        fab!(:user1, :user)
+        fab!(:user2, :user)
+        fab!(:staged_user, :staged)
         let(:watching) { NotificationLevels.all[:watching] }
         let(:tracking) { NotificationLevels.all[:tracking] }
 
@@ -449,46 +470,33 @@ RSpec.describe Admin::SiteSettingsController do
                 default_categories_watching: category_ids.last(2).join("|"),
                 update_existing_user: true,
               }
+          expect_job_enqueued(
+            job: Jobs::SiteSettingUpdateDefaultCategories,
+            args: {
+              id: "default_categories_watching",
+              value: category_ids.last(2).join("|"),
+              previous_value: category_ids.first(2).join("|"),
+            },
+          )
 
-          expect(response.status).to eq(200)
-          expect(
-            CategoryUser.where(category_id: category_ids.first, notification_level: watching).count,
-          ).to eq(0)
-          expect(
-            CategoryUser.where(category_id: category_ids.last, notification_level: watching).count,
-          ).to eq(User.real.where(staged: false).count - 1)
-
-          topic = Fabricate(:topic, category_id: category_ids.last)
-          topic_user1 =
-            Fabricate(
-              :topic_user,
-              topic: topic,
-              notification_level: TopicUser.notification_levels[:watching],
-              notifications_reason_id: TopicUser.notification_reasons[:auto_watch_category],
-            )
-          topic_user2 =
-            Fabricate(
-              :topic_user,
-              topic: topic,
-              notification_level: TopicUser.notification_levels[:watching],
-              notifications_reason_id: TopicUser.notification_reasons[:user_changed],
-            )
+          expect(response.status).to eq(204)
 
           put "/admin/site_settings/default_categories_watching.json",
               params: {
                 default_categories_watching: "",
                 update_existing_user: true,
               }
-          expect(response.status).to eq(200)
-          expect(
-            CategoryUser.where(category_id: category_ids, notification_level: watching).count,
-          ).to eq(0)
-          expect(topic_user1.reload.notification_level).to eq(
-            TopicUser.notification_levels[:regular],
+
+          expect_job_enqueued(
+            job: Jobs::SiteSettingUpdateDefaultCategories,
+            args: {
+              id: "default_categories_watching",
+              value: "",
+              previous_value: category_ids.last(2).join("|"),
+            },
           )
-          expect(topic_user2.reload.notification_level).to eq(
-            TopicUser.notification_levels[:watching],
-          )
+
+          expect(response.status).to eq(204)
         end
 
         it "should not update existing users user preference" do
@@ -501,47 +509,53 @@ RSpec.describe Admin::SiteSettingsController do
             CategoryUser.where(category_id: category_ids.first, notification_level: watching).count
           }
 
-          expect(response.status).to eq(200)
-          expect(
-            CategoryUser.where(category_id: category_ids.last, notification_level: watching).count,
-          ).to eq(0)
+          expect_not_enqueued_with(
+            job: Jobs::SiteSettingUpdateDefaultCategories,
+            args: {
+              id: "default_categories_watching",
+              value: category_ids.last(2).join("|"),
+              previous_value: category_ids.first(2).join("|"),
+            },
+          )
 
-          topic = Fabricate(:topic, category_id: category_ids.last)
-          topic_user1 =
-            Fabricate(
-              :topic_user,
-              topic: topic,
-              notification_level: TopicUser.notification_levels[:watching],
-              notifications_reason_id: TopicUser.notification_reasons[:auto_watch_category],
-            )
-          topic_user2 =
-            Fabricate(
-              :topic_user,
-              topic: topic,
-              notification_level: TopicUser.notification_levels[:watching],
-              notifications_reason_id: TopicUser.notification_reasons[:user_changed],
-            )
+          expect(response.status).to eq(204)
+
           put "/admin/site_settings/default_categories_watching.json",
               params: {
                 default_categories_watching: "",
               }
-          expect(response.status).to eq(200)
-          expect(
-            CategoryUser.where(category_id: category_ids.first, notification_level: watching).count,
-          ).to eq(0)
-          expect(topic_user1.reload.notification_level).to eq(
-            TopicUser.notification_levels[:watching],
+
+          expect_not_enqueued_with(
+            job: Jobs::SiteSettingUpdateDefaultCategories,
+            args: {
+              id: "default_categories_watching",
+              value: "",
+              previous_value: category_ids.last(2).join("|"),
+            },
           )
-          expect(topic_user2.reload.notification_level).to eq(
-            TopicUser.notification_levels[:watching],
-          )
+
+          expect(response.status).to eq(204)
+        end
+
+        it "should publish a MessageBus informing the correct groups" do
+          messages =
+            MessageBus.track_publish("/site_setting/default_categories_watching/process") do
+              put "/admin/site_settings/default_categories_watching.json",
+                  params: {
+                    default_categories_watching: category_ids.last(2).join("|"),
+                    update_existing_user: true,
+                  }
+            end
+
+          expect(messages[0][:data][:group_ids]).to eq([Group::AUTO_GROUPS[:admins]])
+          expect(messages[0][:data][:status]).to eq("enqueued")
         end
       end
 
       context "with default tags" do
-        fab!(:user1) { Fabricate(:user) }
-        fab!(:user2) { Fabricate(:user) }
-        fab!(:staged_user) { Fabricate(:staged) }
+        fab!(:user1, :user)
+        fab!(:user2, :user)
+        fab!(:staged_user, :staged)
         let(:watching) { NotificationLevels.all[:watching] }
         let(:tracking) { NotificationLevels.all[:tracking] }
 
@@ -559,10 +573,16 @@ RSpec.describe Admin::SiteSettingsController do
                 update_existing_user: true,
               }
 
-          expect(TagUser.where(tag_id: tags.first.id, notification_level: watching).count).to eq(0)
-          expect(TagUser.where(tag_id: tags.last.id, notification_level: watching).count).to eq(
-            User.real.where(staged: false).count - 1,
+          expect_job_enqueued(
+            job: Jobs::SiteSettingUpdateDefaultTags,
+            args: {
+              id: "default_tags_watching",
+              value: tags.last(2).pluck(:name).join("|"),
+              previous_value: tags.first(2).pluck(:name).join("|"),
+            },
           )
+
+          expect(response.status).to eq(204)
         end
 
         it "should not update existing users user preference" do
@@ -575,7 +595,29 @@ RSpec.describe Admin::SiteSettingsController do
             TagUser.where(tag_id: tags.first.id, notification_level: watching).count
           }
 
-          expect(TagUser.where(tag_id: tags.last.id, notification_level: watching).count).to eq(0)
+          expect_not_enqueued_with(
+            job: Jobs::SiteSettingUpdateDefaultTags,
+            args: {
+              id: "default_tags_watching",
+              value: tags.last(2).pluck(:name).join("|"),
+              previous_value: tags.first(2).pluck(:name).join("|"),
+            },
+          )
+
+          expect(response.status).to eq(204)
+        end
+
+        it "should publish a MessageBus informing the correct groups" do
+          messages =
+            MessageBus.track_publish("/site_setting/default_tags_watching/process") do
+              put "/admin/site_settings/default_tags_watching.json",
+                  params: {
+                    default_tags_watching: tags.last(2).pluck(:name).join("|"),
+                    update_existing_user: true,
+                  }
+            end
+          expect(messages[0][:data][:group_ids]).to eq([Group::AUTO_GROUPS[:admins]])
+          expect(messages[0][:data][:status]).to eq("enqueued")
         end
       end
 
@@ -585,15 +627,15 @@ RSpec.describe Admin::SiteSettingsController do
 
           put "/admin/site_settings/push_notifications_icon.json",
               params: {
-                push_notifications_icon: nil,
+                push_notifications_icon: "",
               }
 
-          expect(response.status).to eq(200)
+          expect(response.status).to eq(204)
           expect(SiteSetting.push_notifications_icon).to eq(nil)
         end
 
         it "can reset the site setting to the default" do
-          SiteSetting.push_notifications_icon = nil
+          SiteSetting.push_notifications_icon = ""
           default_upload = Upload.find(-1)
 
           put "/admin/site_settings/push_notifications_icon.json",
@@ -601,7 +643,7 @@ RSpec.describe Admin::SiteSettingsController do
                 push_notifications_icon: default_upload.url,
               }
 
-          expect(response.status).to eq(200)
+          expect(response.status).to eq(204)
           expect(SiteSetting.push_notifications_icon).to eq(default_upload)
         end
 
@@ -613,7 +655,7 @@ RSpec.describe Admin::SiteSettingsController do
                 push_notifications_icon: upload.url,
               }
 
-          expect(response.status).to eq(200)
+          expect(response.status).to eq(204)
           expect(SiteSetting.push_notifications_icon).to eq(upload)
 
           user_history = UserHistory.last
@@ -632,7 +674,7 @@ RSpec.describe Admin::SiteSettingsController do
           UserHistory.where(action: UserHistory.actions[:change_site_setting]).count
         }.by(1)
 
-        expect(response.status).to eq(200)
+        expect(response.status).to eq(204)
         expect(SiteSetting.title).to eq("hello")
       end
 
@@ -643,6 +685,28 @@ RSpec.describe Admin::SiteSettingsController do
 
         expect(SiteSetting.max_category_nesting).to eq(3)
         expect(response.status).to eq(422)
+        expect(response.parsed_body["errors"]).to include(
+          I18n.t(
+            "errors.site_settings.site_settings_are_hidden",
+            setting_names: "max_category_nesting",
+          ),
+        )
+      end
+
+      it "does not allow changing of globally shadowed settings" do
+        SiteSetting.max_category_nesting = 3
+        SiteSetting.stubs(:shadowed_settings).returns(Set.new([:max_category_nesting]))
+
+        put "/admin/site_settings/max_category_nesting.json", params: { max_category_nesting: 2 }
+
+        expect(SiteSetting.max_category_nesting).to eq(3)
+        expect(response.status).to eq(422)
+        expect(response.parsed_body["errors"]).to include(
+          I18n.t(
+            "errors.site_settings.site_settings_are_shadowed_globally",
+            setting_names: "max_category_nesting",
+          ),
+        )
       end
 
       context "with an plugin" do
@@ -654,7 +718,7 @@ RSpec.describe Admin::SiteSettingsController do
           put "/admin/site_settings/plugin_setting.json", params: { plugin_setting: "new value" }
 
           expect(SiteSetting.plugin_setting).to eq("new value")
-          expect(response.status).to eq(200)
+          expect(response.status).to eq(204)
         end
 
         it "does not allow changing of non-configurable settings" do
@@ -689,7 +753,69 @@ RSpec.describe Admin::SiteSettingsController do
     end
 
     context "when logged in as a non-staff user" do
+      fab!(:user1, :user)
+      fab!(:user2, :user)
+
+      let(:tracking) { NotificationLevels.all[:tracking] }
+      let(:watching) { NotificationLevels.all[:watching] }
+
       before { sign_in(user) }
+
+      context "with default categories" do
+        let(:category_ids) { 3.times.collect { Fabricate(:category).id } }
+
+        before do
+          SiteSetting.default_categories_watching = category_ids.first(2).join("|")
+
+          CategoryUser.create!(
+            category_id: category_ids.last,
+            notification_level: tracking,
+            user: user2,
+          )
+        end
+
+        it "doesn't update default categories" do
+          put "/admin/site_settings/default_categories_watching.json",
+              params: {
+                default_categories_watching: category_ids.last(2).join("|"),
+                update_existing_user: true,
+              }
+
+          expect(response.status).to eq(404)
+
+          expect_not_enqueued_with(job: Jobs::SiteSettingUpdateDefaultCategories)
+
+          expect(
+            CategoryUser.where(category_id: category_ids.last, notification_level: watching).count,
+          ).to eq(0)
+        end
+      end
+
+      context "with default tags" do
+        fab!(:tag_1, :tag)
+        fab!(:tag_2, :tag)
+        fab!(:tag_3, :tag)
+        let(:tags) { [tag_1, tag_2, tag_3] }
+
+        before do
+          SiteSetting.default_tags_watching = tags.first(2).pluck(:name).join("|")
+          TagUser.create!(tag_id: tags.last.id, notification_level: tracking, user: user2)
+        end
+
+        it "doesn't update default categories" do
+          put "/admin/site_settings/default_tags_watching.json",
+              params: {
+                default_tags_watching: tags.last(2).pluck(:name).join("|"),
+                update_existing_user: true,
+              }
+
+          expect(response.status).to eq(404)
+
+          expect_not_enqueued_with(job: Jobs::SiteSettingUpdateDefaultTags)
+
+          expect(TagUser.where(tag_id: tags.last.id, notification_level: watching).count).to eq(0)
+        end
+      end
 
       include_examples "site setting update not allowed"
     end

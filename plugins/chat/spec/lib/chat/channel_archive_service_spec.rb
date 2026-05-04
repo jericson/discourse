@@ -4,7 +4,7 @@ describe Chat::ChannelArchiveService do
   class FakeArchiveError < StandardError
   end
 
-  fab!(:channel) { Fabricate(:category_channel) }
+  fab!(:channel, :category_channel)
   fab!(:user) { Fabricate(:admin, refresh_auto_groups: true) }
   fab!(:category)
 
@@ -149,7 +149,7 @@ describe Chat::ChannelArchiveService do
         expect(@channel_archive.chat_channel.chat_messages.count).to eq(0)
       end
 
-      xit "creates the correct posts for a channel with messages and threads" do
+      it "creates the correct posts for a channel with messages and threads" do
         channel.update!(threading_enabled: true)
 
         create_messages(2)
@@ -237,6 +237,7 @@ describe Chat::ChannelArchiveService do
 
         create_messages(3) && start_archive
         @channel_archive.update!(destination_topic_title: "Wow this is the new title :tada: :joy:")
+        Discourse.expects(:warn_exception).once
         described_class.new(@channel_archive).execute
         expect(@channel_archive.reload.complete?).to eq(false)
         expect(@channel_archive.reload.failed?).to eq(true)
@@ -413,7 +414,6 @@ describe Chat::ChannelArchiveService do
       end
 
       it "handles errors gracefully, sends a private message to the archiving user, and is idempotent on retry" do
-        Rails.logger = @fake_logger = FakeLogger.new
         create_messages(35) && start_archive
 
         Chat::ChannelArchiveService
@@ -421,6 +421,7 @@ describe Chat::ChannelArchiveService do
           .stubs(:create_post)
           .raises(FakeArchiveError.new("this is a test error"))
 
+        Discourse.expects(:warn_exception).once
         stub_const(Chat::ChannelArchiveService, "ARCHIVED_MESSAGES_PER_POST", 5) do
           expect { described_class.new(@channel_archive).execute }.to raise_error(FakeArchiveError)
         end

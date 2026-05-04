@@ -68,6 +68,18 @@ RSpec.describe "users" do
           let(:expected_request_schema) { expected_request_schema }
         end
       end
+
+      response "200", "user with primary group response" do
+        expected_response_schema = load_spec_schema("user_get_response")
+        schema expected_response_schema
+
+        let(:username) { Fabricate(:user, primary_group_id: Fabricate(:group).id).username }
+
+        it_behaves_like "a JSON endpoint", 200 do
+          let(:expected_response_schema) { expected_response_schema }
+          let(:expected_request_schema) { expected_request_schema }
+        end
+      end
     end
 
     put "Update a user" do
@@ -442,7 +454,7 @@ RSpec.describe "users" do
       produces "application/json"
       response "200", "response" do
         let(:id) { Fabricate(:user).id }
-        let(:params) {}
+        let(:params) { { "reason" => "up to me", "silenced_till" => "2301-08-15" } }
 
         expected_response_schema = load_spec_schema("user_silence_response")
         schema(expected_response_schema)
@@ -541,10 +553,76 @@ RSpec.describe "users" do
     end
   end
 
-  path "/admin/users/list/{flag}.json" do
-    get "Get a list of users" do
+  path "/admin/users.json" do
+    get "List users" do
       tags "Users", "Admin"
       operationId "adminListUsers"
+      consumes "application/json"
+      expected_request_schema = nil
+
+      parameter name: :order,
+                in: :query,
+                schema: {
+                  type: :string,
+                  enum: %w[
+                    created
+                    last_emailed
+                    seen
+                    username
+                    email
+                    trust_level
+                    days_visited
+                    posts_read
+                    topics_viewed
+                    posts
+                    read_time
+                  ],
+                }
+      parameter name: :asc, in: :query, schema: { type: :string, enum: ["true"] }
+      parameter name: :page, in: :query, type: :integer
+      parameter name: :show_emails,
+                in: :query,
+                type: :boolean,
+                description:
+                  "Include user email addresses in response. These requests will be logged in the staff action logs."
+      parameter name: :stats,
+                in: :query,
+                type: :boolean,
+                description: "Include user stats information"
+      parameter name: :email,
+                in: :query,
+                type: :string,
+                description: "Filter to the user with this email address"
+      parameter name: :ip,
+                in: :query,
+                type: :string,
+                description: "Filter to users with this IP address"
+
+      produces "application/json"
+      response "200", "users response" do
+        let(:order) { "created" }
+        let(:asc) { "true" }
+        let(:page) { 0 }
+        let(:show_emails) { false }
+        let(:stats) { nil }
+        let(:email) { nil }
+        let(:ip) { nil }
+
+        expected_response_schema = load_spec_schema("admin_user_list_response")
+        schema expected_response_schema
+
+        it_behaves_like "a JSON endpoint", 200 do
+          let(:expected_response_schema) { expected_response_schema }
+          let(:expected_request_schema) { expected_request_schema }
+        end
+      end
+    end
+  end
+
+  path "/admin/users/list/{flag}.json" do
+    get "List users by flag" do
+      tags "Users", "Admin"
+      operationId "adminListUsersFlag"
       consumes "application/json"
       expected_request_schema = nil
 
@@ -644,6 +722,8 @@ RSpec.describe "users" do
   end
 
   path "/session/forgot_password.json" do
+    SiteSetting.hide_email_address_taken = false
+
     post "Send password reset email" do
       tags "Users"
       operationId "sendPasswordResetEmail"

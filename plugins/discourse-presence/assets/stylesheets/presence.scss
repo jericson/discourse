@@ -1,12 +1,16 @@
 .topic-above-footer-buttons-outlet.presence {
-  min-height: 1.8em; // height of the avatars, prevents layout shift
+  // slightly larger than avatars to prevent layout shift
+  min-height: calc(var(--avatar-min-height) + 1px);
+  padding: var(--space-2) var(--space-2) var(--space-2) 0;
   margin: var(--below-topic-margin) 0;
 }
 
 .presence-users {
-  background-color: var(--secondary);
+  // ideally you don't want to add padding or margin here,
+  // because you may cause a layout shift on presence appearance
   color: var(--primary-medium);
   display: flex;
+  border-radius: var(--d-border-radius);
 
   span.presence-text {
     align-items: center;
@@ -27,6 +31,7 @@
 
     .dot {
       display: inline-block;
+
       @media (prefers-reduced-motion: no-preference) {
         animation: wave 1.8s linear infinite;
       }
@@ -54,16 +59,8 @@
   }
 }
 
-.composer-fields .presence-users {
-  overflow: hidden;
-  flex-shrink: 1;
-  .presence-avatars {
-    flex-wrap: nowrap;
-  }
-}
-
-.mobile-view .composer-fields .presence-users .description {
-  display: none;
+.reply-to .presence-users {
+  padding: unset;
 }
 
 // TMP: RTL overrides
@@ -71,16 +68,19 @@
   span.presence-text {
     margin-right: 8px;
   }
+}
 
-  .composer-fields .presence-users {
-    right: unset;
-    left: 95px;
-  }
+// Always hide the "Topic Presence" in the topic timeline
+.topic-navigation.with-timeline .topic-navigation-bottom-outlet.presence {
+  display: none;
+}
 
-  &.mobile-view {
-    .composer-fields .presence-users {
-      right: unset;
-      left: 65px;
-    }
+// When topic progress is visible in the posts grid area and is sticky,
+// adjust positioning so presence is on the same line
+@media screen and (width <= 924px) {
+  body:has(.topic-navigation.with-topic-progress)
+    .topic-above-footer-buttons-outlet.presence {
+    margin-top: -3.2em;
+    margin-right: 8em;
   }
 }

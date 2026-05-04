@@ -62,6 +62,8 @@ class UserCardSerializer < BasicUserSerializer
              :title,
              :suspend_reason,
              :suspended_till,
+             :silence_reason,
+             :silenced_till,
              :badge_count,
              :user_fields,
              :custom_fields,
@@ -147,7 +149,7 @@ class UserCardSerializer < BasicUserSerializer
   end
 
   def can_send_private_message_to_user
-    scope.can_send_private_message?(object) && scope.current_user != object
+    scope.can_send_private_message?(object)
   end
 
   def include_suspend_reason?
@@ -156,6 +158,14 @@ class UserCardSerializer < BasicUserSerializer
 
   def include_suspended_till?
     object.suspended?
+  end
+
+  def include_silence_reason?
+    scope.can_see_silencing_reason?(object) && object.silenced?
+  end
+
+  def include_silenced_till?
+    object.silenced?
   end
 
   def user_fields
@@ -190,7 +200,7 @@ class UserCardSerializer < BasicUserSerializer
   end
 
   def recent_time_read
-    time = object.recent_time_read
+    object.recent_time_read
   end
 
   def primary_group_name
@@ -214,7 +224,7 @@ class UserCardSerializer < BasicUserSerializer
   end
 
   def featured_topic
-    object.user_profile.featured_topic
+    BasicTopicSerializer.new(object.user_profile.featured_topic, scope: scope, root: false).as_json
   end
 
   def include_timezone?

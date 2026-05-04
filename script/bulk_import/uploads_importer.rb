@@ -25,6 +25,11 @@ module BulkImport
   UploadMetadata = Struct.new(:original_filename, :origin_url, :description)
 
   class UploadsImporter
+    class DownloadFailedError < StandardError
+    end
+    class UploadSizeExceededError < DownloadFailedError
+    end
+
     TRANSACTION_SIZE = 1000
     QUEUE_SIZE = 1000
 
@@ -54,8 +59,10 @@ module BulkImport
         puts "Uploading uploads..."
         upload_files
 
-        puts "", "Creating optimized images..."
-        create_optimized_images if @settings[:create_optimized_images]
+        if @settings[:create_optimized_images]
+          puts "", "Creating optimized images..."
+          create_optimized_images
+        end
       end
       puts ""
     ensure
@@ -127,17 +134,18 @@ module BulkImport
           current_count = 0
 
           while !(params = status_queue.pop).nil?
-            begin
-              if params.delete(:skipped) == true
-                skipped_count += 1
-              elsif (error_message = params.delete(:error)) || params[:upload].nil?
-                error_count += 1
-                puts "", "Failed to create upload: #{params[:id]} (#{error_message})", ""
-              end
+            case params.delete(:status)
+            when :error
+              error_count += 1
+              puts "", "Failed to create upload: #{params[:id]} (#{params[:skip_details]})", ""
+            when :skipped
+              skipped_count += 1
+            end
 
+            begin
               insert(<<~SQL, params)
-                INSERT INTO uploads (id, upload, markdown, skip_reason)
-                VALUES (:id, :upload, :markdown, :skip_reason)
+                INSERT INTO uploads (id, upload, markdown, skip_reason, skip_details)
+                VALUES (:id, :upload, :markdown, :skip_reason, :skip_details)
               SQL
             rescue StandardError => e
               puts "", "Failed to insert upload: #{params[:id]} (#{e.message}))", ""
@@ -193,10 +201,11 @@ module BulkImport
 
                 if !file_exists
                   status_queue << {
+                    status: :skipped,
                     id: row["id"],
                     upload: nil,
-                    skipped: true,
-                    skip_reason: "file not found",
+                    skip_reason: "file_not_found",
+                    skip_details: nil,
                   }
                   next
                 end
@@ -240,21 +249,24 @@ module BulkImport
 
                 if upload_okay
                   status_queue << {
+                    status: :ok,
                     id: row["id"],
                     upload: upload.attributes.to_json,
                     markdown:
                       UploadMarkdown.new(upload).to_markdown(display_name: metadata.description),
                     skip_reason: nil,
+                    skip_details: nil,
                   }
                   break
                 elsif retry_count >= 3
                   error_message ||= upload&.errors&.full_messages&.join(", ") || "unknown error"
                   status_queue << {
+                    status: :error,
                     id: row["id"],
                     upload: nil,
                     markdown: nil,
-                    error: "too many retries: #{error_message}",
-                    skip_reason: "too many retries",
+                    skip_reason: "too_many_retries",
+                    skip_details: "Too many retries: #{error_message}",
                   }
                   break
                 end
@@ -264,11 +276,12 @@ module BulkImport
               end
             rescue StandardError => e
               status_queue << {
+                status: :error,
                 id: row["id"],
                 upload: nil,
                 markdown: nil,
-                error: e.message,
-                skip_reason: "error",
+                skip_reason: e.is_a?(DownloadFailedError) ? "download_error" : "error",
+                skip_details: e.message,
               }
             ensure
               data_file&.close!
@@ -286,42 +299,47 @@ module BulkImport
 
     def download_file(url:, id:, retry_count: 0)
       path = download_cache_path(id)
-      original_filename = nil
 
       if File.exist?(path) && (original_filename = get_original_filename(id))
         return path, original_filename
       end
 
-      fd = FinalDestination.new(url)
       file = nil
+      original_filename = nil
 
-      fd.get do |response, chunk, uri|
-        if file.nil?
-          check_response!(response, uri)
-          original_filename = extract_filename_from_response(response, uri)
-          file = File.open(path, "wb")
+      begin
+        fd = FinalDestination.new(url)
+
+        fd.get do |response, chunk, uri|
+          if file.nil?
+            check_response!(response, uri)
+            original_filename = extract_filename_from_response(response, uri)
+            file = File.open(path, "wb")
+          end
+
+          file.write(chunk)
+
+          if (file_size = file.size) > MAX_FILE_SIZE
+            File.unlink(path)
+
+            raise UploadSizeExceededError,
+                  "Upload size #{file.size} bytes exceeds the limit of #{MAX_FILE_SIZE} bytes"
+          end
         end
 
-        file.write(chunk)
+        return unless file
 
-        if file.size > MAX_FILE_SIZE
-          file.close
-          file.unlink
-          file = nil
-          throw :done
-        end
-      end
-
-      if file
-        file.close
         insert(
           "INSERT INTO downloads (id, original_filename) VALUES (?, ?)",
           [id, original_filename],
         )
-        return path, original_filename
-      end
 
-      nil
+        [path, original_filename]
+      rescue StandardError => e
+        raise DownloadFailedError, "Failed to download upload from #{url}: #{e.message}"
+      ensure
+        file&.close
+      end
     end
 
     def download_cache_path(id)
@@ -335,10 +353,8 @@ module BulkImport
 
     def check_response!(response, uri)
       if uri.blank?
-        code = response.code.to_i
-
-        if code >= 400
-          raise "#{code} Error"
+        if response.code.to_i >= 400
+          response.value
         else
           throw :done
         end
@@ -417,7 +433,9 @@ module BulkImport
       (Etc.nprocessors * @settings[:thread_count_factor] * 2).to_i.times do |index|
         consumer_threads << Thread.new do
           Thread.current.name = "worker-#{index}"
-          fake_upload = OpenStruct.new(url: "")
+          fake_upload =
+            OpenStruct.new(url: "", secure?: SiteSetting.secure_uploads, optimized_images: [])
+          external_store = store.external?
           while (row = queue.pop)
             begin
               upload = JSON.parse(row["upload"])
@@ -425,13 +443,14 @@ module BulkImport
               path = add_multisite_prefix(store.get_path_for_upload(fake_upload))
 
               file_exists =
-                if store.external?
+                if external_store
                   store.object_from_path(path).exists?
                 else
                   File.exist?(File.join(store.public_dir, path))
                 end
 
               if file_exists
+                store.update_upload_access_control(fake_upload) if external_store
                 status_queue << { id: row["id"], upload_id: upload["id"], status: :ok }
               else
                 status_queue << { id: row["id"], upload_id: upload["id"], status: :missing }
@@ -470,10 +489,10 @@ module BulkImport
 
       init_threads << Thread.new do
         sql = <<~SQL
-        SELECT upload_ids
-          FROM posts
-         WHERE upload_ids IS NOT NULL
-      SQL
+          SELECT upload_ids
+            FROM posts
+           WHERE upload_ids IS NOT NULL
+        SQL
         query(sql, @source_db).tap do |result_set|
           result_set.each do |row|
             JSON.parse(row["upload_ids"]).each { |id| post_upload_ids << id }
@@ -484,10 +503,10 @@ module BulkImport
 
       init_threads << Thread.new do
         sql = <<~SQL
-        SELECT avatar_upload_id
-          FROM users
-         WHERE avatar_upload_id IS NOT NULL
-      SQL
+          SELECT avatar_upload_id
+            FROM users
+           WHERE avatar_upload_id IS NOT NULL
+        SQL
         query(sql, @source_db).tap do |result_set|
           result_set.each { |row| avatar_upload_ids << row["avatar_upload_id"] }
           result_set.close
@@ -591,6 +610,11 @@ module BulkImport
 
             loop do
               upload = Upload.find_by(sha1: row["upload_sha1"])
+              unless upload
+                puts "", "Could not find upload with sha1: #{row["upload_sha1"]}", ""
+                status_queue << { id: row["upload_id"], status: :error }
+                break
+              end
 
               optimized_images =
                 begin
@@ -605,7 +629,7 @@ module BulkImport
                   end
                 rescue StandardError => e
                   puts e.message
-                  puts e.stacktrace
+                  puts e.backtrace.join("\n")
                   nil
                 end
 
@@ -688,7 +712,8 @@ module BulkImport
           id TEXT PRIMARY KEY NOT NULL,
           upload JSON_TEXT,
           markdown TEXT,
-          skip_reason TEXT
+          skip_reason TEXT,
+          skip_details TEXT
         )
       SQL
 
@@ -743,11 +768,12 @@ module BulkImport
       SiteSetting.authorized_extensions = settings[:authorized_extensions]
       SiteSetting.max_attachment_size_kb = settings[:max_attachment_size_kb]
       SiteSetting.max_image_size_kb = settings[:max_image_size_kb]
+      SiteSetting.max_image_megapixels = settings[:max_image_megapixels]
+      SiteSetting.secure_uploads = settings[:secure_uploads]
+      SiteSetting.s3_enable_access_control_tags = settings[:s3_enable_access_control_tags]
 
       if settings[:multisite]
-        # rubocop:disable Discourse/NoDirectMultisiteManipulation
         Rails.configuration.multisite = true
-        # rubocop:enable Discourse/NoDirectMultisiteManipulation
 
         RailsMultisite::ConnectionManagement.class_eval do
           def self.current_db_override=(value)

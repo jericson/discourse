@@ -152,21 +152,8 @@ ca:
 
           - Creiem en un [comportament civilitzat de la comunitat](%{base_uri})/guidelines) en tot moment.
       onebox:
-        instructions: |-
-          Ara podeu compartir un d'aquests enllaços amb mi? Responeu amb **un enllaç per línia tot sol**, i s'expandirà automàticament per a incloure un resum molt atractiu.
-
-          Per a copiar qualsevol enllaç, toqueu i manteniu en el mòbil o feu clic amb el botó dret del ratolí:
-          <https://en.wikipedia.org/wiki/Inherently_funny_word>
-          <https://en.wikipedia.org/wiki/Death_by_coconut>
-          <https://en.wikipedia.org/wiki/Calculator_spelling>
         reply: |-
           Genial! Això funcionarà per a la majoria d'enllaços <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-link.png" width="16" height="16">. Recordeu: ha d'estar en una línia _tot sol_, res davant ni darrere.
-        not_found: |-
-          Ho sento. No he pogut trobar l'enllaç en la vostra resposta! :cry:
-
-          ¿Podeu provar d'afegir l'enllaç següent, en una sola línia, a la vostra resposta següent?
-
-          <https://ca.wikipedia.org/wiki/Gat_exòtic>
       images:
         instructions: |-
           Vet aquí una imatge d'un unicorn:
@@ -218,8 +205,6 @@ ca:
       bookmark:
         instructions: |-
           Si voleu saber-ne més, seleccioneu <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-ellipsis.png" width="16" height="16"> a sota i <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-bookmark.png" width="16" height="16"> **marqueu com a preferit aquest missatge privat**. Si ho feu, potser tindreu un :gift: més avant!
-        reply: |-
-          Fantàstic! Ara podeu trobar fàcilment com tornar a la nostra conversa privada en qualsevol moment, des de [la pestanya de favorits del vostre perfil](%{bookmark_url}). Només heu de seleccionar la vostra imatge de perfil dalt a la dreta &#8599;
         not_found: |-
           Ui, no veig cap favorit marcat en aquest tema. ¿Heu trobat el marcador de favorits a sota de cada publicació? Utilitzeu "mostra'n més" <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-ellipsis.png" width="16" height="16"> per a mostrar accions addicionals si calen.
       emoji:
@@ -252,9 +237,6 @@ ca:
           No veig el meu nom enlloc :frowning: Podeu mencionar-me com `@%{discobot_username}` una altra vegada?
 
           (Doncs sí, el meu nom d'usuari és _disco_, com en les discos de moda dels anys 70. [M'encanta la vida nocturna!](https://www.youtube.com/watch?v=B_wGI3_sGf8) :dancer:)
-      flag:
-        reply: |-
-          [El nostre equip responsable](%{base_uri}/groups/staff) serà notificat de manera privada sobre la vostra bandera. Si hi ha prou membres de la comunitat que marquen amb bandera una publicació, també serà amagada automàticament per precaució. (Com que no he escrit un missatge desagradable :angel:, he tirat avant i de moment he eliminat la bandera.)
       search:
         hidden_message: |-
           Com heu pogut oblidar aquest capibara? :wink:
@@ -330,12 +312,6 @@ ca:
         reply: |-
           Genial! Recordeu que això funciona per a categories _i_ per a etiquetes, si les etiquetes estan activades.
       change_topic_notification_level:
-        instructions: |-
-          Tots els temes tenen un nivell de notificació. Comença en 'normal', que significa que normalment sols se us notificarà quan algú us parli directament.
-
-          De manera predeterminada, el nivell de notificació d'un missatge privat és establert al nivell més alt de 'vigilant', cosa que significa que se us notificarà cada resposta nova. Però podeu sobreescriure el nivell de notificació de _qualsevol_ tema a "vigilat", "seguint" o "silenciat".
-
-          Intentem canviar el nivell de notificació del tema. A la part inferior del tema, trobareu un botó que mostra que esteu **vigilant** el tema. ¿Podeu canviar el nivell de notificació a **seguint**?
         not_found: |-
           Sembla que encara esteu vigilant :eyes: aquest tema! Si teniu problemes per a trobar-lo, el botó de nivell de notificació és a la part inferior del tema.
         reply: |-
@@ -343,19 +319,6 @@ ca:
 
           Tingueu en compte que quan responeu a un tema o el llegiu durant més d'uns quants minuts s'estableix automàticament un nivell de notificació de "seguiment". Podeu canviar-ho en [les preferències d'usuari](%{base_uri}/my/preferences).
       poll:
-        instructions: |-
-          Sabíeu que podeu incorporar una enquesta a qualsevol publicació? Proveu-ho utilitzant l'eina <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-gear.png" width="16" height="16"> en l'editor per a **crear una enquesta**.
-        not_found: |-
-          Vaja! No hi havia cap enquesta en la vostra resposta.
-
-          Utilitzeu la icona de roda dentada <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-gear.png" width="16" height="16"> de l'editor, o copieu i enganxeu aquesta enquesta en la vostra pròxima resposta:
-
-          ```text
-          [poll]
-          * :cat:
-          * :dog:
-          [/poll]
-          ``
         reply: |-
           Ei, bona enquesta! Us he ensenyat bé?
 
@@ -364,20 +327,6 @@ ca:
           *: -1:
           [/poll]
       details:
-        instructions: |-
-          A vegades potser us convindrà **amagar els detalls** en les respostes:
-
-          - Quan discutiu algun element de la trama d'una pel·lícula o d'un programa de televisió que podria considerar-se un espòiler.
-
-          - Quan la publicació necessita molts detalls opcionals que podrien resultar aclaparadors si es llegeixen de cop.
-
-          [details=Seleccioneu això per a veure com funciona!]
-          1. Seleccioneu l'eina <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-gear.png" width="16" height="16"> en l'editor.
-          2. Seleccioneu "Amaga els detalls".
-          3. Editeu el resum de les dades i afegiu el vostre contingut.
-          [/details]
-
-          ¿Podeu fer servir l'eina <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-gear.png" width="16" height="16"> en l'editor per a afegir una secció de detalls en la vostra resposta següent?
         not_found: |-
           Teniu problemes per a crear un giny de detalls? Proveu d'incloure el text següent en la pròxima resposta:
 

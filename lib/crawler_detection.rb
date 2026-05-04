@@ -6,7 +6,7 @@ module CrawlerDetection
   def self.to_matcher(string, type: nil)
     escaped = string.split("|").map { |agent| Regexp.escape(agent) }.join("|")
 
-    if type == :real && Rails.env == "test"
+    if type == :real && Rails.env.test?
       # we need this bypass so we properly render views
       escaped << "|Rails Testing"
     end
@@ -49,6 +49,13 @@ module CrawlerDetection
     else
       true
     end
+  end
+
+  def self.crawler_ip?(ip)
+    return false if ip.blank?
+    asn = DiscourseIpInfo.get(ip)[:asn]
+    return false if asn.blank?
+    SiteSetting.crawler_asns_map.include?(asn.to_s)
   end
 
   def self.show_browser_update?(user_agent)

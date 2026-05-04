@@ -106,7 +106,6 @@ sl:
         other: ! "%{count} napak preprečuje tej %{model} da se shrani"
     site_settings:
       second_factor_cannot_be_enforced_with_discourse_connect_enabled: "2FA ne morete nastaviti kot zahtevano, če je omogočena možnost DiscourseConnect."
-      twitter_summary_large_image_no_svg: "Slike povzetka Twitterja, ki se uporabljajo za metapodatke twitter:image, ne morejo biti slike tipa .svg."
   invite:
     confirm_email: "<p>Ste skoraj na koncu! Poslali smo vam aktivacijsko e-sporočilo na vaš e-naslov. Sledite navodilom v e-sporočilu za aktivacijo računa.</p><p>Če e-sporočila ne prejmete, preverite predal z vsiljeno pošto.</p>"
     disabled_errors:
@@ -121,7 +120,17 @@ sl:
   not_in_group:
     join_group: "Pridruži se skupini"
   reading_time: "Čas branja"
+  reading_time_minutes:
+    one: "%{count} minuto 🕑"
+    two: "%{count} minuti 🕑"
+    few: "%{count} minute 🕑"
+    other: "%{count} minut 🕑"
   likes: "Všečki"
+  likes_count:
+    one: "%{count} ❤"
+    two: "%{count} ❤"
+    few: "%{count} ❤"
+    other: "%{count} ❤"
   too_many_replies:
     one: "Novi uporabniki so začasno omejeni na %{count} odgovor v isti temi."
     two: "Novi uporabniki so začasno omejeni na %{count} odgovora v isti temi."
@@ -227,34 +236,6 @@ sl:
       two: "%{count} prispevka"
       few: "%{count} prispevki"
       other: "%{count} prispevkov"
-    avatar: |
-      ### Dodaj sliko svojemu profilu?
-
-      Objavili ste že nekaj tem in odgovorov, ampak vaša profilna slika še vedno ni tako unikatna kot ste vi - je samo črka.
-
-      Ste razmišljali, da bi **[obiskali svoj uporabniški profil](%{profile_path})** in bi naložili sliko, ki vas bolje predstavlja?
-
-      Veliko lažje je spremljati pogovore in najti zanimive osebe v debatah, ko imajo vsi udeleženci edinstveno profilno sliko!
-    sequential_replies: |
-      ### Odgovorite na več prispevkov naenkrat
-
-      Namesto ločenih odgovorov na posamezne prispevke, lahko objavite samo en odgovor, ki vključuje citate iz prejšnih prispevkov ali omembo @ime uporabnika.
-
-      Vašem prejšnem odgovoru lahko dodate citat tako da označite besedilo in izberete gumb <b>Citiraj</b>, ki se bo pojavil nad označenim besedilom.
-
-      Lažje je slediti razpravi, kjer je manj bolj poglobljenih prispevkov, kot pa tam kjer je več manjših, ločenih prispevkov.
-    too_many_replies: |
-      ### Dosegli ste omejitev odgovorov v tej temi
-
-      Novi uporabniki so začasno omejeni na %{newuser_max_replies_per_topic} odgovorov v posamezni temi.
-
-      Namesto, da dodate nov odgovor, razmislite o spremembi obstoječega odgovora ali preberite še kakšno drugo temo.
-    reviving_old_topic: |
-      ### Oživi to temo?
-
-      Zadnji odgovor na to temo je bil **%{time_ago}**. Vaš odgovor bo izpostavil to temo na vrh seznama in bo samodejno obvestil vse, ki so bili prej vpleteni v razpravo.
-
-      Ali ste prepričani da hočete nadaljevati to staro razpravo?
   activerecord:
     attributes:
       category:
@@ -264,6 +245,8 @@ sl:
         featured_link: "Izpostavljena povezava"
         category_id: "Kategorija"
       user:
+        password: "Geslo"
+      user_password:
         password: "Geslo"
     errors:
       models:
@@ -282,6 +265,15 @@ sl:
               same_as_password: "je enako kot vaše geslo."
             ip_address:
               max_new_accounts_per_registration_ip: "Nove registracije uporabnika niso več dovoljene z vašega IP naslova (dosežena je omejitev regitracij). Kontaktirajte člana osebja foruma."
+        user_password:
+          attributes:
+            password:
+              common: "je eno od 10000 najbolj uporabljenih gesel. Uporabite bolj varno geslo."
+              same_as_username: "je enako kot vaše uporabniško ime. Uporabite bolj varno geslo."
+              same_as_email: "je enako kot vaš e-naslov. Uporabite bolj varno geslo."
+              same_as_current: "je enako kot vaše trenutno geslo."
+              same_as_name: "je enako kot vaše ime."
+              unique_characters: "vsebuje preveč enakih znakov. Uporabite bolj varno geslo."
         topic_timer:
           attributes:
             duration_minutes:
@@ -492,9 +484,6 @@ sl:
   associated_accounts:
     revoke_failed: "Nismo uspeli razveljaviti vaš račun pri %{provider_name}."
   activation:
-    please_continue: "Vaš nov uporabniški račun je potrjen - preusmerjeni boste na začetno stran."
-    continue_button: "Nadaljujte na %{site_name}"
-    welcome_to: "Dobrodošli na %{site_name}!"
     approval_required: "Moderator mora ročno potrditi vaš nov uporabniški račun da boste lahko dostopali do foruma. Ko bo račun potrjen boste prejeli e-sporočilo."
   reviewable_score_types:
     needs_approval:
@@ -576,7 +565,9 @@ sl:
       every_month: "vsak mesec"
       every_six_months: "vsakih 6 mesecev"
   user_api_key:
+    deny: "Prekliči"
     read: "prebrano"
+    copied: "Kopirano!"
     otp_description: 'Hočete dovoliti "%{application_name}" da dostopa do te strani?'
     otp_confirmation:
       confirm_title: Nadaljujte na %{site_name}
@@ -611,6 +602,10 @@ sl:
       labels:
         flag: Tip
         poster: Odgovarja
+    visits:
+      xaxis:
+        desktop: "Namizno"
+        mobile: "Mobilno"
     consolidated_page_views:
       labels:
         post: Prispevek
@@ -647,8 +642,6 @@ sl:
         searches: Iskanj
     system_private_messages:
       title: "Sistem"
-    notify_user_private_messages:
-      description: "Kolikokrat so bili uporabniki zasebno opozorjeni s prijavo."
     top_referrers:
       xaxis: "Uporabnik"
       num_topics: "Tem"
@@ -699,38 +692,32 @@ sl:
       labels:
         user: Uporabnik
         qtt_like: Všečkov prejetih
+    topic_view_stats:
+      labels:
+        topic: Tema
+        anon_views: Anonimni
+        total_views: Skupaj
   dashboard:
     problem:
-      out_of_date_themes: "Posodobitve so na voljo za naslednje prilagoditve:"
+      s3_cdn: 'Strežnik je konfiguriran za nalaganje datotek v S3, vendar hkrati ni konfiguriran tudi S3 CDN. To lahko privede do visokih stroškov uporabe S3 in počasnejšega delovanja strani. Če želite izvedeti več, glejte <a href="https://meta.discourse.org/t/-/148916" target="_blank">"Using Object Storage for Uploads"</a>.'
   site_settings:
     disabled: "onemogočeno"
     allow_uncategorized_topics: "Dovoli ustvarjanje tem brez kategorije. OPOZORILO: Če obstajajo nerazvrščene teme, jih morate ponovno razvrstiti, preden izklopite to nastavitev."
     download_remote_images_to_local: "Pretvorite oddaljene (povezane) slike v lokalne slike tako, da jih prenesete; To ohranja vsebino, tudi če bodo slike v prihodnosti odstranjene z oddaljenega spletnega mesta."
     block_hotlinked_media: "Uporabnikom preprečite, da bi v svoje objave vključevali oddaljene (povezane) medijske vsebine. Oddaljene vsebine, ki niso prenesene z uporabo nastavitve 'download_remote_images_to_local', bodo zamenjane z nadomestno povezavo."
     block_hotlinked_media_exceptions: "Seznam naslovov URL domen, za katere ne velja nastavitev block_hotlinked_media. Naslove vpišite vključno s protokolom (npr. https://example.com)."
-    twitter_summary_large_image: "Velika slika povzetka za kartico Twitter (imeti mora vsaj 280 pik v širino in vsaj 150 pik v višino, ne sme biti .svg). Če ostane prazno se metapodatki kartice ustvarijo z uporabo opengraph_image, razen če tudi ta ni .svg"
+    x_summary_large_image: "Velika slika povzetka za kartico Twitter (imeti mora vsaj 280 pik v širino in vsaj 150 pik v višino, ne sme biti .svg). Če ostane prazno se metapodatki kartice ustvarijo z uporabo opengraph_image, razen če tudi ta ni .svg"
     send_welcome_message: "Pošlji sporočilo z dobrodošlico in kratkimi uvodnimi navodili vsem novim uporabnikom."
     auth_skip_create_confirm: Pri prijavi s pomočjo zunanjega overjanja preskočite pojavno okno za ustvarjanje računa. Priporočena uporaba skupaj z auth_overrides_email, auth_overrides_username in auth_overrides_name.
     auth_immediately: "Samodejno preusmeri na zunanji sistem za prijavo brez interakcije uporabnika. To začne veljati šele, ko je login_required vklopljen in ko obstaja samo en način zunanje overitve"
     enable_discourse_connect: "Omogoči vpis s pomočjo DiscourseConnect (prej »Discourse SSO«) (OPOZORILO: E-POŠTNI NASLOVI UPORABNIKOV *MORAJO* BITI OVERJENI PRI ZUNANJEM PONUDNIKU!)"
     avatar_sizes: "Seznam samodejno ustvarjenih velikosti avatarjev."
     use_site_small_logo_as_system_avatar: "Uporabi mali logotip spletnega mesta za avatar sistemskega uporabnika. Deluje le, če je logotip na voljo."
-    min_trust_level_to_allow_ignore: "Najmanjša raven zaupanja, potrebna za prezrtje uporabnikov"
     enable_filtered_replies_view: 'Gumb "(n) odgovorov" strne vse druge objave in prikaže samo trenutno objavo in njene odgovore.'
     dark_mode_none: "Brez"
     suppress_uncategorized_badge: "Ne prikaži značke za nerazvrščene teme na seznamih tem."
     skip_auto_delete_reply_likes: "Pri samodejnem brisanju starih odgovorov preskočite brisanje objav s tem ali večjim številom všečkov."
     default_other_skip_new_user_tips: "Preskoči namige in značke za nove uporabnike."
-    shared_drafts_min_trust_level: "Uporabnikom omogočite ogled in urejanje osnutkov v skupni rabi."
-    keywords:
-      clean_up_inactive_users_after_days:
-      - ""
-      - "nedejaven"
-      - ""
-      purge_unactivated_users_grace_period_days:
-      - ""
-      - "nedejaven"
-      - ""
   search:
     within_post: "#%{post_number} od %{username}"
     types:
@@ -871,7 +858,6 @@ sl:
     password_too_long: "Geslo je omejeno na 200 znakov."
     email_too_long: "Vaš e-naslov je predolg. E-naslov je lahko dolg največ 254 znakov, od tega domena največ 253 znakov."
     reserved_username: "Uporabniško ime ni dovoljeno."
-    missing_user_field: "Niste vnesli vseh uporabniških podatkov."
     auth_complete: "Avtentikacija je končana."
     click_to_continue: "Kliknite tukaj za nadaljevanje."
     second_factor_title: "Preverjanje v dveh korakih"
@@ -995,6 +981,7 @@ sl:
         S časom vas bomo bolje spoznali in bomo vaše začasne omejitve novega uporabnika odstranili. Čez čas boste lahko dosegli [nivo zaupanja](https://blog.discourse.org/2018/06/understanding-discourse-trust-levels/), ki vam bo omogočal več dejanj s katerimi skupaj upravljamo našo skupnost.
     welcome_user:
       title: "Dobrodošel uporabnik"
+      preview: "Dobrodošli na %{site_name}!"
       subject_template: "Dobrodošli na %{site_name}!"
       text_body_template: |
         Hvala za prijavo na %{site_name} in dobrodošli!
@@ -1010,6 +997,7 @@ sl:
       text_body_template: "Pozdravljeni! \n\nVeseli nas, da pridno spremljate naš forum. Zato smo vam povišali [nivo zaupanja!](https://blog.discourse.org/2018/06/understanding-discourse-trust-levels/)\n\nVeseli smo, da ste med nami in zato bi radi izvedeli več o vas. Vzemite si čas in [izpolnite svoj profil](%{base_url}/my/preferences/profile) ali [ustvarite novo temo](%{base_url}/categories).\n"
     welcome_invite:
       title: "Dobrodošel povabljeni"
+      preview: "Dobrodošli na %{site_name}!"
       subject_template: "Dobrodošli na %{site_name}!"
       text_body_template: |
         Hvala da ste sprejeli povabilo na %{site_name} -- dobrodošli!
@@ -1075,7 +1063,6 @@ sl:
         Vaše e-sporočilo je bilo poslano na blokiran e-naslov. Poskusite poslati na drug e-naslov ali [kontaktirajte osebje](%{base_url}/about).
     email_reject_not_allowed_email:
       title: "E-sporočilo zavrnjeno - nedovoljen e-naslov"
-      subject_template: "[%{email_prefix}] Napaka e-pošte -- blokiran e-naslov"
       text_body_template: |
         Žal nam je, ampak vaše e-sporočilo poslano na %{destination} (z naslovom %{former_title}) ni bilo sprejeto.
 
@@ -1264,11 +1251,15 @@ sl:
     user_automatically_silenced:
       title: "Uporabnik samodejno utišan"
       subject_template: "Nov uporabnik %{username} je utišan zaradi prijav skupnosti"
+    user_automatically_silenced_with_reason:
+      title: "Uporabnik samodejno utišan"
+      subject_template: "Nov uporabnik %{username} je utišan zaradi prijav skupnosti"
     spam_post_blocked:
       title: "Neželen prispevek blokiran"
       subject_template: "Prispevek novega uporabnika %{username} je blokiran zaradi ponovljenih povezav"
     unsilenced:
       title: "Od-utišan"
+      preview: "Uporabniški račun ni več na čakanju."
       subject_template: "Uporabniški račun ni več na čakanju"
       text_body_template: |
         Pozdravljeni,
@@ -1293,7 +1284,6 @@ sl:
       text_body_template: "Nastavitev `download_remote_images_to_local` je onemogočena, ker je bil dosežena `download_remote_images_threshold` omejitev prostora na disku ."
     new_user_of_the_month:
       title: "Vi ste nov uporabnik meseca!"
-      subject_template: "Vi ste nov uporabnik meseca!"
       text_body_template: |
         Čestitamo, osvojili ste **Nov uporabnik meseca %{month_year}**. :trophy:
 
@@ -1311,7 +1301,6 @@ sl:
     Za odjavo od takšnih e-sporočil [kliknite tukaj](%{unsubscribe_url}).
   unsubscribe_link_and_mail: |
     Za odjavo od takšnih e-sporočil [kliknite tukaj](%{unsubscribe_url}).
-  email_from: "%{user_name} preko %{site_name}"
   user_notifications:
     previous_discussion: "Prejšnji odgovori"
     reached_limit:
@@ -1525,6 +1514,7 @@ sl:
     account_exists:
       title: "Račun že obstaja"
       subject_template: "[%{email_prefix}] Račun že obstaja"
+      subject_template_improved: "Račun že obstaja"
       text_body_template: |
         Poizkusili ste ustvariti račun na %{site_name} ali spremeniti e-naslov računa na %{email}, vendar račun s tem naslovom že obstaja.
 
@@ -1544,6 +1534,7 @@ sl:
       popular_posts: "Zanimivi prispevki"
       more_new: "Novo za vas"
       subject_template: "[%{email_prefix}] Povzetek"
+      subject_template_improved: "Povzetek"
       unsubscribe: "Ta povzetek je poslan s strani %{site_link}, ker vas nekaj časa ni bilo na strani. Spremenite %{email_preferences_link} ali %{unsubscribe_link} za odjavo."
       your_email_settings: "vaše nastavitve e-pošte"
       click_here: "kliknite tukaj"
@@ -1559,7 +1550,9 @@ sl:
         %{base_url}/u/password-reset/%{email_token}
     email_login:
       title: "Prijava s povezavo"
+      preview: "Prijava s povezavo."
       subject_template: "[%{email_prefix}] Prijava s povezavo"
+      subject_template_improved: "Prijava s povezavo"
       text_body_template: |
         Tukaj je vaša povezava za prijavo na [%{site_name}](%{base_url}).
 
@@ -1569,7 +1562,6 @@ sl:
         %{base_url}/session/email-login/%{email_token}
     set_password:
       title: "Nastavi geslo"
-      subject_template: "[%{email_prefix}] Nastavi geslo"
       text_body_template: |
         Nekdo je zahteval dodajanje gesla na vašemu računu pri [%{site_name}](%{base_url}). Alternativno se lahko prijavite tudi s podprtimi zunanjimi računi (Google, Facebook...), ki se ujemajo z vašim e-naslovom.
 
@@ -1580,9 +1572,9 @@ sl:
     admin_login:
       title: "Admin prijava"
       subject_template: "[%{email_prefix}] Prijava"
+      subject_template_improved: "Prijava"
     account_created:
       title: "Račun ustvarjen"
-      subject_template: "[%{email_prefix}] Vaš nov uporabniški račun"
       text_body_template: |
         Ustvarjen je bil nov uporabniški račun na %{site_name}
 
@@ -1657,24 +1649,18 @@ sl:
         Če zgornja povezava ne deluje, poskusite kopirati povezavo v naslov v vašem spletnem brskalniku.
     suspicious_login:
       title: "Opozorilo nove prijave"
-      subject_template: "[%{site_name}] Opozorilo nove prijave iz %{location}"
     post_approved:
       title: "Vaš prispevek je bil odobren"
   page_not_found:
     page_title: "stran ne obstaja"
     title: "Oops! Ta stran ne obstaja ali je zasebna."
-    popular_topics: "Zanimivo"
-    recent_topics: "Nedavno"
     see_more: "Več"
-    search_title: "Išči na tem spletnem mestu"
     search_button: "Išči"
   upload:
     edit_reason: "prenos slik v lokalno kopijo"
     unauthorized: "Oprostite, datoteka ki ste jo hoteli naložiti ni podprta (podprte pripone:%{authorized_extensions})."
   flag_reason:
     sockpuppet: "Nov uporabnik je ustvaril temo in drugi novi uporabnik z enakim IP naslovom (%{ip_address}) je odgovoril. Preverite <a href='%{base_path}/admin/site_settings/category/spam'>`flag_sockpuppets`</a> nastavitev strani."
-  color_schemes:
-    default_theme_name: "Privzeto"
   edit_this_page: "Uredi to stran"
   csv_export:
     boolean_yes: "Da"
@@ -1713,8 +1699,6 @@ sl:
     regular:
       name: Redni član
       description: <a href="https://blog.discourse.org/2018/06/understanding-discourse-trust-levels/">Dodeljena</a> možnost menjave kategorije, preimenovanja, sledenja povezav, wiki, več všečkov
-      long_description: |
-        Ta značka vam je podeljena, ko dosežete nivo zaupanja 3. Hvala, ker ste reden udeleženec naše skupnosti že nekaj mesecev. Ste eden bolj aktivnih bralcev in zanesljiv sodelavec, ki naredi našo skupnost enkratno. Sedaj lahko menjate kategorije temam, preimenujete teme, lahko uporabljate bolj zmogljive načine prijave, dostopate do zasebne lože in podelite več všečkov vsak dan.
     leader:
       name: Vodja
       description: <a href="https://blog.discourse.org/2018/06/understanding-discourse-trust-levels/">Dodeljena</a> možnost globalnega urejanja, pripenjanja, zapiranja, arhiviranja, razdruževanja in združevanja ter več všečkov
@@ -1768,18 +1752,12 @@ sl:
     nice_share:
       name: Zanimiva souporaba
       description: Delili ste povezavo na prispevek s 25 edinstvenimi obiskovalci
-      long_description: |
-        Ta značka vam je podeljena, ker ste delili povezavo na katero je kliknilo 25 zunanjih obiskovalcev. Hvala, ker delite dobro besedo o naših razpravah in naši skupnosti.
     good_share:
       name: Dobra souporaba
       description: Delili ste povezavo na prispevek s 300 edinstvenimi obiskovalci
-      long_description: |
-        Ta značka vam je podeljena, ker ste delili povezavo na katero je kliknilo 300 zunanjih obiskovalcev. Pokazali ste odličen pogovor veliko novim ljudem in ste tako omogočili, da naša skupnost raste.
     great_share:
       name: Odlična souporaba
       description: Delili ste povezavo na prispevek s 1000 edinstvenimi obiskovalci
-      long_description: |
-        Ta značka vam je podeljena, ker ste delili povezavo na katero je kliknilo 1000 zunanjih obiskovalcev. Delili ste zanimiv pogovor ogromno novim ljudem in ste tako zelo prispevali, da naša skupnost raste.
     first_like:
       name: Prvi všeček
       description: Všečkali prvi prispevek
@@ -1922,10 +1900,6 @@ sl:
         Ta značka vam je podeljena za obiskovanje 365 zaporednih dni. Neverjetno, celo leto!
     badge_title_metadata: "%{display_name} značka na %{site_title}"
   admin_login:
-    success: "E-sporočilo poslano"
-    errors:
-      unknown_email_address: "Neznan e-naslov."
-      invalid_token: "Napačen žeton."
     email_input: "Administratorjev e-naslov"
     submit_button: "Pošlji e-sporočilo"
   tags:
@@ -1947,37 +1921,24 @@ sl:
   wizard:
     title: "Postavitev Discourse"
     step:
-      introduction:
+      setup:
+        title: "Začetki"
         fields:
-          title:
-            placeholder: "Mikijev klub"
-          site_description:
-            placeholder: "Prostor kjer Miki debatira s svojimi prijatelji o zanimivih zadevah "
           default_locale:
             label: "Jezik"
-      privacy:
-        fields:
           login_required:
-            placeholder: "Zasebno"
-      styling:
-        fields:
-          styling_preview:
-            label: "Predogled"
-          homepage_style:
+            label: "Vidljivost"
             choices:
-              categories_only:
-                label: "Samo kategorije"
-              categories_with_featured_topics:
-                label: "Kategorije z izpostavljenimi temami"
-              categories_and_latest_topics:
-                label: "Kategorije in najnovejše teme"
-              categories_and_top_topics:
-                label: "Kategorije in najboljše teme"
-      invites:
-        disabled: "Ker so prijave onemogočene, ni možno povabiti nikogar. Nadaljujte na naslednji korak."
+              public:
+                label: "Javni"
+              private:
+                label: "Zasebni"
   onebox:
     github:
       closed: "zaprto"
+      status_date:
+        approved: "potrjen"
+        closed: "zaprta"
   discourse_push_notifications:
     popup:
       mentioned: '%{username} vas je omenil v "%{topic}" - %{site_title}'
@@ -1985,7 +1946,7 @@ sl:
       quoted: '%{username} vas je citiral v "%{topic}" - %{site_title}'
       replied: '%{username} vam je odgovoril v "%{topic}" - %{site_title}'
       posted: '%{username} je objavil v "%{topic}" - %{site_title}'
-      private_message: '%{username} vam je poslal zasebno sporočilo v "%{topic}" - %{site_title}'
+      private_message: '%{username} vam je poslal zasebno sporočilo "%{topic}" - %{site_title}'
       linked: '%{username} je objavil povezavo na vaš prispevek v "%{topic}" - %{site_title}'
       watching_first_post: '%{username} je ustvaril novo temo "%{topic}" - %{site_title}'
       confirm_title: "Obvestila omogočena - %{site_title}"
@@ -2019,38 +1980,61 @@ sl:
         description: "Potrdi prijavo in utišaj uporabnika"
       agree_and_restore:
         description: "Povrni prispevek tako da ga lahko vidijo vsi uporabniki"
-      delete_single:
+      delete:
         title: "Izbriši"
+        complete: "Prispevek izbrisan."
+      delete_and_ignore:
+        complete: "Prispevek izbrisan."
       delete_and_ignore_replies:
         confirm: "Ali ste prepričani, da hočete izbrisati tudi odgovore na prispevek?"
+      delete_and_agree:
+        complete: "Prispevek izbrisan."
       delete_and_agree_replies:
         confirm: "Ali ste prepričani, da hočete izbrisati tudi odgovore na prispevek?"
-      disagree_and_restore:
-        description: "Povrni prispevek tako da ga lahko vidijo vsi uporabniki"
-      disagree:
+      disagree_bundle:
         title: "Ne"
       ignore:
         title: "Prezri"
       ignore_and_do_nothing:
         title: "Ne naredi nič"
       approve:
-        title: "Odobri"
+        title: "Da"
+        complete: "Objava odobrena."
       approve_post:
-        title: "Odobri prispevek"
+        title: "Da"
+        complete: "Objava odobrena."
+      approve_post_closed:
+        title: "Da"
+        complete: "Objava odobrena."
+      reject_post_bundle:
+        title: "Ne"
       reject_post:
         title: "Zavrni prispevek"
+        complete: "Objava zavrnjena."
       approve_user:
-        title: "Odobri uporabnika"
+        title: "Da"
       reject_user:
+        title: "Ne"
         delete:
           title: "Izbriši uporabnika"
-          description: "Ta uporabnik bo izbrisan iz foruma."
+          complete: "Uporabnik izbrisan."
         block:
           title: "Izbriši in blokiraj uporabnika"
           description: "Ta uporabnik bo izbrisan in njegov IP naslov in e-naslov bo blokiran."
+      confirm_spam:
+        title: "Da"
+      not_spam:
+        title: "Ne"
       reject:
         title: "Zavrni"
+      approve_and_restore:
+        title: "Da"
+      approve_and_unhide:
+        title: "Da"
+      delete_post:
+        complete: "Prispevek izbrisan"
       delete_user:
+        complete: "Uporabnik izbrisan"
         reason: "Izbriši preko vrste za pregled"
   fallback_username: "uporabnik"
   activemodel:

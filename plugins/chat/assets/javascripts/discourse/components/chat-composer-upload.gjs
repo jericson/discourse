@@ -1,21 +1,20 @@
 import Component from "@glimmer/component";
 import DButton from "discourse/components/d-button";
 import concatClass from "discourse/helpers/concat-class";
-import { isImage } from "discourse/lib/uploads";
-import dIcon from "discourse-common/helpers/d-icon";
-import i18n from "discourse-common/helpers/i18n";
+import icon from "discourse/helpers/d-icon";
+import { getURLWithCDN } from "discourse/lib/get-url";
+import { isAudio, isImage, isVideo } from "discourse/lib/uploads";
+import { i18n } from "discourse-i18n";
 
 export default class ChatComposerUpload extends Component {
-  get isImage() {
-    return isImage(
-      this.args.upload.original_filename || this.args.upload.fileName
-    );
-  }
-
   get fileName() {
     return this.args.isDone
       ? this.args.upload.original_filename
       : this.args.upload.fileName;
+  }
+
+  get previewImageSrc() {
+    return getURLWithCDN(this.args.upload?.url);
   }
 
   <template>
@@ -23,24 +22,28 @@ export default class ChatComposerUpload extends Component {
       <div
         class={{concatClass
           "chat-composer-upload"
-          (if this.isImage "chat-composer-upload--image")
+          (if (isImage this.fileName) "chat-composer-upload--image")
           (unless @isDone "chat-composer-upload--in-progress")
         }}
       >
         <div class="preview">
-          {{#if this.isImage}}
+          {{#if (isImage this.fileName)}}
             {{#if @isDone}}
-              <img class="preview-img" src={{@upload.short_path}} />
+              <img class="preview-img" src={{this.previewImageSrc}} />
             {{else}}
-              {{dIcon "far-image"}}
+              {{icon "far-image"}}
             {{/if}}
+          {{else if (isVideo this.fileName)}}
+            {{icon "file-video"}}
+          {{else if (isAudio this.fileName)}}
+            {{icon "file-audio"}}
           {{else}}
-            {{dIcon "file-alt"}}
+            {{icon "file-lines"}}
           {{/if}}
         </div>
 
         <span class="data">
-          {{#unless this.isImage}}
+          {{#unless (isImage this.fileName)}}
             <div class="top-data">
               <span class="file-name">{{this.fileName}}</span>
             </div>
@@ -48,7 +51,7 @@ export default class ChatComposerUpload extends Component {
 
           <div class="bottom-data">
             {{#if @isDone}}
-              {{#unless this.isImage}}
+              {{#unless (isImage this.fileName)}}
                 <span class="extension-pill">{{@upload.extension}}</span>
               {{/unless}}
             {{else}}
@@ -70,7 +73,7 @@ export default class ChatComposerUpload extends Component {
 
         <DButton
           @action={{@onCancel}}
-          @icon="times"
+          @icon="xmark"
           @title="chat.remove_upload"
           class="btn-flat chat-composer-upload__remove-btn"
         />

@@ -1,6 +1,12 @@
 # frozen_string_literal: true
 
 RSpec.describe Permalink do
+  let(:topic) { Fabricate(:topic) }
+  let(:post) { Fabricate(:post, topic: topic) }
+  let(:category) { Fabricate(:category) }
+  let(:tag) { Fabricate(:tag) }
+  let(:user) { Fabricate(:user) }
+
   describe "normalization" do
     it "correctly normalizes" do
       normalizer = Permalink::Normalizer.new("/(\\/hello.*)\\?.*/\\1|/(\\/bye.*)\\?.*/\\1")
@@ -13,37 +19,48 @@ RSpec.describe Permalink do
 
   describe "new record" do
     it "strips blanks" do
-      permalink = described_class.create!(url: " my/old/url  ")
+      permalink = described_class.create!(url: " my/old/url  ", topic_id: topic.id)
       expect(permalink.url).to eq("my/old/url")
     end
 
     it "removes leading slash" do
-      permalink = described_class.create!(url: "/my/old/url")
+      permalink = described_class.create!(url: "/my/old/url", topic_id: topic.id)
       expect(permalink.url).to eq("my/old/url")
     end
 
     it "checks for unique URL" do
-      permalink = described_class.create(url: "/my/old/url")
+      permalink = described_class.create(url: "/my/old/url", topic_id: topic.id)
       expect(permalink.errors[:url]).to be_empty
 
-      permalink = described_class.create(url: "/my/old/url")
+      permalink = described_class.create(url: "/my/old/url", topic_id: topic.id)
       expect(permalink.errors[:url]).to be_present
 
-      permalink = described_class.create(url: "my/old/url")
+      permalink = described_class.create(url: "my/old/url", topic_id: topic.id)
       expect(permalink.errors[:url]).to be_present
+    end
+
+    it "ensures that exactly one associated value is set" do
+      permalink = described_class.create(url: "my/old/url")
+      expect(permalink.errors[:base]).to be_present
+
+      permalink = described_class.create(url: "my/old/url", topic_id: topic.id, post_id: post.id)
+      expect(permalink.errors[:base]).to be_present
+
+      permalink = described_class.create(url: "my/old/url", post_id: post.id)
+      expect(permalink.errors[:base]).to be_empty
     end
 
     context "with special characters in URL" do
       it "percent encodes any special character" do
-        permalink = described_class.create!(url: "/2022/10/03/привет-sam")
+        permalink = described_class.create!(url: "/2022/10/03/привет-sam", topic_id: topic.id)
         expect(permalink.url).to eq("2022/10/03/%D0%BF%D1%80%D0%B8%D0%B2%D0%B5%D1%82-sam")
       end
 
       it "checks for unique URL" do
-        permalink = described_class.create(url: "/2022/10/03/привет-sam")
+        permalink = described_class.create(url: "/2022/10/03/привет-sam", topic_id: topic.id)
         expect(permalink.errors[:url]).to be_empty
 
-        permalink = described_class.create(url: "/2022/10/03/привет-sam")
+        permalink = described_class.create(url: "/2022/10/03/привет-sam", topic_id: topic.id)
         expect(permalink.errors[:url]).to be_present
       end
     end
@@ -53,11 +70,6 @@ RSpec.describe Permalink do
     subject(:target_url) { permalink.target_url }
 
     let(:permalink) { Fabricate.build(:permalink) }
-    let(:topic) { Fabricate(:topic) }
-    let(:post) { Fabricate(:post, topic: topic) }
-    let(:category) { Fabricate(:category) }
-    let(:tag) { Fabricate(:tag) }
-    let(:user) { Fabricate(:user) }
 
     it "returns nil when nothing is set" do
       expect(target_url).to eq(nil)
@@ -243,6 +255,44 @@ RSpec.describe Permalink do
 
       permalink.user = nil
       expect(permalink.target_url).to be_nil
+    end
+  end
+
+  describe "#internal? and #external?" do
+    it "returns internal for topic permalinks" do
+      permalink = Fabricate.build(:permalink, topic:)
+      expect(permalink.internal?).to eq(true)
+      expect(permalink.external?).to eq(false)
+    end
+
+    it "returns internal for post permalinks" do
+      permalink = Fabricate.build(:permalink, post:)
+      expect(permalink.internal?).to eq(true)
+      expect(permalink.external?).to eq(false)
+    end
+
+    it "returns internal for category permalinks" do
+      permalink = Fabricate.build(:permalink, category:)
+      expect(permalink.internal?).to eq(true)
+      expect(permalink.external?).to eq(false)
+    end
+
+    it "returns internal for tag permalinks" do
+      permalink = Fabricate.build(:permalink, tag:)
+      expect(permalink.internal?).to eq(true)
+      expect(permalink.external?).to eq(false)
+    end
+
+    it "returns internal for user permalinks" do
+      permalink = Fabricate.build(:permalink, user:)
+      expect(permalink.internal?).to eq(true)
+      expect(permalink.external?).to eq(false)
+    end
+
+    it "returns external for external URL permalinks" do
+      permalink = Fabricate.build(:permalink, external_url: "https://example.com")
+      expect(permalink.internal?).to eq(false)
+      expect(permalink.external?).to eq(true)
     end
   end
 end

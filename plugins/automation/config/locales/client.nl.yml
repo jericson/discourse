@@ -6,19 +6,29 @@
 
 nl:
   js:
+    admin:
+      logs:
+        staff_actions:
+          actions:
+            update_automation: automatisering bijwerken
+            delete_automation: automatisering verwijderen
     discourse_automation:
       title: Automatisering
-      create: Maken
-      update: Bijwerken
+      table_title: Automatiseringen
+      create: Automatisering toevoegen
+      update: Automatisering bijwerken
+      back: Terug
+      edit: Bewerken
       select_script: Selecteer een script
       select_trigger: Selecteer een trigger
-      confirm_automation_reset: Deze actie reset script- en triggeropties, de nieuwe toestand wordt opgeslagen. Wil je doorgaan?
-      confirm_automation_trigger: Deze actie activeert de automatisering, wil je doorgaan?
-      no_automation_yet: Je hebt nog geen automatiseringen gemaakt.
+      confirm_automation_reset: Deze actie reset script- en triggeropties en de nieuwe toestand wordt opgeslagen. Wil je doorgaan?
+      confirm_automation_trigger: Deze actie triggert de automatisering. Wil je doorgaan?
+      no_automation_yet: Er zijn momenteel geen automatiseringen geconfigureerd.
+      filter_placeholder: Filter op naam of beschrijving...
       edit_automation:
         trigger_section:
           forced: Deze trigger wordt geforceerd door een script.
-          next_pending_automation: "De volgende automatisering wordt geactiveerd op: %{date}"
+          next_pending_automation: "De volgende automatisering wordt getriggerd op: %{date}"
           trigger_now: "Nu triggeren"
           title: Wanneer/wat...
         fields_section:
@@ -42,21 +52,25 @@ nl:
           confirm_remove_pm: "Weet je zeker dat je dit PB wilt verwijderen?"
           placeholder_title: PB-titel
           add_pm: PB toevoegen
-          no_pm_created: Je hebt nog geen PB gemaakt. PB's worden gestuurd wanneer je automatisering is geactiveerd.
+          no_pm_created: Je hebt nog geen PB's gemaakt. PB's worden gestuurd wanneer je automatisering wordt getriggerd.
           title:
             label: Titel
           raw:
             label: Inhoud
           delay:
             label: Vertraging (minuten)
-          prefers_encrypt:
-            label: Versleutelt PB indien beschikbaar
         group:
           label: Groep
         text:
           label: Tekst
       triggerables:
-        not_found: Kon trigger '%{trigger}' voor automatisering '%{automation}' niet vinden, controleer of de bijbehorende plug-in is geïnstalleerd
+        post_flag_created:
+          fields:
+            categories:
+              label: Categorieën
+            tags:
+              label: Tags
+        not_found: Kon trigger '%{trigger}' voor automatisering '%{automation}' niet vinden. Controleer of de bijbehorende plug-in is geïnstalleerd
         user_badge_granted:
           fields:
             badge:
@@ -85,7 +99,7 @@ nl:
           frequencies:
             minute: minuut
             hour: uur
-            day: day
+            day: dag
             weekday: weekdag
             week: week
             month: maand
@@ -137,52 +151,91 @@ nl:
         point_in_time:
           fields:
             execute_at:
-              label: Uitvoeren om
+              label: Uitvoeren op
         topic:
           fields:
             restricted_topic:
               label: Topic-ID
         post_created_edited:
           fields:
+            original_post_only:
+              label: Alleen origineel bericht
+              description: Wordt alleen getriggerd als het bericht het oorspronkelijke bericht in het topic is
             action_type:
               label: Actietype
-              description: "Optioneel, beperk triggering tot alleen gemaakte of bewerkte gebeurtenissen"
+              description: "Optioneel: beperk triggering tot alleen gemaakte of bewerkte gebeurtenissen"
             valid_trust_levels:
               label: Geldige vertrouwensniveaus
               description: Wordt alleen getriggerd als een bericht wordt gemaakt door een gebruiker met deze vertrouwensniveaus. Standaard ingesteld op elk vertrouwensniveau
-            restricted_category:
-              label: Categorie
-              description: Optioneel, wordt alleen geactiveerd als het topic van het bericht in deze categorie valt
-            restricted_group:
-              label: Groep
-              description: Optioneel, wordt alleen geactiveerd als het topic van het bericht een privébericht is in de inbox van deze groep
-            ignore_group_members:
-              label: Groepsleden negeren
-              description: Sla de trigger over als de afzender lid is van de hierboven opgegeven groep
+            restricted_tags:
+              label: Tags
+              description: Optioneel, wordt alleen getriggerd als het bericht een van deze tags heeft
+            restricted_categories:
+              label: Categorieën
+              description: Optioneel, wordt alleen getriggerd als het topic van het bericht tot deze categorieën behoort
+            exclude_subcategories:
+              label: Subcategorieën uitsluiten
+              description: Optioneel, wordt alleen getriggerd als het topic van het bericht precies in de hierboven opgegeven categorieën valt
+            restricted_archetype:
+              label: Topictype
+              description: Optioneel, sta toe dat alleen op topics of persoonlijke berichten wordt getriggerd
+            restricted_groups:
+              label: Beperkte groepen
+              description: Optioneel, wordt alleen getriggerd als de gebruiker van het bericht tot een van deze groepen behoort
+            restricted_inbox_groups:
+              label: Beperkte inboxgroepen
+              description: Optioneel, wordt alleen getriggerd als het topic van het bericht een persoonlijk bericht is in een van de groepsinboxen
+            excluded_groups:
+              label: Uitgesloten groepen
+              description: Optioneel, sla de trigger over als de gebruiker van het bericht tot een van deze groepen behoort
             ignore_automated:
               label: Geautomatiseerd negeren
               description: Sla de trigger over als de afzender een noreply-e-mailadres heeft of een geautomatiseerde bron is. Alleen van toepassing op berichten die via e-mail zijn gemaakt
             first_post_only:
               label: Alleen eerste bericht
-              description: Wordt alleen geactiveerd als het bericht het eerste bericht is dat een gebruiker heeft gemaakt
+              description: Wordt alleen geactiveerd als het bericht het eerste is dat een gebruiker heeft gemaakt
             first_topic_only:
               label: Alleen eerste topic
-              description: Wordt alleen geactiveerd als het topic het eerste topic is dat een gebruiker heeft gemaakt
+              description: Wordt alleen geactiveerd als het topic het eerste is dat een gebruiker heeft gemaakt
+            skip_via_email:
+              label: "Via e-mail overslaan"
+              description: "Sla de trigger over als het bericht via e-mail is aangemaakt"
+            post_features:
+              label: Berichtkenmerken
+              description: "Optioneel, beperk de triggering tot alleen berichten met deze kenmerken"
           created: Gemaakt
           edited: Bewerkt
+          with_images: Afbeeldingen
+          with_links: Links
+          with_code: Code
+          with_uploads: Uploads
+        user_updated:
+          fields:
+            user_profile:
+              label: Gebruikersprofielvelden
+              description: Wordt alleen geactiveerd als de gebruiker al deze velden heeft ingevuld
+            custom_fields:
+              label: Aangepaste gebruikersvelden
+              description: Wordt alleen geactiveerd als de gebruiker al deze velden heeft ingevuld
+            once_per_user:
+              label: Eenmaal per gebruiker
+              description: Wordt slechts eenmaal per gebruiker geactiveerd
+            new_users_only:
+              label: Alleen nieuwe gebruikers
+              description: Wordt alleen geactiveerd voor nieuwe gebruikers die lid worden nadat deze automatisering is ingeschakeld
         category_created_edited:
           fields:
             restricted_category:
               label: Bovenliggende categorie
-              description: Optioneel, maakt het mogelijk om de uitvoering van triggers te beperken tot deze categorie
+              description: 'Optioneel: maakt het mogelijk om de uitvoering van triggers te beperken tot deze categorie'
         pm_created:
           fields:
             restricted_user:
               label: Gebruikers
-              description: Wordt alleen geactiveerd voor PB's die naar deze gebruiker worden verzonden
+              description: Wordt alleen getriggerd voor PB's die naar deze gebruiker worden verzonden
             restricted_group:
               label: Groep
-              description: Wordt alleen geactiveerd voor PB's die naar deze groep worden verzonden
+              description: Wordt alleen getriggerd voor PB's die naar deze groep worden verzonden
             ignore_staff:
               label: Medewerkers negeren
               description: Sla de trigger over als de afzender een medewerker is
@@ -195,6 +248,23 @@ nl:
             valid_trust_levels:
               label: Geldige vertrouwensniveaus
               description: Wordt alleen getriggerd als een bericht wordt gemaakt door een gebruiker met deze vertrouwensniveaus. Standaard ingesteld op elk vertrouwensniveau
+        topic_tags_changed:
+          trigger_on_modes:
+            tags_added_or_removed: Tags toegevoegd of verwijderd
+            tags_added: Tags toegevoegd
+            tags_removed: Tags verwijderd
+          fields:
+            watching_categories:
+              label: Categorieën observeren
+              description: Wordt alleen getriggerd als het topic in een van deze categorieën valt
+            watching_tags:
+              label: Tags observeren
+              description: Wordt alleen getriggerd als het topic een van deze tags heeft
+            trigger_on:
+              label: Triggeren bij
+            trigger_with_pms:
+              label: Triggeren bij PB's
+              description: Wordt ook getriggerd als de tags in een PB zijn gewijzigd
         after_post_cook:
           fields:
             valid_trust_levels:
@@ -202,12 +272,12 @@ nl:
               description: Wordt alleen getriggerd als een bericht wordt gemaakt door een gebruiker met deze vertrouwensniveaus. Standaard ingesteld op elk vertrouwensniveau
             restricted_category:
               label: Categorie
-              description: Optioneel, wordt alleen geactiveerd als het topic van het bericht in deze categorie valt
+              description: 'Optioneel: wordt alleen getriggerd als het topic van het bericht tot deze categorie behoort'
             restricted_tags:
               label: Tags
-              description: Optioneel, wordt alleen geactiveerd als het bericht een van deze tags heeft
+              description: Optioneel, wordt alleen getriggerd als het bericht een van deze tags heeft
       scriptables:
-        not_found: Kon script '%{script}' voor automatisering '%{automation}' niet vinden, controleer of de bijbehorende plug-in is geïnstalleerd
+        not_found: Kon script '%{script}' voor automatisering '%{automation}' niet vinden. Controleer of de bijbehorende plug-in is geïnstalleerd
         zapier_webhook:
           fields:
             webhook_url:
@@ -220,6 +290,7 @@ nl:
               description: Reageert slechts één keer per topic
             word_answer_list:
               label: Lijst van woord-antwoordparen
+              description: "Definieert een lijst van sleutel-waardegroepen, waarbij de 'sleutel' de gezochte term is en de 'waarde' de tekst van het antwoord. De 'sleutel' kan leeg worden gelaten om op alle triggers te reageren, ongeacht de inhoud. Merk op dat 'waarde' '{{key}}' accepteert als tijdelijke aanduiding die moet worden vervangen door de waarde van 'sleutel' in het antwoord. Merk op dat 'sleutel' wordt geëvalueerd als een regex en dat speciale tekens zoals '.' moeten worden ge-escapet als je echt een punt bedoelt, bijvoorbeeld: '\\ .'"
             answering_user:
               label: Antwoordende gebruiker
               description: Standaard ingesteld op Systeemgebruiker
@@ -227,15 +298,30 @@ nl:
           fields:
             tags:
               label: Tags
-              description: Lijst van tags om toe te voegen aan de topic.
+              description: Lijst van tags om toe te voegen aan het topic.
         post:
           fields:
             creator:
               label: Maker
+              post_creator_context: De maker van het bericht
+              updated_user_context: De bijgewerkte gebruiker
             topic:
               label: Topic-ID
             post:
               label: Berichtinhoud
+        topic:
+          fields:
+            creator:
+              label: Maker
+              updated_user_context: De bijgewerkte gebruiker
+            body:
+              label: Topicinhoud
+            title:
+              label: Topictitel
+            category:
+              label: Topiccategorie
+            tags:
+              label: Topictags
         group_category_notification_default:
           fields:
             group:
@@ -281,7 +367,7 @@ nl:
               label: Reden (standaard)
             actor:
               label: Gebruiker
-              description: "De gebruiker die verantwoordelijk is voor de schorsing (standaard: systeem)"
+              description: "De gebruiker verantwoordelijk voor de schorsing (standaard: systeem)"
         pin_topic:
           fields:
             pinnable_topic:
@@ -315,14 +401,15 @@ nl:
               label: Berichten gestuurd naar gever
         send_pms:
           add_a_pm_btn:
-            label: Voeg een PB toe
+            label: PB toevoegen
           fields:
             receiver:
               label: PB-ontvanger
             sendable_pms:
               label: PB's
             sender:
-              label: Afzender PB's
+              label: PB-afzender
+              description: "Zorg dat de afzender de juiste rechten heeft om PB's naar de ontvanger te sturen"
         close_topic:
           fields:
             topic:
@@ -337,6 +424,9 @@ nl:
           fields:
             custom_field_name:
               label: "Naam aangepast gebruikersveld"
+        set_topic_timer:
+          title: Topictimer instellen
+      unnamed_automation: "Naamloze automatisering"
       models:
         script:
           name:
@@ -345,6 +435,11 @@ nl:
           name:
             label: Trigger
         automation:
+          runs_today: "%{count} vandaag"
+          runs_this_week: "%{count} deze week"
+          runs_this_month: "%{count} deze maand"
+          runs:
+            label: Uitvoeringen
           name:
             label: Naam
           trigger:
@@ -353,13 +448,18 @@ nl:
             label: Script
           version:
             label: Versie
+          status:
+            label: Status
           enabled:
-            label: Ingeschakeld
+            label: "Automatisering inschakelen"
           disabled:
             label: Uitgeschakeld
           placeholders:
-            label: Plaatshouders
+            label: Tijdelijke aanduidingen
           last_updated_at:
             label: Laatst bijgewerkt
+          last_run:
+            label: Laatste uitvoering
           last_updated_by:
             label: Bijgewerkt door
+          enable_toggle_disabled: "Je kunt deze automatisering inschakelen nadat alle vereiste velden zijn ingevuld."

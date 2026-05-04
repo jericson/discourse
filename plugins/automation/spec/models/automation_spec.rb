@@ -72,7 +72,7 @@ describe DiscourseAutomation::Automation do
     end
   end
 
-  context "when automation’s script has a field with validor" do
+  context "when automation’s script has a field with validator" do
     before do
       DiscourseAutomation::Scriptable.add("required_dogs") do
         field :dog, component: :text, validator: ->(input) { "must have dog" if input != "dog" }
@@ -164,6 +164,28 @@ describe DiscourseAutomation::Automation do
     end
   end
 
+  describe ".serialize_context" do
+    it "serializes date and time as iso8601" do
+      expect(
+        described_class.serialize_context(
+          {
+            "time" => Time.utc(2026, 4, 15, 12, 0, 0),
+            "time_with_zone" => Time.utc(2026, 4, 15, 12, 0, 0).in_time_zone("Europe/Warsaw"),
+            "date_time" => DateTime.new(2026, 4, 15, 12, 0, 0),
+            "date" => Date.new(2026, 4, 15),
+          },
+        ),
+      ).to eq(
+        {
+          "time" => "2026-04-15T12:00:00Z",
+          "time_with_zone" => "2026-04-15T14:00:00+02:00",
+          "date_time" => "2026-04-15T12:00:00+00:00",
+          "date" => "2026-04-15",
+        },
+      )
+    end
+  end
+
   describe "after_destroy" do
     fab!(:automation) { Fabricate(:automation, enabled: false) }
     fab!(:automation2) { Fabricate(:automation, enabled: false) }
@@ -178,6 +200,211 @@ describe DiscourseAutomation::Automation do
       user.reload
 
       expect(user.custom_fields).to eq({ automation2.new_user_custom_field_name => "1" })
+    end
+  end
+
+  context "when creating a new automation" do
+    it "validates the name length" do
+      automation = Fabricate.build(:automation, name: "a" * 101)
+      expect(automation).not_to be_valid
+      expect(automation.errors[:name]).to eq(["is too long (maximum is 100 characters)"])
+
+      automation = Fabricate.build(:automation, name: "c" * 50)
+      expect(automation).to be_valid
+    end
+  end
+
+  describe "#required_fields_complete" do
+    fab!(:automation) do
+      Fabricate(
+        :automation,
+        enabled: false,
+        script: "required_cats",
+        trigger: "required_cats_trigger",
+      )
+    end
+
+    before do
+      DiscourseAutomation::Scriptable.add("required_cats") do
+        field :cat, component: :text, required: true
+        field :dog, component: :text, required: false
+      end
+
+      DiscourseAutomation::Triggerable.add("required_cats_trigger") do
+        field :litterbox, component: :text, required: true
+      end
+    end
+
+    context "when the perform_required_fields_validation flag is true" do
+      before { automation.perform_required_fields_validation = true }
+
+      context "when a script required field is missing" do
+        before do
+          automation.fields.create!(
+            name: "litterbox",
+            component: "text",
+            metadata: {
+              value: "kittytoilet",
+            },
+            target: "trigger",
+          )
+        end
+
+        it "blocks enabling the automation and indicates the missing fields" do
+          automation.enabled = true
+          expect(automation.save).to eq(false)
+          expect(automation.errors.full_messages).to contain_exactly(
+            I18n.t(
+              "discourse_automation.models.automations.validations.script_missing_required_fields",
+              fields: "cat",
+            ),
+          )
+
+          cat_field =
+            automation.fields.create!(
+              name: "cat",
+              component: "text",
+              metadata: {
+                value: "kitty",
+              },
+              target: "script",
+            )
+          automation.reload
+          automation.enabled = true
+          expect(automation.save).to eq(true)
+
+          automation.update!(enabled: false)
+
+          cat_field.update_attribute(:metadata, { value: "" })
+
+          automation.enabled = true
+          expect(automation.save).to eq(false)
+          expect(automation.errors.full_messages).to contain_exactly(
+            I18n.t(
+              "discourse_automation.models.automations.validations.script_missing_required_fields",
+              fields: "cat",
+            ),
+          )
+        end
+
+        it "doesn't block disabling the automation" do
+          automation.fields.destroy_all
+          automation.update_attribute(:enabled, true)
+          automation.reload
+          expect(automation.enabled).to eq(true)
+
+          automation.enabled = false
+          expect(automation.save).to eq(true)
+          expect(automation.errors.full_messages).to be_empty
+        end
+      end
+
+      context "when a trigger required field is missing" do
+        before do
+          automation.fields.create!(
+            name: "cat",
+            component: "text",
+            metadata: {
+              value: "hellokitty",
+            },
+            target: "script",
+          )
+        end
+
+        it "blocks enabling the automation and indicates the missing fields" do
+          automation.enabled = true
+          expect(automation.save).to eq(false)
+          expect(automation.errors.full_messages).to contain_exactly(
+            I18n.t(
+              "discourse_automation.models.automations.validations.trigger_missing_required_fields",
+              fields: "litterbox",
+            ),
+          )
+
+          litterbox_field =
+            automation.fields.create!(
+              name: "litterbox",
+              component: "text",
+              metadata: {
+                value: "kitty",
+              },
+              target: "trigger",
+            )
+          automation.reload
+          automation.enabled = true
+          expect(automation.save).to eq(true)
+
+          automation.update!(enabled: false)
+
+          litterbox_field.update_attribute(:metadata, { value: "" })
+
+          automation.enabled = true
+          expect(automation.save).to eq(false)
+          expect(automation.errors.full_messages).to contain_exactly(
+            I18n.t(
+              "discourse_automation.models.automations.validations.trigger_missing_required_fields",
+              fields: "litterbox",
+            ),
+          )
+        end
+
+        it "doesn't block disabling the automation" do
+          automation.fields.destroy_all
+          automation.update_attribute(:enabled, true)
+          automation.reload
+          expect(automation.enabled).to eq(true)
+
+          automation.enabled = false
+          expect(automation.save).to eq(true)
+          expect(automation.errors.full_messages).to be_empty
+        end
+      end
+
+      context "when all required fields are filled" do
+        it "allows enabling the automation" do
+          automation.fields.create!(
+            name: "cat",
+            component: "text",
+            metadata: {
+              value: "kitty",
+            },
+            target: "script",
+          )
+          automation.fields.create!(
+            name: "litterbox",
+            component: "text",
+            metadata: {
+              value: "kittytoilet",
+            },
+            target: "trigger",
+          )
+
+          automation.enabled = true
+          expect(automation.save).to eq(true)
+          expect(automation.errors.full_messages).to be_empty
+        end
+      end
+
+      context "when trigger is blank" do
+        before { automation.update!(trigger: nil) }
+
+        it "blocks enabling the automation and indicates the trigger is blank" do
+          automation.enabled = true
+          expect(automation.save).to eq(false)
+          expect(automation.errors.full_messages).to contain_exactly(
+            I18n.t("discourse_automation.models.automations.validations.trigger_blank"),
+          )
+        end
+      end
+    end
+
+    context "when the perform_required_fields_validation flag is false" do
+      before { automation.perform_required_fields_validation = false }
+
+      it "doesn't block enabling the automation even if there are missing required fields" do
+        automation.enabled = true
+        expect(automation.save).to eq(true)
+      end
     end
   end
 end

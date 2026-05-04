@@ -1,16 +1,16 @@
 # frozen_string_literal: true
 
 require "mysql2"
-require File.expand_path(File.dirname(__FILE__) + "/base.rb")
+require_relative "base"
 
 class ImportScripts::Bbpress < ImportScripts::Base
-  BB_PRESS_HOST ||= ENV["BBPRESS_HOST"] || "localhost"
-  BB_PRESS_DB ||= ENV["BBPRESS_DB"] || "bbpress"
-  BATCH_SIZE ||= 1000
-  BB_PRESS_PW ||= ENV["BBPRESS_PW"] || ""
-  BB_PRESS_USER ||= ENV["BBPRESS_USER"] || "root"
-  BB_PRESS_PREFIX ||= ENV["BBPRESS_PREFIX"] || "wp_"
-  BB_PRESS_ATTACHMENTS_DIR ||= ENV["BBPRESS_ATTACHMENTS_DIR"] || "/path/to/attachments"
+  BB_PRESS_HOST = ENV["BBPRESS_HOST"] || "localhost"
+  BB_PRESS_DB = ENV["BBPRESS_DB"] || "bbpress"
+  BATCH_SIZE = 1000
+  BB_PRESS_PW = ENV["BBPRESS_PW"] || ""
+  BB_PRESS_USER = ENV["BBPRESS_USER"] || "root"
+  BB_PRESS_PREFIX = ENV["BBPRESS_PREFIX"] || "wp_"
+  BB_PRESS_ATTACHMENTS_DIR = ENV["BBPRESS_ATTACHMENTS_DIR"] || "/path/to/attachments"
 
   def initialize
     super

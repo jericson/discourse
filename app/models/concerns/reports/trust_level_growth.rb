@@ -5,7 +5,7 @@ module Reports::TrustLevelGrowth
 
   class_methods do
     def report_trust_level_growth(report)
-      report.modes = [:stacked_chart]
+      report.modes = [Report::MODES[:stacked_chart]]
 
       filters = %w[tl1_reached tl2_reached tl3_reached tl4_reached]
 
@@ -51,10 +51,10 @@ module Reports::TrustLevelGrowth
 
       requests =
         filters.map do |filter|
-          color = report.colors[0]
-          color = report.colors[1] if filter == "tl1_reached"
-          color = report.colors[2] if filter == "tl2_reached"
-          color = report.colors[3] if filter == "tl3_reached"
+          color = report.colors[:purple]
+          color = report.colors[:lime] if filter == "tl1_reached"
+          color = report.colors[:magenta] if filter == "tl2_reached"
+          color = report.colors[:yellow] if filter == "tl3_reached"
 
           {
             req: filter,

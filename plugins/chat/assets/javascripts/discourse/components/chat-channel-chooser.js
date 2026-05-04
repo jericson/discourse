@@ -1,14 +1,21 @@
-import ComboBoxComponent from "select-kit/components/combo-box";
+import { classNames } from "@ember-decorators/component";
+import ComboBoxComponent from "discourse/select-kit/components/combo-box";
+import {
+  pluginApiIdentifiers,
+  selectKitOptions,
+} from "discourse/select-kit/components/select-kit";
+import ChatChannelChooserHeader from "./chat-channel-chooser-header";
+import ChatChannelChooserRow from "./chat-channel-chooser-row";
 
-export default ComboBoxComponent.extend({
-  pluginApiIdentifiers: ["chat-channel-chooser"],
-  classNames: ["chat-channel-chooser"],
-
-  selectKitOptions: {
-    headerComponent: "chat-channel-chooser-header",
-  },
+@classNames("chat-channel-chooser")
+@selectKitOptions({
+  headerComponent: ChatChannelChooserHeader,
+})
+@pluginApiIdentifiers("chat-channel-chooser")
+export default class ChatChannelChooser extends ComboBoxComponent {
+  nameProperty = "title";
 
   modifyComponentForRow() {
-    return "chat-channel-chooser-row";
-  },
-});
+    return ChatChannelChooserRow;
+  }
+}

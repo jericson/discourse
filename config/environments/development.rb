@@ -37,20 +37,28 @@ Discourse::Application.configure do
   config.active_record.migration_error = :page_load
   config.watchable_dirs["lib"] = [:rb]
 
-  # we recommend you use mailhog https://github.com/mailhog/MailHog
-  config.action_mailer.smtp_settings = { address: "localhost", port: 1025 }
+  config.action_mailer.smtp_settings =
+    if GlobalSetting.try(:use_smtp_environment_in_development)
+      GlobalSetting.smtp_settings ||
+        { address: "localhost", port: ENV["DISCOURSE_LOCAL_EMAIL_PORT"] || 1025 }
+    else
+      # we recommend you use mailpit: https://github.com/axllent/mailpit/
+      { address: "localhost", port: ENV["DISCOURSE_LOCAL_EMAIL_PORT"] || 1025 }
+    end
 
   config.action_mailer.raise_delivery_errors = true
 
   config.log_level = ENV["DISCOURSE_DEV_LOG_LEVEL"] if ENV["DISCOURSE_DEV_LOG_LEVEL"]
 
+  config.active_record.logger = nil if ENV["RAILS_DISABLE_ACTIVERECORD_LOGS"] == "1" ||
+    ENV["ENABLE_LOGSTASH_LOGGER"] == "1"
   config.active_record.verbose_query_logs = true if ENV["RAILS_VERBOSE_QUERY_LOGS"] == "1"
 
   if defined?(BetterErrors)
     BetterErrors::Middleware.allow_ip! ENV["TRUSTED_IP"] if ENV["TRUSTED_IP"]
 
-    if defined?(Unicorn) && ENV["UNICORN_WORKERS"].to_i != 1
-      # BetterErrors doesn't work with multiple unicorn workers. Disable it to avoid confusion
+    if defined?(Pitchfork) && ENV["UNICORN_WORKERS"].to_i != 1
+      # BetterErrors doesn't work with multiple workers. Disable it to avoid confusion
       Rails.configuration.middleware.delete BetterErrors::Middleware
     end
   end
@@ -62,8 +70,6 @@ Discourse::Application.configure do
     config.hosts.concat(hosts.split(","))
   end
 
-  require "middleware/turbo_dev"
-  config.middleware.insert 0, Middleware::TurboDev
   require "middleware/missing_avatars"
   config.middleware.insert 1, Middleware::MissingAvatars
 
@@ -74,8 +80,7 @@ Discourse::Application.configure do
     config.developer_emails = emails.split(",").map(&:downcase).map(&:strip)
   end
 
-  if ENV["DISCOURSE_SKIP_CSS_WATCHER"] != "1" &&
-       (defined?(Rails::Server) || defined?(Puma) || defined?(Unicorn))
+  if ENV["DISCOURSE_SKIP_CSS_WATCHER"] != "1" && (defined?(Rails::Server) || defined?(Pitchfork))
     require "stylesheet/watcher"
     STDERR.puts "Starting CSS change watcher"
     @watcher = Stylesheet::Watcher.watch
@@ -89,8 +94,6 @@ Discourse::Application.configure do
         line =~ %r{lib/freedom_patches}
       end
     end
-
-    ActiveRecord::Base.logger = nil if ENV["RAILS_DISABLE_ACTIVERECORD_LOGS"] == "1"
 
     if ENV["BULLET"]
       Bullet.enable = true
@@ -106,4 +109,7 @@ Discourse::Application.configure do
       system("bundle exec rubocop -A --fail-level=E #{parsable_files.shelljoin}", exception: true)
     end
   end
+
+  # This is a NGINX specific header
+  config.action_dispatch.x_sendfile_header = nil
 end

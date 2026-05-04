@@ -4,10 +4,13 @@ class UserApiKeysController < ApplicationController
   layout "no_ember"
 
   requires_login only: %i[create create_otp revoke undo_revoke]
-  skip_before_action :redirect_to_login_if_required, only: %i[new otp]
+  skip_before_action :redirect_to_login_if_required,
+                     :redirect_to_profile_if_required,
+                     only: %i[new otp]
   skip_before_action :check_xhr, :preload_json
 
-  AUTH_API_VERSION ||= 4
+  AUTH_API_VERSION = 4
+  ALLOWED_PADDING_MODES = %w[pkcs1 oaep].freeze
 
   def new
     if request.head?
@@ -16,7 +19,10 @@ class UserApiKeysController < ApplicationController
     end
 
     require_params
+    find_client
+    require_client_params
     validate_params
+    validate_auth_redirect
 
     unless current_user
       cookies[:destination_url] = request.fullpath
@@ -34,38 +40,58 @@ class UserApiKeysController < ApplicationController
       return
     end
 
-    @application_name = params[:application_name]
-    @public_key = params[:public_key]
+    @application_name = params[:application_name] || @client&.application_name
+    @public_key = params[:public_key] || @client&.public_key
     @nonce = params[:nonce]
     @client_id = params[:client_id]
     @auth_redirect = params[:auth_redirect]
+    @redirect_uri =
+      if @auth_redirect.present?
+        begin
+          if @auth_redirect == "discourse://auth_redirect"
+            nil
+          else
+            uri = URI.parse(@auth_redirect)
+            if uri.port.nil? || [80, 443].include?(uri.port)
+              uri.host
+            else
+              uri.host + ":" + uri.port.to_s
+            end
+          end
+        rescue StandardError
+          nil
+        end
+      else
+        nil
+      end
     @push_url = params[:push_url]
     @localized_scopes = params[:scopes].split(",").map { |s| I18n.t("user_api_key.scopes.#{s}") }
     @scopes = params[:scopes]
+    @padding = params[:padding]
   rescue Discourse::InvalidAccess
     @generic_error = true
   end
 
   def create
     require_params
-
-    if params.key?(:auth_redirect)
-      raise Discourse::InvalidAccess if UserApiKey.invalid_auth_redirect?(params[:auth_redirect])
-    end
+    find_client
+    require_client_params
+    validate_params
+    validate_auth_redirect
 
     raise Discourse::InvalidAccess unless meets_tl?
 
-    validate_params
-    @application_name = params[:application_name]
     scopes = params[:scopes].split(",")
 
-    # destroy any old keys we had
-    UserApiKey.where(user_id: current_user.id, client_id: params[:client_id]).destroy_all
+    @client = UserApiKeyClient.new(client_id: params[:client_id]) if @client.blank?
+    @client.application_name = params[:application_name] if params[:application_name].present?
+    @client.save! if @client.new_record? || @client.changed?
+
+    # destroy any old keys the user had with the client
+    @client.keys.where(user_id: current_user.id).destroy_all
 
     key =
-      UserApiKey.create!(
-        application_name: @application_name,
-        client_id: params[:client_id],
+      @client.keys.create!(
         user_id: current_user.id,
         push_url: params[:push_url],
         scopes: scopes.map { |name| UserApiKeyScope.new(name: name) },
@@ -80,12 +106,12 @@ class UserApiKeysController < ApplicationController
       api: AUTH_API_VERSION,
     }.to_json
 
-    public_key = OpenSSL::PKey::RSA.new(params[:public_key])
-    @payload = Base64.encode64(public_key.public_encrypt(@payload))
+    validate_payload_size_for_oaep!(@payload, parsed_public_key)
+    @payload = Base64.encode64(rsa_encrypt(parsed_public_key, @payload))
 
     if scopes.include?("one_time_password")
       # encrypt one_time_password separately to bypass 128 chars encryption limit
-      otp_payload = one_time_password(public_key, current_user.username)
+      otp_payload = one_time_password(parsed_public_key, current_user.username)
     end
 
     if params[:auth_redirect]
@@ -101,7 +127,8 @@ class UserApiKeysController < ApplicationController
       respond_to do |format|
         format.html { render :show }
         format.json do
-          instructions = I18n.t("user_api_key.instructions", application_name: @application_name)
+          instructions =
+            I18n.t("user_api_key.instructions", application_name: @client.application_name)
           render json: { payload: @payload, instructions: instructions }
         end
       end
@@ -110,6 +137,7 @@ class UserApiKeysController < ApplicationController
 
   def otp
     require_params_otp
+    validate_params_otp
 
     unless current_user
       cookies[:destination_url] = request.fullpath
@@ -125,28 +153,27 @@ class UserApiKeysController < ApplicationController
     @application_name = params[:application_name]
     @public_key = params[:public_key]
     @auth_redirect = params[:auth_redirect]
+    @padding = params[:padding]
   end
 
   def create_otp
     require_params_otp
+    validate_params_otp
+    validate_auth_redirect
 
-    raise Discourse::InvalidAccess if UserApiKey.invalid_auth_redirect?(params[:auth_redirect])
     raise Discourse::InvalidAccess unless meets_tl?
 
-    public_key = OpenSSL::PKey::RSA.new(params[:public_key])
-    otp_payload = one_time_password(public_key, current_user.username)
+    otp_payload = one_time_password(parsed_public_key, current_user.username)
 
     redirect_path = "#{params[:auth_redirect]}?oneTimePassword=#{CGI.escape(otp_payload)}"
     redirect_to(redirect_path, allow_other_host: true)
   end
 
   def revoke
-    revoke_key = find_key if params[:id]
+    current_key = request.env["HTTP_USER_API_KEY"]
 
-    if current_key = request.env["HTTP_USER_API_KEY"]
-      request_key = UserApiKey.with_key(current_key).first
-      revoke_key ||= request_key
-    end
+    revoke_key = find_key if params[:id]
+    revoke_key ||= UserApiKey.with_key(current_key).first if current_key.present?
 
     raise Discourse::NotFound unless revoke_key
 
@@ -166,20 +193,58 @@ class UserApiKeysController < ApplicationController
     key
   end
 
+  def find_client
+    @client = UserApiKeyClient.find_by(client_id: params[:client_id])
+  end
+
   def require_params
-    %i[public_key nonce scopes client_id application_name].each { |p| params.require(p) }
+    %i[nonce scopes client_id].each { |p| params.require(p) }
+  end
+
+  def require_client_params
+    params.require(:public_key) if @client&.public_key.blank?
+    params.require(:application_name) if @client&.application_name.blank?
   end
 
   def validate_params
     requested_scopes = Set.new(params[:scopes].split(","))
     raise Discourse::InvalidAccess unless UserApiKey.allowed_scopes.superset?(requested_scopes)
+    if @client&.scopes.present? && !@client.allowed_scopes.superset?(requested_scopes)
+      raise Discourse::InvalidAccess
+    end
 
-    # our pk has got to parse
-    OpenSSL::PKey::RSA.new(params[:public_key])
+    parsed_public_key if public_key_str.present?
+    validate_padding
   end
 
   def require_params_otp
     %i[public_key auth_redirect application_name].each { |p| params.require(p) }
+  end
+
+  def validate_params_otp
+    parsed_public_key
+    validate_padding
+  end
+
+  def validate_padding
+    return if params[:padding].blank?
+    return if ALLOWED_PADDING_MODES.include?(params[:padding])
+    raise Discourse::InvalidParameters.new(:padding)
+  end
+
+  def validate_auth_redirect
+    return unless params.key?(:auth_redirect)
+    if UserApiKeyClient.invalid_auth_redirect?(params[:auth_redirect], client: @client)
+      raise Discourse::InvalidAccess
+    end
+  end
+
+  def public_key_str
+    @client&.public_key.presence || params[:public_key]
+  end
+
+  def parsed_public_key
+    @parsed_public_key ||= OpenSSL::PKey::RSA.new(public_key_str)
   end
 
   def meets_tl?
@@ -194,6 +259,30 @@ class UserApiKeysController < ApplicationController
     otp = SecureRandom.hex
     Discourse.redis.setex "otp_#{otp}", 10.minutes, username
 
-    Base64.encode64(public_key.public_encrypt(otp))
+    Base64.encode64(rsa_encrypt(public_key, otp))
+  end
+
+  def rsa_encrypt(public_key, data)
+    # OAEP padding is recommended for new applications and required for FIPS 140-3 compliance.
+    # PKCS1 padding is kept as default for backwards compatibility with existing clients.
+    padding_mode = params[:padding] == "oaep" ? "oaep" : "pkcs1"
+    public_key.encrypt(data, { "rsa_padding_mode" => padding_mode })
+  end
+
+  def validate_payload_size_for_oaep!(payload, public_key)
+    return unless params[:padding] == "oaep"
+
+    # RSA-OAEP max payload = key_size_bytes - 2*hash_size_bytes - 2
+    # OpenSSL uses SHA-1 (20 bytes) by default for OAEP
+    key_size_bytes = public_key.n.num_bytes
+    max_payload_size = key_size_bytes - 2 * 20 - 2
+
+    if payload.bytesize > max_payload_size
+      raise Discourse::InvalidParameters.new(
+              "Payload too large for OAEP encryption with this key size. " \
+                "Maximum: #{max_payload_size} bytes, got: #{payload.bytesize} bytes. " \
+                "Try using a shorter nonce or a larger RSA key (minimum 2048-bit recommended).",
+            )
+    end
   end
 end

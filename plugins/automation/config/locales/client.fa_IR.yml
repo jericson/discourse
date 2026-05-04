@@ -8,8 +8,8 @@ fa_IR:
   js:
     discourse_automation:
       title: اتوماسیون
-      create: ایجاد
-      update: به روز رسانی
+      back: بازگشت
+      edit: ویرایش
       destroy_automation:
         confirm: "آیا مطمئنید هستید که می‌خواهید «%{name}» را حذف کنید؟"
       fields:
@@ -34,6 +34,12 @@ fa_IR:
         text:
           label: متن
       triggerables:
+        post_flag_created:
+          fields:
+            categories:
+              label: دسته‌بندی‌ها
+            tags:
+              label: برچسب‌ها
         user_badge_granted:
           fields:
             badge:
@@ -89,12 +95,16 @@ fa_IR:
           fields:
             action_type:
               label: نوع عمل
-            restricted_category:
-              label: دسته‌بندی
-            restricted_group:
-              label: گروه
+            restricted_tags:
+              label: برچسب‌ها
+            restricted_categories:
+              label: دسته‌بندی‌ها
           created: ساخته شده
           edited: ویرایش شده
+          with_images: تصاویر
+          with_links: پیوندها
+          with_code: کد
+          with_uploads: بارگذاری‌ها
         category_created_edited:
           fields:
             restricted_category:
@@ -176,6 +186,8 @@ fa_IR:
           fields:
             custom_field_name:
               label: "نام فیلد سفارشی کاربر"
+        set_topic_timer:
+          title: تنظیم تایمر موضوع
       models:
         script:
           name:
@@ -184,6 +196,11 @@ fa_IR:
           name:
             label: گیره
         automation:
+          runs_today: "%{count} امروز"
+          runs_this_week: "%{count} این هفته"
+          runs_this_month: "%{count} این ماه"
+          runs:
+            label: اجراها
           name:
             label: نام
           trigger:
@@ -192,11 +209,13 @@ fa_IR:
             label: اسکریپت
           version:
             label: نسخه
-          enabled:
-            label: فعال شد
+          status:
+            label: وضعیت
           disabled:
             label: غیرفعال
           last_updated_at:
             label: آخرین به‌روزرسانی
+          last_run:
+            label: آخرین اجرا
           last_updated_by:
             label: به‌روز شده توسط

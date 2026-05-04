@@ -1,13 +1,13 @@
 # frozen_string_literal: true
 
-RSpec.describe "Reply to message - channel - drawer", type: :system do
+RSpec.describe "Reply to message - channel - drawer" do
   let(:chat_page) { PageObjects::Pages::Chat.new }
   let(:channel_page) { PageObjects::Pages::ChatChannel.new }
   let(:thread_page) { PageObjects::Pages::ChatThread.new }
   let(:drawer_page) { PageObjects::Pages::ChatDrawer.new }
 
-  fab!(:current_user) { Fabricate(:user) }
-  fab!(:channel_1) { Fabricate(:category_channel) }
+  fab!(:current_user, :user)
+  fab!(:channel_1, :category_channel)
   fab!(:original_message) do
     Fabricate(
       :chat_message,
@@ -33,9 +33,9 @@ RSpec.describe "Reply to message - channel - drawer", type: :system do
 
       expect(drawer_page).to have_open_thread
 
-      thread_page.send_message("reply to message")
+      text = thread_page.send_message("reply to message")
 
-      expect(thread_page.messages).to have_message(text: "reply to message")
+      expect(thread_page.messages).to have_message(text:)
 
       drawer_page.back
 

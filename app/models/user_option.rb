@@ -1,6 +1,10 @@
 # frozen_string_literal: true
 
 class UserOption < ActiveRecord::Base
+  AUTO_MODE = 1
+  LIGHT_MODE = 2
+  DARK_MODE = 3
+
   HOMEPAGES = {
     # -1 => reserved for "custom homepage"
     1 => "latest",
@@ -10,22 +14,23 @@ class UserOption < ActiveRecord::Base
     5 => "top",
     6 => "bookmarks",
     7 => "unseen",
-    # 8 => reserved for "hot"
+    8 => "hot",
   }
 
   self.ignored_columns = [
-    "sidebar_list_destination", # TODO: Remove when 20240212034010_drop_deprecated_columns has been promoted to pre-deploy
+    "enable_experimental_sidebar", # TODO: Remove when 20250804021210_drop_enable_experimental_sidebar_user_option has been promoted to pre-deploy
   ]
 
   self.primary_key = :user_id
   belongs_to :user
+  before_save :update_hide_profile_and_presence
   before_create :set_defaults
 
   after_save :update_tracked_topics
 
   scope :human_users, -> { where("user_id > 0") }
 
-  enum default_calendar: { none_selected: 0, ics: 1, google: 2 }, _scopes: false
+  enum :default_calendar, { none_selected: 0, ics: 1, google: 2 }, scopes: false
 
   def self.ensure_consistency!
     sql = <<~SQL
@@ -47,7 +52,7 @@ class UserOption < ActiveRecord::Base
   end
 
   def self.text_sizes
-    @text_sizes ||= Enum.new(normal: 0, larger: 1, largest: 2, smaller: 3, smallest: 4)
+    @text_sizes ||= Enum.new(smallest: 4, smaller: 3, normal: 0, larger: 1, largest: 2)
   end
 
   def self.title_count_modes
@@ -56,6 +61,10 @@ class UserOption < ActiveRecord::Base
 
   def self.email_level_types
     @email_level_type ||= Enum.new(always: 0, only_when_away: 1, never: 2)
+  end
+
+  def self.composition_mode_types
+    @composition_mode_types ||= Enum.new(markdown: 0, rich: 1)
   end
 
   validates :text_size_key, inclusion: { in: UserOption.text_sizes.values }
@@ -73,7 +82,9 @@ class UserOption < ActiveRecord::Base
     self.email_in_reply_to = SiteSetting.default_email_in_reply_to
 
     self.enable_quoting = SiteSetting.default_other_enable_quoting
+    self.enable_smart_lists = SiteSetting.default_other_enable_smart_lists
     self.enable_defer = SiteSetting.default_other_enable_defer
+    self.enable_markdown_monospace_font = SiteSetting.default_other_enable_markdown_monospace_font
     self.external_links_in_new_tab = SiteSetting.default_other_external_links_in_new_tab
     self.dynamic_favicon = SiteSetting.default_other_dynamic_favicon
     self.skip_new_user_tips = SiteSetting.default_other_skip_new_user_tips
@@ -93,9 +104,12 @@ class UserOption < ActiveRecord::Base
 
     self.title_count_mode = SiteSetting.default_title_count_mode
 
-    self.hide_profile_and_presence = SiteSetting.default_hide_profile_and_presence
+    self.hide_profile = SiteSetting.default_hide_profile
+    self.hide_presence = SiteSetting.default_hide_presence
     self.sidebar_link_to_filtered_list = SiteSetting.default_sidebar_link_to_filtered_list
     self.sidebar_show_count_of_new_items = SiteSetting.default_sidebar_show_count_of_new_items
+    self.composition_mode = SiteSetting.default_composition_mode
+    self.watched_precedence_over_muted = SiteSetting.default_watched_precedence_over_muted
 
     true
   end
@@ -106,6 +120,14 @@ class UserOption < ActiveRecord::Base
 
   def redirected_to_top_yet?
     last_redirected_to_top_at.present?
+  end
+
+  def light_mode_forced?
+    interface_color_mode == LIGHT_MODE
+  end
+
+  def dark_mode_forced?
+    interface_color_mode == DARK_MODE
   end
 
   def update_last_redirected_to_top!
@@ -222,6 +244,15 @@ class UserOption < ActiveRecord::Base
 
   private
 
+  def update_hide_profile_and_presence
+    if hide_profile_changed? || hide_presence_changed?
+      self.hide_profile_and_presence = hide_profile || hide_presence
+    elsif hide_profile_and_presence_changed?
+      self.hide_profile = hide_profile_and_presence
+      self.hide_presence = hide_profile_and_presence
+    end
+  end
+
   def update_tracked_topics
     return unless saved_change_to_auto_track_topics_after_msecs?
     TrackedTopicsUpdater.new(id, auto_track_topics_after_msecs).call
@@ -232,58 +263,55 @@ end
 #
 # Table name: user_options
 #
-#  user_id                              :integer          not null, primary key
-#  mailing_list_mode                    :boolean          default(FALSE), not null
-#  email_digests                        :boolean
-#  external_links_in_new_tab            :boolean          default(FALSE), not null
-#  enable_quoting                       :boolean          default(TRUE), not null
-#  dynamic_favicon                      :boolean          default(FALSE), not null
-#  automatically_unpin_topics           :boolean          default(TRUE), not null
-#  digest_after_minutes                 :integer
-#  auto_track_topics_after_msecs        :integer
-#  new_topic_duration_minutes           :integer
-#  last_redirected_to_top_at            :datetime
-#  email_previous_replies               :integer          default(2), not null
-#  email_in_reply_to                    :boolean          default(TRUE), not null
-#  like_notification_frequency          :integer          default(1), not null
-#  mailing_list_mode_frequency          :integer          default(1), not null
-#  include_tl0_in_digests               :boolean          default(FALSE)
-#  notification_level_when_replying     :integer
-#  theme_key_seq                        :integer          default(0), not null
-#  allow_private_messages               :boolean          default(TRUE), not null
-#  homepage_id                          :integer
-#  theme_ids                            :integer          default([]), not null, is an Array
-#  hide_profile_and_presence            :boolean          default(FALSE), not null
-#  text_size_key                        :integer          default(0), not null
-#  text_size_seq                        :integer          default(0), not null
-#  email_level                          :integer          default(1), not null
-#  email_messages_level                 :integer          default(0), not null
-#  title_count_mode_key                 :integer          default(0), not null
-#  enable_defer                         :boolean          default(FALSE), not null
-#  timezone                             :string
-#  enable_allowed_pm_users              :boolean          default(FALSE), not null
-#  dark_scheme_id                       :integer
-#  skip_new_user_tips                   :boolean          default(FALSE), not null
-#  color_scheme_id                      :integer
-#  default_calendar                     :integer          default("none_selected"), not null
-#  chat_enabled                         :boolean          default(TRUE), not null
-#  only_chat_push_notifications         :boolean
-#  oldest_search_log_date               :datetime
-#  chat_sound                           :string
-#  dismissed_channel_retention_reminder :boolean
-#  dismissed_dm_retention_reminder      :boolean
-#  bookmark_auto_delete_preference      :integer          default(3), not null
-#  ignore_channel_wide_mention          :boolean
-#  chat_email_frequency                 :integer          default(1), not null
-#  enable_experimental_sidebar          :boolean          default(FALSE)
-#  seen_popups                          :integer          is an Array
-#  chat_header_indicator_preference     :integer          default(0), not null
-#  sidebar_link_to_filtered_list        :boolean          default(FALSE), not null
-#  sidebar_show_count_of_new_items      :boolean          default(FALSE), not null
-#  watched_precedence_over_muted        :boolean
-#  chat_separate_sidebar_mode           :integer          default(0), not null
-#  topics_unread_when_closed            :boolean          default(TRUE), not null
-#  show_thread_title_prompts            :boolean          default(TRUE), not null
+#  allow_private_messages           :boolean          default(TRUE), not null
+#  auto_track_topics_after_msecs    :integer
+#  automatically_unpin_topics       :boolean          default(TRUE), not null
+#  bookmark_auto_delete_preference  :integer          default(3), not null
+#  composition_mode                 :integer          default(1), not null
+#  default_calendar                 :integer          default("none_selected"), not null
+#  digest_after_minutes             :integer
+#  dynamic_favicon                  :boolean          default(FALSE), not null
+#  email_digests                    :boolean
+#  email_in_reply_to                :boolean          default(TRUE), not null
+#  email_level                      :integer          default(1), not null
+#  email_messages_level             :integer          default(0), not null
+#  email_previous_replies           :integer          default(2), not null
+#  enable_allowed_pm_users          :boolean          default(FALSE), not null
+#  enable_defer                     :boolean          default(FALSE), not null
+#  enable_markdown_monospace_font   :boolean          default(TRUE), not null
+#  enable_quoting                   :boolean          default(TRUE), not null
+#  enable_smart_lists               :boolean          default(TRUE), not null
+#  external_links_in_new_tab        :boolean          default(FALSE), not null
+#  hide_presence                    :boolean          default(FALSE), not null
+#  hide_profile                     :boolean          default(FALSE), not null
+#  hide_profile_and_presence        :boolean          default(FALSE), not null
+#  include_tl0_in_digests           :boolean          default(FALSE)
+#  interface_color_mode             :integer          default(1), not null
+#  last_redirected_to_top_at        :datetime
+#  like_notification_frequency      :integer          default(1), not null
+#  mailing_list_mode                :boolean          default(FALSE), not null
+#  mailing_list_mode_frequency      :integer          default(1), not null
+#  new_topic_duration_minutes       :integer
+#  notification_level_when_replying :integer
+#  notify_on_linked_posts           :boolean          default(TRUE), not null
+#  oldest_search_log_date           :datetime
+#  seen_popups                      :integer          is an Array
+#  show_original_content            :boolean          default(FALSE), not null
+#  sidebar_link_to_filtered_list    :boolean          default(FALSE), not null
+#  sidebar_show_count_of_new_items  :boolean          default(FALSE), not null
+#  skip_new_user_tips               :boolean          default(FALSE), not null
+#  text_size_key                    :integer          default(0), not null
+#  text_size_seq                    :integer          default(0), not null
+#  theme_ids                        :integer          default([]), not null, is an Array
+#  theme_key_seq                    :integer          default(0), not null
+#  timezone                         :string
+#  title_count_mode_key             :integer          default(0), not null
+#  topics_unread_when_closed        :boolean          default(TRUE), not null
+#  watched_precedence_over_muted    :boolean          default(FALSE), not null
+#  color_scheme_id                  :integer
+#  dark_scheme_id                   :integer
+#  homepage_id                      :integer
+#  user_id                          :integer          not null, primary key
 #
 # Indexes
 #

@@ -7,7 +7,7 @@ module Onebox
     class DownloadTooLarge < StandardError
     end
 
-    IGNORE_CANONICAL_DOMAINS ||= %w[www.instagram.com medium.com youtube.com]
+    IGNORE_CANONICAL_DOMAINS = %w[www.instagram.com medium.com youtube.com]
 
     def self.clean(html)
       html.gsub(/<[^>]+>/, " ").gsub(/\n/, "")
@@ -17,18 +17,18 @@ module Onebox
     #
     # Note that the size of the response body is capped at `Onebox.options.max_download_kb`. When the limit has been reached,
     # this method will return the response body that has been downloaded up to the limit.
-    def self.fetch_html_doc(url, headers = nil, body_cacher = nil)
+    def self.fetch_html_doc(url, headers = nil)
       response =
         (
           begin
-            fetch_response(url, headers:, body_cacher:, raise_error_when_response_too_large: false)
+            fetch_response(url, headers:, raise_error_when_response_too_large: false)
           rescue StandardError
             nil
           end
         )
 
       doc = Nokogiri.HTML(response)
-      uri = Addressable::URI.parse(url)
+      uri = Addressable::URI.parse(url).normalize!
 
       ignore_canonical_tag = doc.at('meta[property="og:ignore_canonical"]')
       should_ignore_canonical =
@@ -38,24 +38,19 @@ module Onebox
            !should_ignore_canonical
         # prefer canonical link
         canonical_link = doc.at('//link[@rel="canonical"]/@href')
-        canonical_uri = Addressable::URI.parse(canonical_link)
+        canonical_uri = Addressable::URI.parse(canonical_link)&.normalize!
         if canonical_link && canonical_uri &&
              "#{canonical_uri.host}#{canonical_uri.path}" != "#{uri.host}#{uri.path}"
           uri =
             FinalDestination.new(
-              canonical_link,
-              Oneboxer.get_final_destination_options(canonical_link),
+              canonical_uri,
+              Oneboxer.get_final_destination_options(canonical_uri),
             ).resolve
           if uri.present?
             response =
               (
                 begin
-                  fetch_response(
-                    uri.to_s,
-                    headers:,
-                    body_cacher:,
-                    raise_error_when_response_too_large: false,
-                  )
+                  fetch_response(uri.to_s, headers:, raise_error_when_response_too_large: false)
                 rescue StandardError
                   nil
                 end
@@ -73,7 +68,6 @@ module Onebox
       redirect_limit: 5,
       domain: nil,
       headers: nil,
-      body_cacher: nil,
       raise_error_when_response_too_large: true,
       allow_cross_domain_cookies: false
     )
@@ -84,13 +78,6 @@ module Onebox
 
       uri = Addressable::URI.parse(location)
       uri = Addressable::URI.join(domain, uri) if !uri.host
-
-      use_body_cacher = body_cacher && body_cacher.respond_to?("fetch_cached_response_body")
-      if use_body_cacher
-        response_body = body_cacher.fetch_cached_response_body(uri.to_s)
-
-        return response_body if response_body.present?
-      end
 
       result = StringIO.new
       FinalDestination::HTTP.start(
@@ -104,23 +91,27 @@ module Onebox
 
         headers ||= {}
 
-        if Onebox.options.user_agent && !headers["User-Agent"]
-          headers["User-Agent"] = Onebox.options.user_agent
-        end
+        headers["User-Agent"] ||= user_agent if user_agent
+        headers["Accept-Language"] ||= Oneboxer.accept_language
 
         request = Net::HTTP::Get.new(uri.request_uri, headers)
         start_time = Time.now
 
         size_bytes = Onebox.options.max_download_kb * 1024
         http.request(request) do |response|
-          if cookie = response.get_fields("set-cookie")
-            headers["Cookie"] = cookie.join("; ") if allow_cross_domain_cookies
-            # HACK: If this breaks again in the future, use HTTP::CookieJar from gem 'http-cookie'
-            # See test: it "does not send cookies to the wrong domain"
-            redir_header = { "Cookie" => cookie.join("; ") }
-          end
+          if set_cookies = response.get_fields("set-cookie")
+            cookie_header =
+              set_cookies.map { |c| c.split(";", 2).first.strip }.reject(&:empty?).join("; ")
 
-          redir_header = nil unless redir_header.is_a? Hash
+            headers["Cookie"] = cookie_header if allow_cross_domain_cookies
+
+            if redirect_location = response["location"]
+              redirect_host = Addressable::URI.parse(redirect_location).host
+              if redirect_host.nil? || redirect_host == uri.host
+                redirect_header = { "Cookie" => cookie_header }
+              end
+            end
+          end
 
           code = response.code.to_i
           unless code === 200
@@ -131,7 +122,7 @@ module Onebox
                 response["location"],
                 redirect_limit: redirect_limit - 1,
                 domain: "#{uri.scheme}://#{uri.host}",
-                headers: allow_cross_domain_cookies ? headers : redir_header,
+                headers: allow_cross_domain_cookies ? headers : redirect_header,
                 allow_cross_domain_cookies: allow_cross_domain_cookies,
               )
             )
@@ -145,10 +136,6 @@ module Onebox
             end
 
             raise Timeout::Error.new if (Time.now - start_time) > Onebox.options.timeout
-          end
-
-          if use_body_cacher && body_cacher.cache_response_body?(uri)
-            body_cacher.cache_response_body(uri.to_s, result.string)
           end
 
           return result.string
@@ -232,6 +219,17 @@ module Onebox
       end
     end
 
+    def self.user_agent
+      if SiteSetting.onebox_user_agent.present?
+        return "#{SiteSetting.onebox_user_agent} v#{Discourse::VERSION::STRING}"
+      end
+
+      if Onebox.options.user_agent.present?
+        return "#{Onebox.options.user_agent} v#{Discourse::VERSION::STRING}"
+      end
+      Discourse.user_agent
+    end
+
     # Percent-encodes a URI string per RFC3986 - https://tools.ietf.org/html/rfc3986
     def self.uri_encode(url)
       return "" unless url
@@ -258,7 +256,7 @@ module Onebox
           query:
             Addressable::URI.encode_component(
               uri.query,
-              "a-zA-Z0-9\\-\\.\\_\\~\\$\\&\\*\\,\\=\\:\\@\\?\\%",
+              "a-zA-Z0-9\\-\\.\\_\\~\\$\\&\\*\\,\\=\\:\\@\\?\\%\\+",
             ),
           fragment:
             Addressable::URI.encode_component(
@@ -292,6 +290,21 @@ module Onebox
 
     def self.generic_placeholder_html
       "<div class='onebox-placeholder-container'><span class='placeholder-icon generic'></span></div>"
+    end
+
+    def self.normalize_dropbox_url(url)
+      return url unless url.start_with?("https://www.dropbox.com/")
+
+      uri = URI.parse(url)
+      uri.host = "dl.dropboxusercontent.com"
+
+      if url.include?("/scl/")
+        params = URI.decode_www_form(uri.query.to_s).to_h
+        params["raw"] = "1"
+        uri.query = URI.encode_www_form(params)
+      end
+
+      uri.to_s
     end
   end
 end

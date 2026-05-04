@@ -1,10 +1,10 @@
 # frozen_string_literal: true
 
 RSpec.describe Chat::ParsedMentions do
-  fab!(:channel_member_1) { Fabricate(:user) }
-  fab!(:channel_member_2) { Fabricate(:user) }
-  fab!(:channel_member_3) { Fabricate(:user) }
-  fab!(:not_a_channel_member) { Fabricate(:user) }
+  fab!(:channel_member_1, :user)
+  fab!(:channel_member_2, :user)
+  fab!(:channel_member_3, :user)
+  fab!(:not_a_channel_member, :user)
   fab!(:chat_channel)
 
   def message_quote_with_mentions(mentions)
@@ -143,6 +143,15 @@ RSpec.describe Chat::ParsedMentions do
       result = mentions.direct_mentions.pluck(:username)
 
       expect(result).to contain_exactly(channel_member_1.username, channel_member_2.username)
+    end
+
+    it "returns bots who were mentioned directly" do
+      message = create_message("mentioning @system")
+
+      mentions = described_class.new(message)
+      result = mentions.direct_mentions.pluck(:username)
+
+      expect(result).to contain_exactly(Discourse.system_user.username)
     end
 
     it "returns a user when self-mentioning" do

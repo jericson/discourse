@@ -14,11 +14,18 @@
     &-item {
       display: flex;
       list-style: none;
-      border-bottom: 1px solid var(--primary-low);
+      border-bottom: 1px solid var(--content-border-color);
       align-items: center;
       box-sizing: border-box;
       padding: 0.5rem;
       cursor: pointer;
+
+      .-user-info {
+        width: 100%;
+        border: 0 none;
+        display: flex;
+        flex-grow: 1;
+      }
 
       .avatar {
         cursor: pointer;
@@ -43,6 +50,10 @@
           }
         }
 
+        .fk-d-tooltip__trigger-container {
+          gap: 0.5rem;
+        }
+
         .user-status-message {
           color: var(--primary-medium);
           font-size: var(--font-down-2);
@@ -52,6 +63,10 @@
             height: var(--font-0);
             width: var(--font-0);
           }
+        }
+
+        .btn {
+          margin-left: auto;
         }
       }
 

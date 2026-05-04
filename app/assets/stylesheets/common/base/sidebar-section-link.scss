@@ -1,7 +1,10 @@
+@use "lib/viewport";
+
 :root {
-  --d-sidebar-section-link-prefix-margin-right: 0.35rem;
-  --d-sidebar-section-link-prefix-width: 1.35rem;
-  --d-sidebar-section-link-icon-size: 0.8em;
+  --d-sidebar-section-link-prefix-margin-right: var(--space-2);
+  --d-sidebar-section-link-prefix-width: var(--space-6);
+  --d-sidebar-section-link-icon-size: 1em;
+  --d-sidebar-section-link-emoji-size: 1em;
 }
 
 .sidebar-section-link-wrapper {
@@ -9,64 +12,129 @@
   align-items: center;
   position: relative;
 
+  &[data-list-item-name="all-categories"],
+  &[data-list-item-name="all-tags"],
+  &[data-list-item-name*="configure-default-navigation-menu-"] {
+    font-size: var(--font-down-1-rem);
+  }
+
+  &.--hovering .sidebar-section-link {
+    background: var(--d-sidebar-highlight-background);
+    color: var(--d-sidebar-highlight-color);
+
+    .prefix-text {
+      background: var(--d-sidebar-highlight-prefix-background);
+      color: var(--d-sidebar-highlight-prefix-color);
+    }
+
+    .sidebar-section-link-suffix.icon.unread svg {
+      color: var(--d-sidebar-highlight-suffix-color);
+    }
+  }
+
   .sidebar-section-link {
     display: inline-flex;
     width: 100%;
     align-items: center;
     color: var(--d-sidebar-link-color);
-    transition: background-color 0.25s;
+    border-radius: var(--token-radius-normal);
+    gap: var(--d-sidebar-section-link-prefix-margin-right);
 
-    &:focus,
+    &:focus-visible,
     &:hover {
       background: var(--d-sidebar-highlight-background);
+      color: var(--d-sidebar-highlight-color);
       outline: none;
+
       .prefix-text {
         background: var(--d-sidebar-highlight-prefix-background);
+        color: var(--d-sidebar-highlight-prefix-color);
+      }
+
+      .sidebar-section-link-suffix.icon.unread svg {
+        color: var(--d-sidebar-highlight-suffix-color);
       }
     }
 
-    &.active {
-      color: var(--d-sidebar-highlight-color);
-      background: var(--d-sidebar-highlight-background);
+    &--active,
+    &.active,
+    &.exact-url-match {
+      background: var(--d-sidebar-active-background);
+      color: var(--d-sidebar-active-color);
+      font-weight: var(--d-sidebar-active-font-weight);
 
       .sidebar-section-link-prefix {
         &.icon {
-          color: var(--d-sidebar-highlight-color);
+          color: var(--d-sidebar-active-color);
         }
+      }
+
+      .prefix-text {
+        background: var(--d-sidebar-active-prefix-background);
+      }
+
+      .sidebar-section-link-content-badge {
+        color: var(--d-sidebar-active-color);
+      }
+
+      .sidebar-section-link-suffix.icon.unread svg {
+        color: var(--d-sidebar-active-suffix-color);
       }
     }
 
+    &--muted {
+      &:not(.active) .sidebar-section-link-prefix {
+        opacity: 0.75;
+      }
+
+      --d-sidebar-link-color: var(--token-color-text-subtlest);
+    }
+
     .sidebar-section-link-content-badge {
-      @include ellipsis;
-      padding-left: 0.5em;
-      padding-right: 0.1em; // avoids some overflow cropping
-      text-align: right;
       color: var(--d-sidebar-link-badge-color);
       font-size: var(--font-down-2);
-      font-weight: normal;
-      margin-left: auto;
+      width: auto;
+      min-width: var(--font-down-1);
+      padding-inline: var(--space-1);
+      font-weight: var(--token-font-weight-regular);
+      flex-shrink: 0;
+      text-align: center;
+      max-width: 15ch;
+
+      @include ellipsis;
+
+      &:not(.icon) {
+        margin-left: auto;
+      }
     }
 
     .sidebar-section-link-suffix {
-      margin-left: 1em;
       font-size: var(--font-down-4);
+      flex-shrink: 0;
+
       &.icon {
         &.urgent svg {
           color: var(--success);
         }
 
         &.unread svg {
-          color: var(--tertiary-med-or-tertiary);
+          color: var(--d-sidebar-suffix-color);
         }
       }
     }
 
     .sidebar-section-link-content-text {
       @include ellipsis;
+      min-width: 0;
+      flex: 0 1 auto;
+
+      .user-status-message {
+        vertical-align: -0.125em;
+      }
 
       .emoji {
-        width: 15px;
-        height: 15px;
+        width: 1em;
+        height: 1em;
         vertical-align: baseline;
       }
 
@@ -83,24 +151,16 @@
     }
   }
 
+  &.dropdown-menu__item .sidebar-section-link,
+  .dropdown-menu__item .sidebar-section-link {
+    height: var(--d-sidebar-row-height);
+    padding-inline: var(--d-sidebar-row-horizontal-padding);
+    border-radius: var(--token-radius-normal);
+  }
+
   .--link-button {
     border: none;
     background: inherit;
-  }
-
-  .sidebar-section-link[data-link-name="personal-messages-sent"],
-  .sidebar-section-link[data-link-name="personal-messages-new"],
-  .sidebar-section-link[data-link-name="personal-messages-archive"],
-  .sidebar-section-link[data-link-name="personal-messages-unread"],
-  .sidebar-section-link[data-link-name="group-messages-new"],
-  .sidebar-section-link[data-link-name="group-messages-unread"],
-  .sidebar-section-link[data-link-name="group-messages-archive"] {
-    .sidebar-section-link-content-text {
-      margin-left: calc(
-        var(--d-sidebar-section-link-prefix-margin-right) +
-          var(--d-sidebar-section-link-prefix-width)
-      );
-    }
   }
 
   .sidebar-section-link-review {
@@ -115,12 +175,26 @@
     justify-content: center;
     flex-shrink: 0;
     width: var(--d-sidebar-section-link-prefix-width);
-    height: var(--d-sidebar-section-link-prefix-width);
-    margin-right: var(--d-sidebar-section-link-prefix-margin-right);
+
+    #sidebar-section-content-chat-dms & {
+      @include viewport.from(sm) {
+        .prefix-text {
+          font-size: var(--font-0);
+        }
+      }
+    }
+
+    .prefix-image {
+      border: 1px solid transparent;
+    }
+
+    &.active .prefix-image {
+      box-shadow: 0 0 0 1px var(--success);
+    }
 
     &.image {
       img {
-        border-radius: 100%;
+        border-radius: var(--token-radius-full);
         aspect-ratio: auto 20 / 20;
         width: calc(var(--d-sidebar-section-link-prefix-width) - 2px);
         height: calc(var(--d-sidebar-section-link-prefix-width) - 2px);
@@ -132,7 +206,8 @@
     }
 
     &.icon,
-    &.span {
+    &.square,
+    &.emoji {
       position: relative;
       color: var(--d-sidebar-link-icon-color);
 
@@ -143,7 +218,7 @@
       .prefix-badge {
         position: absolute;
         background-color: transparent;
-        border-radius: 50%;
+        border-radius: var(--token-radius-full);
         padding: 2px 2px 3px;
         color: var(--d-sidebar-link-color);
         height: 0.5rem;
@@ -153,7 +228,13 @@
         margin-right: -0.2em;
       }
     }
-    .prefix-span {
+
+    &.emoji img {
+      width: var(--d-sidebar-section-link-emoji-size);
+      height: var(--d-sidebar-section-link-emoji-size);
+    }
+
+    .prefix-square {
       width: 0.8em;
       height: 0.8em;
     }
@@ -163,8 +244,9 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 100%;
+    border-radius: var(--token-radius-full);
     background: var(--d-sidebar-prefix-background);
+    color: var(--d-sidebar-prefix-color);
     width: calc(var(--d-sidebar-section-link-prefix-width) - 2px);
     height: calc(var(--d-sidebar-section-link-prefix-width) - 2px);
     font-size: var(--font-down-2);
@@ -174,36 +256,33 @@
     margin-left: auto;
 
     .sidebar-section-hover-button {
-      display: none;
-      color: var(--d-sidebar-link-icon-color);
+      opacity: 0;
+      color: var(--d-sidebar-highlight-color);
       border: none;
-      background: transparent;
-      padding: 0 0 0 0.5em;
       height: 100%;
-      transition: background-color 0.25s;
+      padding-inline: var(--space-1);
 
       &:focus,
       .discourse-no-touch & {
         &:hover {
           color: var(--d-sidebar-highlight-color);
+          background: var(--d-sidebar-highlight-hover-background);
+
+          svg {
+            color: var(--d-sidebar-active-icon-color);
+          }
         }
       }
 
       svg {
         font-size: var(--font-down-1);
-      }
-    }
-
-    &:hover {
-      .sidebar-section-hover-button {
-        background: var(--d-sidebar-highlight-background);
+        margin: 0;
+        color: var(--d-sidebar-highlight-color);
       }
     }
   }
 
-  &:hover {
-    .sidebar-section-hover-button {
-      display: block;
-    }
+  &.--hovering .sidebar-section-hover-button {
+    opacity: 1;
   }
 }

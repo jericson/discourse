@@ -12,8 +12,8 @@ RSpec.describe "Multisite s3 uploads", type: :multisite do
     Fabricate.build(
       :upload,
       sha1: upload_sha1,
-      id: 1,
       original_filename: original_filename,
+      id: Upload.maximum(:id) + 1,
       secure: secure,
     )
   end
@@ -27,30 +27,21 @@ RSpec.describe "Multisite s3 uploads", type: :multisite do
       let(:store) { FileStore::S3Store.new(s3_helper) }
       let(:upload_opts) do
         {
-          acl: "public-read",
+          acl: FileStore::S3Store::CANNED_ACL_PUBLIC_READ,
           cache_control: "max-age=31556952, public, immutable",
           content_type: "image/png",
         }
       end
 
-      it "does not provide a content_disposition for images" do
-        s3_helper
-          .expects(:upload)
-          .with(uploaded_file, kind_of(String), upload_opts)
-          .returns(%w[path etag])
-        upload = build_upload
-        store.store_upload(uploaded_file, upload)
-      end
-
-      context "when the file is a PDF" do
-        let(:original_filename) { "small.pdf" }
-        let(:uploaded_file) { file_from_fixtures("small.pdf", "pdf") }
+      context "when the file is a SVG" do
+        let(:original_filename) { "small.svg" }
+        let(:uploaded_file) { file_from_fixtures("small.svg", "svg") }
 
         it "adds an attachment content-disposition with the original filename" do
           disp_opts = {
             content_disposition:
               "attachment; filename=\"#{original_filename}\"; filename*=UTF-8''#{original_filename}",
-            content_type: "application/pdf",
+            content_type: "image/svg+xml",
           }
           s3_helper
             .expects(:upload)
@@ -65,10 +56,10 @@ RSpec.describe "Multisite s3 uploads", type: :multisite do
         let(:original_filename) { "small.mp4" }
         let(:uploaded_file) { file_from_fixtures("small.mp4", "media") }
 
-        it "adds an attachment content-disposition with the original filename" do
+        it "adds inline content-disposition header with original filename" do
           disp_opts = {
             content_disposition:
-              "attachment; filename=\"#{original_filename}\"; filename*=UTF-8''#{original_filename}",
+              "inline; filename=\"#{original_filename}\"; filename*=UTF-8''#{original_filename}",
             content_type: "application/mp4",
           }
           s3_helper
@@ -84,10 +75,10 @@ RSpec.describe "Multisite s3 uploads", type: :multisite do
         let(:original_filename) { "small.mp3" }
         let(:uploaded_file) { file_from_fixtures("small.mp3", "media") }
 
-        it "adds an attachment content-disposition with the original filename" do
+        it "adds inline content-disposition header with filename" do
           disp_opts = {
             content_disposition:
-              "attachment; filename=\"#{original_filename}\"; filename*=UTF-8''#{original_filename}",
+              "inline; filename=\"#{original_filename}\"; filename*=UTF-8''#{original_filename}",
             content_type: "audio/mpeg",
           }
           s3_helper
@@ -229,7 +220,14 @@ RSpec.describe "Multisite s3 uploads", type: :multisite do
           s3_bucket.expects(:object).with("#{upload_path}/#{path}").returns(s3_object).at_least_once
           s3_object.expects(:presigned_url).with(
             :get,
-            { expires_in: SiteSetting.s3_presigned_get_url_expires_after_seconds },
+            {
+              expires_in: SiteSetting.s3_presigned_get_url_expires_after_seconds,
+              response_content_disposition:
+                ActionDispatch::Http::ContentDisposition.format(
+                  disposition: "inline",
+                  filename: upload.original_filename,
+                ),
+            },
           )
 
           upload.url = store.store_upload(uploaded_file, upload)
@@ -253,7 +251,8 @@ RSpec.describe "Multisite s3 uploads", type: :multisite do
         test_multisite_connection("default") do
           upload = Fabricate.build(:upload_s3, sha1: upload_sha1, id: 1)
 
-          signed_url = Discourse.store.signed_url_for_path(upload.url)
+          signed_url =
+            Discourse.store.signed_url_for_path(upload.url, include_content_disposition: true)
           expect(signed_url).to match(/Amz-Expires/)
           expect(signed_url).to match("#{upload_path}")
         end
@@ -262,14 +261,15 @@ RSpec.describe "Multisite s3 uploads", type: :multisite do
           upload_path = Discourse.store.upload_path
           upload = Fabricate.build(:upload_s3, sha1: upload_sha1, id: 1)
 
-          signed_url = Discourse.store.signed_url_for_path(upload.url)
+          signed_url =
+            Discourse.store.signed_url_for_path(upload.url, include_content_disposition: true)
           expect(signed_url).to match(/Amz-Expires/)
           expect(signed_url).to match("#{upload_path}")
         end
       end
     end
 
-    describe "#update_upload_ACL" do
+    describe "#update_upload_access_control" do
       it "updates correct file for default and second multisite db" do
         test_multisite_connection("default") do
           upload = build_upload(secure: true)
@@ -278,7 +278,7 @@ RSpec.describe "Multisite s3 uploads", type: :multisite do
           s3_helper.expects(:s3_bucket).returns(s3_bucket).at_least_once
           expect_upload_acl_update(upload, upload_path)
 
-          expect(store.update_upload_ACL(upload)).to be_truthy
+          expect(store.update_upload_access_control(upload)).to be_truthy
         end
 
         test_multisite_connection("second") do
@@ -289,7 +289,7 @@ RSpec.describe "Multisite s3 uploads", type: :multisite do
           s3_helper.expects(:s3_bucket).returns(s3_bucket).at_least_once
           expect_upload_acl_update(upload, upload_path)
 
-          expect(store.update_upload_ACL(upload)).to be_truthy
+          expect(store.update_upload_access_control(upload)).to be_truthy
         end
       end
 
@@ -303,7 +303,7 @@ RSpec.describe "Multisite s3 uploads", type: :multisite do
             expect_upload_acl_update(upload, upload_path)
             expect_optimized_image_acl_update(optimized_image, upload_path)
 
-            expect(store.update_upload_ACL(upload)).to be_truthy
+            expect(store.update_upload_access_control(upload)).to be_truthy
           end
 
           test_multisite_connection("second") do
@@ -314,7 +314,7 @@ RSpec.describe "Multisite s3 uploads", type: :multisite do
             expect_upload_acl_update(upload, upload_path)
             expect_optimized_image_acl_update(optimized_image, upload_path)
 
-            expect(store.update_upload_ACL(upload)).to be_truthy
+            expect(store.update_upload_access_control(upload)).to be_truthy
           end
         end
       end
@@ -325,14 +325,14 @@ RSpec.describe "Multisite s3 uploads", type: :multisite do
           .with("#{upload_path}/original/1X/#{upload.sha1}.#{upload.extension}")
           .returns(s3_object)
         s3_object.expects(:acl).returns(s3_object)
-        s3_object.expects(:put).with(acl: "private").returns(s3_object)
+        s3_object.expects(:put).with(acl: FileStore::S3Store::CANNED_ACL_PRIVATE).returns(s3_object)
       end
 
       def expect_optimized_image_acl_update(optimized_image, upload_path)
         path = Discourse.store.get_path_for_optimized_image(optimized_image)
         s3_bucket.expects(:object).with("#{upload_path}/#{path}").returns(s3_object)
         s3_object.expects(:acl).returns(s3_object)
-        s3_object.expects(:put).with(acl: "private").returns(s3_object)
+        s3_object.expects(:put).with(acl: FileStore::S3Store::CANNED_ACL_PRIVATE).returns(s3_object)
       end
     end
   end
@@ -392,11 +392,42 @@ RSpec.describe "Multisite s3 uploads", type: :multisite do
     context "for a bucket with no folder path" do
       before { SiteSetting.s3_upload_bucket = "s3-upload-bucket" }
 
-      it "returns a presigned url and headers with the correct params and the key for the temporary file" do
+      it "returns a presigned url and headers with the correct ACL param and the key for the temporary file" do
         url, signed_headers = store.signed_request_for_temporary_upload("test.png")
         key = store.s3_helper.path_from_url(url)
-        expect(signed_headers).to eq("x-amz-acl" => "private")
+
+        expect(signed_headers).to eq("x-amz-acl" => FileStore::S3Store::CANNED_ACL_PRIVATE)
         expect(url).to match(/Amz-Expires/)
+        expect(key).to match(
+          /temp\/uploads\/default\/test_[0-9]\/[a-zA-z0-9]{0,32}\/[a-zA-z0-9]{0,32}.png/,
+        )
+      end
+
+      it "returns a presigned url and headers with the correct ACL param and the key for the temporary file when `s3_use_acls` is disabled" do
+        SiteSetting.s3_use_acls = false
+        url, signed_headers = store.signed_request_for_temporary_upload("test.png")
+        key = store.s3_helper.path_from_url(url)
+
+        expect(signed_headers).to eq({})
+        expect(url).to match(/Amz-Expires/)
+
+        expect(key).to match(
+          /temp\/uploads\/default\/test_[0-9]\/[a-zA-z0-9]{0,32}\/[a-zA-z0-9]{0,32}.png/,
+        )
+      end
+
+      it "returns a presigned url and headers with the correct tagging params when ``s3_enable_access_control_tags` is enabled" do
+        SiteSetting.s3_enable_access_control_tags = true
+        url, signed_headers = store.signed_request_for_temporary_upload("test.png")
+        key = store.s3_helper.path_from_url(url)
+
+        expect(signed_headers).to eq(
+          "x-amz-acl" => FileStore::S3Store::CANNED_ACL_PRIVATE,
+          "x-amz-tagging" => FileStore::S3Store.visibility_tagging_option_value(secure: true),
+        )
+
+        expect(url).to match(/Amz-Expires/)
+
         expect(key).to match(
           /temp\/uploads\/default\/test_[0-9]\/[a-zA-z0-9]{0,32}\/[a-zA-z0-9]{0,32}.png/,
         )
@@ -410,7 +441,12 @@ RSpec.describe "Multisite s3 uploads", type: :multisite do
               "test-meta": "testing",
             },
           )
-        expect(signed_headers).to eq("x-amz-acl" => "private", "x-amz-meta-test-meta" => "testing")
+
+        expect(signed_headers).to eq(
+          "x-amz-acl" => FileStore::S3Store::CANNED_ACL_PRIVATE,
+          "x-amz-meta-test-meta" => "testing",
+        )
+
         expect(url).not_to include("&x-amz-meta-test-meta=testing")
       end
     end

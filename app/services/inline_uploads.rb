@@ -150,8 +150,12 @@ class InlineUploads
     markdown
   end
 
+  URL_REGEX = /(?:[^\s()"']|\((?:[^\s()]*|\([^\s()]*\))*\))+/
+  TITLE_PART_REGEX = /"[^"]*"|'[^']*'/
+  private_constant :URL_REGEX, :TITLE_PART_REGEX
+
   def self.match_md_inline_img(markdown, external_src: false)
-    markdown.scan(/(!?\[([^\[\]]*)\]\(([^\s\)]+)([ ]*['"]{1}[^\)]*['"]{1}[ ]*)?\))/) do |match|
+    markdown.scan(/(!?\[([^\[\]]*)\]\((#{URL_REGEX})([ ]*#{TITLE_PART_REGEX}[ ]*)?\))/) do |match|
       if (external_src || matched_uploads(match[2]).present?) && block_given?
         yield(
           match[0],
@@ -164,7 +168,9 @@ class InlineUploads
   end
 
   def self.match_bbcode_img(markdown, external_src: false)
-    markdown.scan(%r{(\[img\]\s*([^\[\]\s]+)\s*\[/img\])}i) do |match|
+    # matches [img=WxH]url[/img] and [img width=W height=H]url[/img]
+    # in addition to [img]url[/img]
+    markdown.scan(%r{(\[img\b[^\]]*\]\s*([^\[\]\s]+)\s*\[/img\])}i) do |match|
       if (external_src || (matched_uploads(match[1]).present?)) && block_given?
         yield(match[0], match[1], +"![](#{PLACEHOLDER})", $~.offset(0)[0])
       end
@@ -193,7 +199,7 @@ class InlineUploads
         has_attachment = node.attributes["class"]&.value
         index = $~.offset(0)[0]
         text = match[2].strip.gsub("\n", "").gsub(/ +/, " ")
-        text = "#{text}|attachment" if has_attachment
+        text = "#{UploadMarkdown.escape_markdown(text)}|attachment" if has_attachment
 
         yield(match[0], href, +"[#{text}](#{PLACEHOLDER})", index) if block_given?
       end
@@ -249,7 +255,9 @@ class InlineUploads
     raw =
       raw.gsub(%r{^(https?://\S+)(\s?)$}) do |match|
         if upload = blk.call(match)
-          "![](#{upload.short_url})"
+          filename_modified = upload.original_filename.to_s
+          filename_modified = File.basename(filename_modified, File.extname(filename_modified))
+          "![#{UploadMarkdown.escape_markdown(filename_modified)}](#{upload.short_url})"
         else
           match
         end

@@ -10,11 +10,11 @@ require "mysql2"
 require "open-uri"
 
 class ImportScripts::AnswerHub < ImportScripts::Base
-  DB_NAME ||= ENV["DB_NAME"] || "answerhub"
-  DB_PASS ||= ENV["DB_PASS"] || "answerhub"
-  DB_USER ||= ENV["DB_USER"] || "answerhub"
-  TABLE_PREFIX ||= ENV["TABLE_PREFIX"] || "network1"
-  BATCH_SIZE ||= ENV["BATCH_SIZE"].to_i || 1000
+  DB_NAME = ENV["DB_NAME"] || "answerhub"
+  DB_PASS = ENV["DB_PASS"] || "answerhub"
+  DB_USER = ENV["DB_USER"] || "answerhub"
+  TABLE_PREFIX = ENV["TABLE_PREFIX"] || "network1"
+  BATCH_SIZE = ENV["BATCH_SIZE"].to_i || 1000
   ATTACHMENT_DIR = ENV["ATTACHMENT_DIR"] || ""
   PROCESS_UPLOADS = ENV["PROCESS_UPLOADS"].to_i || 0
   ANSWERHUB_DOMAIN = ENV["ANSWERHUB_DOMAIN"]
@@ -215,7 +215,7 @@ class ImportScripts::AnswerHub < ImportScripts::Base
 
         reply_to_post_id = post_id_from_imported_post_id(p["c_parent"])
         reply_to_post = reply_to_post_id.present? ? Post.find(reply_to_post_id) : nil
-        reply_to_post_number = reply_to_post.present? ? reply_to_post.post_number : nil
+        reply_to_post_number = reply_to_post.presence&.post_number
 
         user_id = user_id_from_imported_user_id(p["c_author"]) || Discourse::SYSTEM_USER_ID
 

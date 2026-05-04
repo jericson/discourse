@@ -1,18 +1,9 @@
 # frozen_string_literal: true
 
-# TODO (martin) Remove this endpoint when we move to do the channel creation
-# when a message is first sent to avoid double-request round trips for DMs.
 class Chat::Api::DirectMessagesController < Chat::ApiController
   def create
-    with_service(Chat::CreateDirectMessageChannel) do
-      on_success do
-        render_serialized(
-          result.channel,
-          Chat::ChannelSerializer,
-          root: "channel",
-          membership: result.membership,
-        )
-      end
+    Chat::CreateDirectMessageChannel.call(service_params) do
+      on_success { |channel:| render_serialized(channel, Chat::ChannelSerializer, root: "channel") }
       on_model_not_found(:target_users) { raise ActiveRecord::RecordNotFound }
       on_failed_policy(:satisfies_dms_max_users_limit) do |policy|
         render_json_dump({ error: policy.reason }, status: 400)
@@ -30,9 +21,9 @@ class Chat::Api::DirectMessagesController < Chat::ApiController
       on_model_errors(:channel) do |model|
         render_json_error(model, type: :record_invalid, status: 422)
       end
-      on_failure { render(json: failed_json, status: 422) }
+      on_failure { render(json: failed_json, status: :unprocessable_entity) }
       on_failed_contract do |contract|
-        render(json: failed_json.merge(errors: contract.errors.full_messages), status: 400)
+        render(json: failed_json.merge(errors: contract.errors.full_messages), status: :bad_request)
       end
     end
   end

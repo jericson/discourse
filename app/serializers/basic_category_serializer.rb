@@ -1,10 +1,14 @@
 # frozen_string_literal: true
 
 class BasicCategorySerializer < ApplicationSerializer
+  include BasicCategoryAttributes
   attributes :id,
              :name,
              :color,
              :text_color,
+             :style_type,
+             :icon,
+             :emoji,
              :slug,
              :topic_count,
              :post_count,
@@ -19,6 +23,7 @@ class BasicCategorySerializer < ApplicationSerializer
              :notification_level,
              :can_edit,
              :topic_template,
+             :topic_title_placeholder,
              :has_children,
              :subcategory_count,
              :sort_order,
@@ -42,27 +47,11 @@ class BasicCategorySerializer < ApplicationSerializer
     parent_category_id
   end
 
-  def name
-    if object.uncategorized?
-      I18n.t("uncategorized_category_name", locale: SiteSetting.default_locale)
-    else
-      object.name
-    end
-  end
-
   def description_text
     if object.uncategorized?
       I18n.t("category.uncategorized_description", locale: SiteSetting.default_locale)
     else
       object.description_text
-    end
-  end
-
-  def description
-    if object.uncategorized?
-      I18n.t("category.uncategorized_description", locale: SiteSetting.default_locale)
-    else
-      object.description
     end
   end
 
@@ -72,6 +61,14 @@ class BasicCategorySerializer < ApplicationSerializer
     else
       object.description_excerpt
     end
+  end
+
+  def name
+    category_name
+  end
+
+  def description
+    category_description
   end
 
   def can_edit

@@ -51,7 +51,7 @@ def setup_test_env(
   success &&= run_or_fail("bundle exec rake plugin:install_all_official") if install_all_official
   success &&= run_or_fail("bundle exec rake plugin:update_all") if update_all_plugins
 
-  if !plugins_to_remove.blank?
+  if plugins_to_remove.present?
     plugins_to_remove
       .split(",")
       .map(&:strip)
@@ -78,8 +78,18 @@ def migrate_databases(parallel: false, load_plugins: false)
   success
 end
 
+def number_of_processors
+  Etc.nprocessors
+end
+
+def qunit_concurrency
+  # qunit runs all browsers against a single ember-cli (express.js) server, so this will not scale infinitely
+  # therefore, cap at 8
+  [number_of_processors / 2, 8].min
+end
+
 def system_tests_parallel_tests_processors_env
-  "PARALLEL_TEST_PROCESSORS=#{Etc.nprocessors / 2}"
+  "PARALLEL_TEST_PROCESSORS=#{number_of_processors / 2}"
 end
 
 # Environment Variables (specific to this rake task)
@@ -137,7 +147,7 @@ task "docker:test" do
   def run_or_fail_prettier(*patterns)
     if patterns.any? { |p| Dir[p].any? }
       patterns = patterns.map { |p| "'#{p}'" }.join(" ")
-      run_or_fail("yarn pprettier --list-different #{patterns}")
+      run_or_fail("pnpm pprettier --list-different #{patterns}")
     else
       puts "Skipping prettier. Pattern not found."
       true
@@ -146,22 +156,23 @@ task "docker:test" do
 
   begin
     @good = true
-    @good &&= run_or_fail("yarn install")
+    @good &&= run_or_fail("pnpm install")
+    @good &&= run_or_fail("pnpm playwright-install")
 
     unless ENV["SKIP_LINT"]
       puts "Running linters/prettyfiers"
-      puts "eslint #{`yarn eslint -v`}"
-      puts "prettier #{`yarn prettier -v`}"
+      puts "eslint #{`pnpm eslint -v`}"
+      puts "prettier #{`pnpm prettier -v`}"
 
       if ENV["SINGLE_PLUGIN"]
-        @good &&= run_or_fail("bundle exec rubocop --parallel plugins/#{ENV["SINGLE_PLUGIN"]}")
+        @good &&= run_or_fail("bundle exec rubocop plugins/#{ENV["SINGLE_PLUGIN"]}")
         @good &&=
           run_or_fail(
             "bundle exec ruby script/i18n_lint.rb plugins/#{ENV["SINGLE_PLUGIN"]}/config/locales/{client,server}.en.yml",
           )
         @good &&=
           run_or_fail(
-            "yarn eslint --ext .js,.js.es6 --no-error-on-unmatched-pattern plugins/#{ENV["SINGLE_PLUGIN"]}",
+            "pnpm eslint --ext .js,.js.es6 --no-error-on-unmatched-pattern plugins/#{ENV["SINGLE_PLUGIN"]}",
           )
 
         puts "Listing prettier offenses in #{ENV["SINGLE_PLUGIN"]}:"
@@ -172,11 +183,11 @@ task "docker:test" do
           )
       else
         @good &&= run_or_fail("bundle exec rake plugin:update_all") unless ENV["SKIP_PLUGINS"]
-        @good &&= run_or_fail("bundle exec rubocop --parallel") unless ENV["SKIP_CORE"]
-        @good &&= run_or_fail("yarn eslint app/assets/javascripts") unless ENV["SKIP_CORE"]
+        @good &&= run_or_fail("bundle exec rubocop") unless ENV["SKIP_CORE"]
+        @good &&= run_or_fail("pnpm eslint frontend") unless ENV["SKIP_CORE"]
         @good &&=
           run_or_fail(
-            "yarn eslint --ext .js,.js.es6 --no-error-on-unmatched-pattern plugins",
+            "pnpm eslint --ext .js,.js.es6 --no-error-on-unmatched-pattern plugins",
           ) unless ENV["SKIP_PLUGINS"]
 
         @good &&=
@@ -192,7 +203,7 @@ task "docker:test" do
           puts "Listing prettier offenses in core:"
           @good &&=
             run_or_fail(
-              'yarn pprettier --list-different "app/assets/stylesheets/**/*.scss" "app/assets/javascripts/**/*.js"',
+              'pnpm pprettier --list-different "app/assets/stylesheets/**/*.scss" "frontend/**/*.js"',
             )
         end
 
@@ -200,7 +211,7 @@ task "docker:test" do
           puts "Listing prettier offenses in plugins:"
           @good &&=
             run_or_fail(
-              'yarn pprettier --list-different "plugins/**/assets/stylesheets/**/*.scss" "plugins/**/assets/javascripts/**/*.{js,es6}"',
+              'pnpm pprettier --list-different "plugins/**/assets/stylesheets/**/*.scss" "plugins/**/assets/javascripts/**/*.{js,es6}"',
             )
         end
       end
@@ -210,6 +221,7 @@ task "docker:test" do
       @redis_pid = setup_redis
       @pg_pid = setup_postgres(skip_init: ENV["SKIP_DB_CREATE"].present?)
 
+      load_plugins = !ENV["SKIP_PLUGINS"]
       @good &&=
         setup_test_env(
           setup_multisite: !ENV["JS_ONLY"],
@@ -218,11 +230,14 @@ task "docker:test" do
           install_all_official: !!ENV["INSTALL_OFFICIAL_PLUGINS"],
           update_all_plugins: !!ENV["UPDATE_ALL_PLUGINS"],
           plugins_to_remove: ENV["SKIP_INSTALL_PLUGINS"] || "",
-          load_plugins: !ENV["SKIP_PLUGINS"],
+          load_plugins:,
         )
 
       unless ENV["JS_ONLY"]
-        @good &&= run_or_fail("bin/ember-cli --build") if ENV["RUN_SYSTEM_TESTS"]
+        @good &&=
+          run_or_fail("LOAD_PLUGINS=#{load_plugins ? 1 : 0} script/assemble_ember_build.rb") if ENV[
+          "RUN_SYSTEM_TESTS"
+        ]
 
         if ENV["WARMUP_TMP_FOLDER"]
           run_or_fail("bundle exec rspec ./spec/requests/groups_controller_spec.rb")
@@ -289,23 +304,18 @@ task "docker:test" do
       end
 
       unless ENV["RUBY_ONLY"]
-        js_timeout = ENV["JS_TIMEOUT"].presence || 900_000 # 15 minutes
-
         unless ENV["SKIP_CORE"]
-          @good &&=
-            run_or_fail(
-              "cd app/assets/javascripts/discourse && CI=1 yarn ember exam --load-balance --parallel=3 --random",
-            )
+          @good &&= run_or_fail("CI=1 QUNIT_PARALLEL=#{qunit_concurrency} bin/qunit --standalone")
         end
 
         unless ENV["SKIP_PLUGINS"]
           if ENV["SINGLE_PLUGIN"]
+            @good &&= run_or_fail("CI=1 bundle exec rake plugin:qunit['#{ENV["SINGLE_PLUGIN"]}']")
+          else
             @good &&=
               run_or_fail(
-                "CI=1 bundle exec rake plugin:qunit['#{ENV["SINGLE_PLUGIN"]}','#{js_timeout}']",
+                "QUNIT_PARALLEL=#{qunit_concurrency} CI=1 bundle exec rake plugin:qunit['*']",
               )
-          else
-            @good &&= run_or_fail("CI=1 bundle exec rake plugin:qunit['*','#{js_timeout}']")
           end
         end
       end

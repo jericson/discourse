@@ -58,6 +58,8 @@ bs_BA:
         breakdown: "Razloženo"
         percentage: "Procentualno"
         count: "Broj"
+      ranked_choice:
+        none: "Ništa"
       options:
         label: "Opcije"
       error_while_toggling_status: "Izvinjavamo se, pojavio se problem u prebacivanju statutusa ove ankete"
@@ -65,7 +67,6 @@ bs_BA:
       error_while_fetching_voters: "Izvinjavamo se, pojavila se greška pri prikazivanju glasača"
       error_while_exporting_results: "Izvinjavamo se, došlo je do greške izvoza rezultata vaše ankete."
       ui_builder:
-        title: Izgradi anketu
         insert: Umetni anketu
         help:
           options_min_count: Unesite barem jednu opciju.

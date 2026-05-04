@@ -7,8 +7,8 @@ class UserAction < ActiveRecord::Base
   belongs_to :target_post, class_name: "Post"
   belongs_to :target_topic, class_name: "Topic"
 
-  validates_presence_of :action_type
-  validates_presence_of :user_id
+  validates :action_type, presence: true
+  validates :user_id, presence: true
 
   LIKE = 1
   WAS_LIKED = 2
@@ -421,6 +421,7 @@ class UserAction < ActiveRecord::Base
 
     filter_private_messages(builder, user_id, guardian, ignore_private_messages)
     filter_categories(builder, guardian)
+    filter_ignored_users(builder, guardian)
   end
 
   def self.filter_private_messages(builder, user_id, guardian, ignore_private_messages = false)
@@ -465,6 +466,20 @@ class UserAction < ActiveRecord::Base
       end
     end
     builder
+  end
+
+  def self.filter_ignored_users(builder, guardian)
+    return unless guardian&.user
+
+    builder.where(<<~SQL, current_user_id: guardian.user.id)
+      NOT EXISTS (
+        SELECT 1 FROM ignored_users ig
+        INNER JOIN users iu ON iu.id = ig.ignored_user_id
+        WHERE ig.user_id = :current_user_id
+          AND ig.ignored_user_id = a.acting_user_id
+          AND ig.ignored_user_id <> :current_user_id
+      )
+    SQL
   end
 
   def self.require_parameters(data, *params)

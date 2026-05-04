@@ -19,6 +19,11 @@ class Middleware::RequestTracker
   STATIC_IP_SKIPPER =
     ENV["DISCOURSE_MAX_REQS_PER_IP_EXCEPTIONS"]&.split&.map { |ip| IPAddr.new(ip) }
 
+  MAX_URL_LENGTH = 2000
+  MAX_SESSION_ID_LENGTH = 32
+  MAX_USER_AGENT_LENGTH = 1000
+  MAX_IP_ADDRESS_LENGTH = 45
+
   # register callbacks for detailed request loggers called on every request
   # example:
   #
@@ -59,6 +64,25 @@ class Middleware::RequestTracker
     @@ip_skipper
   end
 
+  def self.reset_rate_limiters_stack
+    @@stack =
+      begin
+        # Update the documentation for the `add_request_rate_limiter` plugin API if this list changes.
+        default_rate_limiters = [
+          RequestTracker::RateLimiters::User,
+          RequestTracker::RateLimiters::IP,
+        ]
+
+        stack = RequestTracker::RateLimiters::Stack.new
+        default_rate_limiters.each { |limiter| stack.append(limiter) }
+        stack
+      end
+  end
+
+  def self.rate_limiters_stack
+    @@stack ||= reset_rate_limiters_stack
+  end
+
   def initialize(app, settings = {})
     @app = app
   end
@@ -75,31 +99,63 @@ class Middleware::RequestTracker
       elsif data[:has_auth_cookie]
         ApplicationRequest.increment!(:page_view_logged_in)
         ApplicationRequest.increment!(:page_view_logged_in_mobile) if data[:is_mobile]
-        if data[:explicit_track_view]
-          # Must be a browser if it had this header from our ajax implementation
-          ApplicationRequest.increment!(:page_view_logged_in_browser)
-          ApplicationRequest.increment!(:page_view_logged_in_browser_mobile) if data[:is_mobile]
-        end
       elsif !SiteSetting.login_required
         ApplicationRequest.increment!(:page_view_anon)
         ApplicationRequest.increment!(:page_view_anon_mobile) if data[:is_mobile]
-        if data[:explicit_track_view]
-          # Must be a browser if it had this header from our ajax implementation
-          ApplicationRequest.increment!(:page_view_anon_browser)
-          ApplicationRequest.increment!(:page_view_anon_browser_mobile) if data[:is_mobile]
+      end
+    end
+
+    if data[:browser_page_view] && !data[:is_crawler] && !data[:is_beacon]
+      if data[:has_auth_cookie]
+        ApplicationRequest.increment!(:page_view_logged_in_browser)
+        ApplicationRequest.increment!(:page_view_logged_in_browser_mobile) if data[:is_mobile]
+
+        trigger_browser_pageview_event(data)
+
+        if data[:topic_id].present? && data[:current_user_id].present?
+          TopicsController.defer_topic_view(
+            data[:topic_id],
+            data[:request_remote_ip],
+            data[:current_user_id],
+          )
+        end
+      elsif !SiteSetting.login_required
+        ApplicationRequest.increment!(:page_view_anon_browser)
+        ApplicationRequest.increment!(:page_view_anon_browser_mobile) if data[:is_mobile]
+
+        trigger_browser_pageview_event(data)
+
+        if data[:topic_id].present?
+          TopicsController.defer_topic_view(data[:topic_id], data[:request_remote_ip])
         end
       end
     end
 
-    # Message-bus requests may include this 'deferred track' header which we use to detect
-    # 'real browser' views.
-    if data[:deferred_track] && !data[:is_crawler]
+    if data[:is_beacon] && !data[:is_crawler]
       if data[:has_auth_cookie]
-        ApplicationRequest.increment!(:page_view_logged_in_browser)
-        ApplicationRequest.increment!(:page_view_logged_in_browser_mobile) if data[:is_mobile]
-      elsif !SiteSetting.login_required
-        ApplicationRequest.increment!(:page_view_anon_browser)
-        ApplicationRequest.increment!(:page_view_anon_browser_mobile) if data[:is_mobile]
+        ApplicationRequest.increment!(:page_view_logged_in_browser_beacon)
+        if data[:is_mobile]
+          ApplicationRequest.increment!(:page_view_logged_in_browser_mobile_beacon)
+        end
+
+        trigger_beacon_browser_pageview_event(data)
+
+        if data[:topic_id].present? && data[:current_user_id].present?
+          TopicsController.defer_topic_view(
+            data[:topic_id],
+            data[:request_remote_ip],
+            data[:current_user_id],
+          )
+        end
+      elsif !SiteSetting.login_required && !CrawlerDetection.crawler_ip?(data[:request_remote_ip])
+        ApplicationRequest.increment!(:page_view_anon_browser_beacon)
+        ApplicationRequest.increment!(:page_view_anon_browser_mobile_beacon) if data[:is_mobile]
+
+        trigger_beacon_browser_pageview_event(data)
+
+        if data[:topic_id].present?
+          TopicsController.defer_topic_view(data[:topic_id], data[:request_remote_ip])
+        end
       end
     end
 
@@ -129,22 +185,19 @@ class Middleware::RequestTracker
     request ||= Rack::Request.new(env)
     helper = Middleware::AnonymousCache::Helper.new(env, request)
 
-    # Value of the discourse-track-view request header
-    env_track_view = env["HTTP_DISCOURSE_TRACK_VIEW"]
+    # Since ActionDispatch::RemoteIp middleware is run before this middleware,
+    # we have access to the normalised remote IP based on ActionDispatch::RemoteIp::GetIp
+    #
+    # NOTE: Locally with MessageBus requests, the remote IP ends up as ::1 because
+    # of the X-Forwarded-For header set...somewhere, whereas all other requests
+    # end up as 127.0.0.1.
+    request_remote_ip = env["action_dispatch.remote_ip"].to_s.slice(0, MAX_IP_ADDRESS_LENGTH)
 
-    # Was the discourse-track-view request header set to true? Likely
-    # set by our ajax library to indicate a page view.
-    explicit_track_view = status == 200 && %w[1 true].include?(env_track_view)
+    view_tracking_data = extract_view_tracking_data(env, status, headers)
 
-    # An HTML response to a GET request is tracked implicitly
-    implicit_track_view =
-      status == 200 && !%w[0 false].include?(env_track_view) && request.get? && !request.xhr? &&
-        headers["Content-Type"] =~ %r{text/html}
-
-    track_view = !!(explicit_track_view || implicit_track_view)
-
-    has_auth_cookie = Auth::DefaultCurrentUserProvider.find_v0_auth_cookie(request).present?
-    has_auth_cookie ||= Auth::DefaultCurrentUserProvider.find_v1_auth_cookie(env).present?
+    auth_cookie = Auth::DefaultCurrentUserProvider.find_v0_auth_cookie(request)
+    auth_cookie ||= Auth::DefaultCurrentUserProvider.find_v1_auth_cookie(env)
+    has_auth_cookie = auth_cookie.present?
 
     is_api ||= !!env[Auth::DefaultCurrentUserProvider::API_KEY_ENV]
     is_user_api ||= !!env[Auth::DefaultCurrentUserProvider::USER_API_KEY_ENV]
@@ -152,27 +205,37 @@ class Middleware::RequestTracker
     is_message_bus = request.path.start_with?("#{Discourse.base_path}/message-bus/")
     is_topic_timings = request.path.start_with?("#{Discourse.base_path}/topics/timings")
 
-    # This header is sent on a follow-up request after a real browser loads up a page
-    # see `scripts/pageview.js` and `instance-initializers/page-tracking.js`
-    has_deferred_track_header = %w[1 true].include?(env["HTTP_DISCOURSE_DEFERRED_TRACK_VIEW"])
+    current_user_id =
+      if view_tracking_data[:deferred_track_view] || view_tracking_data[:explicit_track_view]
+        begin
+          (auth_cookie&.[](:user_id) || CurrentUser.lookup_from_env(env)&.id)
+        rescue Discourse::InvalidAccess => err
+          # This error is raised when the API key is invalid, no need to stop the show.
+          Discourse.warn_exception(
+            err,
+            message: "RequestTracker.get_data failed with an invalid API key error",
+          )
+          nil
+        end
+      end
 
-    h = {
+    request_data = {
       status: status,
       is_crawler: helper.is_crawler?,
       has_auth_cookie: has_auth_cookie,
+      current_user_id: current_user_id,
       is_api: is_api,
       is_user_api: is_user_api,
       is_background: is_message_bus || is_topic_timings,
       is_mobile: helper.is_mobile?,
-      track_view: track_view,
       timing: timing,
-      queue_seconds: env["REQUEST_QUEUE_SECONDS"],
-      explicit_track_view: explicit_track_view,
-      deferred_track: has_deferred_track_header,
-    }
+      queue_seconds: env[Middleware::ProcessingRequest::REQUEST_QUEUE_SECONDS_ENV_KEY],
+      request_remote_ip: request_remote_ip,
+      occurred_at: Time.zone.now,
+    }.merge(view_tracking_data)
 
-    if h[:is_background]
-      h[:background_type] = if is_message_bus
+    if request_data[:is_background]
+      request_data[:background_type] = if is_message_bus
         if request.query_string.include?("dlp=t")
           "message-bus-dlp"
         elsif env["HTTP_DONT_CHUNK"]
@@ -185,32 +248,37 @@ class Middleware::RequestTracker
       end
     end
 
-    if h[:is_crawler]
+    if request_data[:is_crawler]
       user_agent = env["HTTP_USER_AGENT"]
       user_agent = HttpUserAgentEncoder.ensure_utf8(user_agent) if user_agent
-      h[:user_agent] = user_agent
+      request_data[:user_agent] = user_agent
     end
 
     if cache = headers["X-Discourse-Cached"]
-      h[:cache] = cache
+      request_data[:cache] = cache
     end
 
-    h
+    request_data
   end
 
   def log_request_info(env, result, info, request = nil)
-    # we got to skip this on error ... its just logging
+    # We've got to skip this on error ... its just logging
     data =
       begin
         self.class.get_data(env, result, info, request)
-      rescue StandardError => e
-        Discourse.warn_exception(e, message: "RequestTracker.get_data failed")
+      rescue StandardError => err
+        Discourse.warn_exception(err, message: "RequestTracker.get_data failed")
+
+        # This is super hard to find if in testing, we should still raise in this case.
+        raise err if Rails.env.test?
+
         nil
       end
 
     if data
       if result && (headers = result[1])
         headers["X-Discourse-TrackView"] = "1" if data[:track_view]
+        headers["X-Discourse-BrowserPageView"] = "1" if data[:browser_page_view]
       end
 
       if @@detailed_request_loggers
@@ -221,48 +289,39 @@ class Middleware::RequestTracker
     end
   end
 
-  def self.populate_request_queue_seconds!(env)
-    if !env["REQUEST_QUEUE_SECONDS"]
-      if queue_start = env["HTTP_X_REQUEST_START"]
-        queue_start =
-          if queue_start.start_with?("t=")
-            queue_start.split("t=")[1].to_f
-          else
-            queue_start.to_f / 1000.0
-          end
-        queue_time = (Time.now.to_f - queue_start)
-        env["REQUEST_QUEUE_SECONDS"] = queue_time
-      end
-    end
-  end
-
   def call(env)
     result = nil
     info = nil
     gc_stat_timing = nil
 
-    # doing this as early as possible so we have an
-    # accurate counter
-    ::Middleware::RequestTracker.populate_request_queue_seconds!(env)
+    # Doing this before the app.call will allow us to have this data available
+    # in the MessageBus middleware to add headers in the 004-message_bus.rb initializer.
+    if !env["discourse.request_tracker.skip"]
+      env["discourse.view_tracking_data"] = self.class.extract_view_tracking_data(env, nil, nil)
+    end
 
     request = Rack::Request.new(env)
-
     cookie = find_auth_cookie(env)
+
     if error_details = rate_limit(request, cookie)
-      available_in, error_code, limit_on_id = error_details
+      available_in, error_code = error_details
+
       message = <<~TEXT
-        Slow down, too many requests from this #{limit_on_id ? "user" : "IP address"}.
+        Slow down, you're making too many requests.
         Please retry again in #{available_in} seconds.
         Error code: #{error_code}.
       TEXT
+
       headers = {
         "Content-Type" => "text/plain",
         "Retry-After" => available_in.to_s,
         "Discourse-Rate-Limit-Error-Code" => error_code,
       }
+
       if username = cookie&.[](:username)
         headers["X-Discourse-Username"] = username
       end
+
       return 429, headers, [message]
     end
 
@@ -270,16 +329,23 @@ class Middleware::RequestTracker
       if error_details = check_crawler_limits(env)
         available_in, error_code = error_details
         message = "Too many crawling requests. Error code: #{error_code}."
+
         headers = {
           "Content-Type" => "text/plain",
           "Retry-After" => available_in.to_s,
           "Discourse-Rate-Limit-Error-Code" => error_code,
         }
+
         return 429, headers, [message]
       end
     end
 
     env["discourse.request_tracker"] = self
+
+    if self.class.is_beacon_tracking_request?(request)
+      result = [204, {}, []]
+      return result
+    end
 
     MethodProfiler.start
 
@@ -300,11 +366,13 @@ class Middleware::RequestTracker
           headers["X-Redis-Calls"] = redis[:calls].to_s
           headers["X-Redis-Time"] = "%0.6f" % redis[:duration]
         end
+
         if sql = info[:sql]
           headers["X-Sql-Calls"] = sql[:calls].to_s
           headers["X-Sql-Time"] = "%0.6f" % sql[:duration]
         end
-        if queue = env["REQUEST_QUEUE_SECONDS"]
+
+        if queue = env[Middleware::ProcessingRequest::REQUEST_QUEUE_SECONDS_ENV_KEY]
           headers["X-Queue-Time"] = "%0.6f" % queue
         end
       end
@@ -318,6 +386,7 @@ class Middleware::RequestTracker
   ensure
     if (limiters = env["DISCOURSE_RATE_LIMITERS"]) && env["DISCOURSE_IS_ASSET_PATH"]
       limiters.each(&:rollback!)
+
       env["DISCOURSE_ASSET_RATE_LIMITERS"].each do |limiter|
         begin
           limiter.performed!
@@ -335,7 +404,11 @@ class Middleware::RequestTracker
 
   def log_later(data)
     Scheduler::Defer.later("Track view") do
-      self.class.log_request(data) unless Discourse.pg_readonly_mode?
+      begin
+        self.class.log_request(data) unless Discourse.pg_readonly_mode?
+      rescue ActiveRecord::ReadOnlyError
+        # Just noop if ActiveRecord is preventing writes
+      end
     end
   end
 
@@ -356,6 +429,7 @@ class Middleware::RequestTracker
     warn =
       GlobalSetting.max_reqs_per_ip_mode == "warn" ||
         GlobalSetting.max_reqs_per_ip_mode == "warn+block"
+
     block =
       GlobalSetting.max_reqs_per_ip_mode == "block" ||
         GlobalSetting.max_reqs_per_ip_mode == "warn+block"
@@ -371,44 +445,42 @@ class Middleware::RequestTracker
     return if @@ip_skipper&.call(ip)
     return if STATIC_IP_SKIPPER&.any? { |entry| entry.include?(ip) }
 
-    ip_or_id = ip
-    limit_on_id = false
-    if cookie && cookie[:user_id] && cookie[:trust_level] &&
-         cookie[:trust_level] >= GlobalSetting.skip_per_ip_rate_limit_trust_level
-      ip_or_id = cookie[:user_id]
-      limit_on_id = true
-    end
+    rate_limiter = self.class.rate_limiters_stack.active_rate_limiter(request, cookie)
+    return nil if rate_limiter.nil?
+    rate_limit_key = rate_limiter.rate_limit_key
+    error_code_identifier = rate_limiter.error_code_identifier
+    global = rate_limiter.rate_limit_globally?
 
     limiter10 =
       RateLimiter.new(
         nil,
-        "global_limit_10_#{ip_or_id}",
+        "global_limit_10_#{rate_limit_key}",
         GlobalSetting.max_reqs_per_ip_per_10_seconds,
-        10,
-        global: !limit_on_id,
+        10.seconds,
+        global:,
         aggressive: true,
-        error_code: limit_on_id ? "id_10_secs_limit" : "ip_10_secs_limit",
+        error_code: "#{error_code_identifier}_10_secs_limit",
       )
 
     limiter60 =
       RateLimiter.new(
         nil,
-        "global_limit_60_#{ip_or_id}",
+        "global_limit_60_#{rate_limit_key}",
         GlobalSetting.max_reqs_per_ip_per_minute,
-        60,
-        global: !limit_on_id,
-        error_code: limit_on_id ? "id_60_secs_limit" : "ip_60_secs_limit",
+        1.minute,
+        global:,
+        error_code: "#{error_code_identifier}_60_secs_limit",
         aggressive: true,
       )
 
     limiter_assets10 =
       RateLimiter.new(
         nil,
-        "global_limit_10_assets_#{ip_or_id}",
+        "global_limit_10_assets_#{rate_limit_key}",
         GlobalSetting.max_asset_reqs_per_ip_per_10_seconds,
-        10,
-        error_code: limit_on_id ? "id_assets_10_secs_limit" : "ip_assets_10_secs_limit",
-        global: !limit_on_id,
+        10.seconds,
+        error_code: "#{error_code_identifier}_assets_10_secs_limit",
+        global:,
       )
 
     request.env["DISCOURSE_RATE_LIMITERS"] = [limiter10, limiter60]
@@ -416,20 +488,13 @@ class Middleware::RequestTracker
 
     if !limiter_assets10.can_perform?
       if warn
-        limited_on = limit_on_id ? "user_id" : "ip"
         Discourse.warn(
-          "Global asset rate limit exceeded for #{limited_on}: #{ip}: 10 second rate limit",
+          "Global asset rate limit exceeded for #{rate_limiter.class.name}: #{rate_limit_key}: 10 second rate limit",
           uri: request.env["REQUEST_URI"],
         )
       end
 
-      if block
-        return [
-          limiter_assets10.seconds_to_wait(Time.now.to_i),
-          limiter_assets10.error_code,
-          limit_on_id
-        ]
-      end
+      return limiter_assets10.seconds_to_wait(Time.now.to_i), limiter_assets10.error_code if block
     end
 
     begin
@@ -442,14 +507,14 @@ class Middleware::RequestTracker
       nil
     rescue RateLimiter::LimitExceeded => e
       if warn
-        limited_on = limit_on_id ? "user_id" : "ip"
         Discourse.warn(
-          "Global rate limit exceeded for #{limited_on}: #{ip}: #{type} second rate limit",
+          "Global rate limit exceeded for #{rate_limiter.class.name}: #{rate_limit_key}: #{type} second rate limit",
           uri: request.env["REQUEST_URI"],
         )
       end
+
       if block
-        [e.available_in, e.error_code, limit_on_id]
+        [e.available_in, e.error_code]
       else
         nil
       end
@@ -481,4 +546,137 @@ class Middleware::RequestTracker
   rescue RateLimiter::LimitExceeded => e
     [e.available_in, e.error_code]
   end
+
+  def self.extract_view_tracking_data(env, status, headers)
+    request = Rack::Request.new(env)
+    status ||= 200
+    headers ||= {}
+
+    return extract_beacon_view_tracking_data(env) if is_beacon_tracking_request?(request)
+
+    is_html_request = headers["Content-Type"]&.include?("text/html")
+    is_ajax_request = request.xhr?
+
+    # This Discourse-Track-View request header is set in `lib/ajax.js`,
+    # whenever the user navigates between Ember routes, to indicate a
+    # browser page view.
+    env_track_view = env["HTTP_DISCOURSE_TRACK_VIEW"]
+    explicit_track_view = status == 200 && %w[1 true].include?(env_track_view)
+
+    # An HTML response to a GET request is tracked implicitly, these do
+    # not count as browser page views but they do count as legacy page views.
+    implicit_track_view =
+      status == 200 && !%w[0 false].include?(env_track_view) && request.get? && !is_ajax_request &&
+        is_html_request
+
+    # This Discourse-Deferred-Track-View header is piggybacked on a
+    # follow-up MessageBus request after a real browser loads up a page
+    # to avoid bots influencing browser page views when loading HTML
+    # versions of a page.
+    #
+    # See `scripts/pageview.js` and `instance-initializers/page-tracking.js`
+    env_deferred_track_view = env["HTTP_DISCOURSE_TRACK_VIEW_DEFERRED"]
+    deferred_track_view = %w[1 true].include?(env_deferred_track_view)
+
+    # This only indicates that we are tracking a page view of some kind, not
+    # using an API key. In #log_request is where we are determining which
+    # of these count as browser page views.
+    #
+    # TL;DR -- Explicit and Deferred page views count as browser page views (BPVs),
+    # explicit and implicit page views count as legacy page views.
+    #
+    # If this is true, then the X-Discourse-TrackView header is included in
+    # the response.
+    #
+    # If the page view is explicit or deferred, then the X-Discourse-BrowserPageView header
+    # is included in the response.
+    track_view = !!(explicit_track_view || implicit_track_view)
+    browser_page_view = !!(explicit_track_view || deferred_track_view)
+
+    topic_id = env["HTTP_DISCOURSE_TRACK_VIEW_TOPIC_ID"]&.to_i
+    tracking_url = env["HTTP_DISCOURSE_TRACK_VIEW_URL"]&.slice(0, MAX_URL_LENGTH)
+    tracking_referrer = env["HTTP_DISCOURSE_TRACK_VIEW_REFERRER"]&.slice(0, MAX_URL_LENGTH)
+    tracking_session_id =
+      env["HTTP_DISCOURSE_TRACK_VIEW_SESSION_ID"]&.slice(0, MAX_SESSION_ID_LENGTH)
+    user_agent = env["HTTP_USER_AGENT"]&.slice(0, MAX_USER_AGENT_LENGTH)
+
+    {
+      track_view: track_view,
+      explicit_track_view: explicit_track_view,
+      deferred_track_view: deferred_track_view,
+      implicit_track_view: implicit_track_view,
+      browser_page_view: browser_page_view,
+      topic_id: topic_id,
+      tracking_url: tracking_url,
+      tracking_referrer: tracking_referrer,
+      tracking_session_id: tracking_session_id,
+      user_agent: user_agent,
+    }
+  end
+
+  def self.is_beacon_tracking_request?(request)
+    SiteSetting.use_beacon_for_browser_page_views && request.post? &&
+      request.path == Discourse.beacon_pv_tracking_path
+  end
+
+  def self.extract_beacon_view_tracking_data(env)
+    body = env["rack.input"]&.read
+    env["rack.input"]&.rewind
+    data =
+      begin
+        JSON.parse(body)
+      rescue JSON::ParserError
+        {}
+      end
+
+    topic_id = data["topic_id"]&.to_i
+    tracking_url = data["url"]&.slice(0, MAX_URL_LENGTH)
+    tracking_referrer = data["referrer"]&.slice(0, MAX_URL_LENGTH)
+    tracking_session_id = data["session_id"]&.slice(0, MAX_SESSION_ID_LENGTH)
+    user_agent = env["HTTP_USER_AGENT"]&.slice(0, MAX_USER_AGENT_LENGTH)
+
+    {
+      track_view: false,
+      explicit_track_view: false,
+      deferred_track_view: true,
+      implicit_track_view: false,
+      browser_page_view: true,
+      is_beacon: true,
+      topic_id: topic_id,
+      tracking_url: tracking_url,
+      tracking_referrer: tracking_referrer,
+      tracking_session_id: tracking_session_id,
+      user_agent: user_agent,
+    }
+  end
+  private_class_method :extract_beacon_view_tracking_data
+
+  def self.trigger_browser_pageview_event(data)
+    if SiteSetting.trigger_browser_pageview_events
+      DiscourseEvent.trigger(:browser_pageview, build_browser_pageview_event_payload(data))
+    end
+  end
+  private_class_method :trigger_browser_pageview_event
+
+  def self.trigger_beacon_browser_pageview_event(data)
+    if SiteSetting.trigger_browser_pageview_events
+      DiscourseEvent.trigger(:beacon_browser_pageview, build_browser_pageview_event_payload(data))
+    end
+  end
+  private_class_method :trigger_beacon_browser_pageview_event
+
+  def self.build_browser_pageview_event_payload(data)
+    {
+      user_id: data[:current_user_id],
+      url: data[:tracking_url],
+      ip_address: data[:request_remote_ip],
+      country_code: DiscourseIpInfo.get(data[:request_remote_ip])[:country_code],
+      user_agent: data[:user_agent],
+      referrer: data[:tracking_referrer],
+      session_id: data[:tracking_session_id],
+      topic_id: data[:topic_id],
+      occurred_at: data[:occurred_at],
+    }
+  end
+  private_class_method :build_browser_pageview_event_payload
 end

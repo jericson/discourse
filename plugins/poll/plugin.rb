@@ -11,28 +11,18 @@ register_asset "stylesheets/common/poll-ui-builder.scss"
 register_asset "stylesheets/desktop/poll-ui-builder.scss", :desktop
 register_asset "stylesheets/common/poll-breakdown.scss"
 
-register_svg_icon "far fa-check-square"
+register_svg_icon "far-square-check"
 
 enabled_site_setting :poll_enabled
-hide_plugin
+
+module ::DiscoursePoll
+  PLUGIN_NAME = "poll"
+end
+
+require_relative "lib/poll/engine"
 
 after_initialize do
-  module ::DiscoursePoll
-    PLUGIN_NAME ||= "poll"
-    DATA_PREFIX ||= "data-poll-"
-    HAS_POLLS ||= "has_polls"
-    DEFAULT_POLL_NAME ||= "poll"
-
-    class Engine < ::Rails::Engine
-      engine_name PLUGIN_NAME
-      isolate_namespace DiscoursePoll
-    end
-
-    class Error < StandardError
-    end
-  end
-
-  require_relative "app/controllers/polls_controller"
+  require_relative "app/controllers/discourse_poll/polls_controller"
   require_relative "app/models/poll_option"
   require_relative "app/models/poll_vote"
   require_relative "app/models/poll"
@@ -40,21 +30,14 @@ after_initialize do
   require_relative "app/serializers/poll_serializer"
   require_relative "jobs/regular/close_poll"
   require_relative "lib/poll"
+  require_relative "lib/ranked_choice"
   require_relative "lib/polls_updater"
   require_relative "lib/polls_validator"
   require_relative "lib/post_validator"
   require_relative "lib/post_extension"
   require_relative "lib/user_extension"
 
-  DiscoursePoll::Engine.routes.draw do
-    put "/vote" => "polls#vote"
-    delete "/vote" => "polls#remove_vote"
-    put "/toggle_status" => "polls#toggle_status"
-    get "/voters" => "polls#voters"
-    get "/grouped_poll_results" => "polls#grouped_poll_results"
-  end
-
-  Discourse::Application.routes.append { mount ::DiscoursePoll::Engine, at: "/polls" }
+  Discourse::Application.routes.append { mount DiscoursePoll::Engine, at: "/polls" }
 
   allow_new_queued_post_payload_attribute("is_poll")
   register_post_custom_field_type(DiscoursePoll::HAS_POLLS, :boolean)
@@ -116,7 +99,20 @@ after_initialize do
       fragment
         .css(".poll, [data-poll-name]")
         .each do |poll|
-          poll.replace "<p><a href='#{post_url}'>#{I18n.t("poll.email.link_to_poll")}</a></p>"
+          html = +""
+
+          if title = poll.at_css(".poll-title")
+            html << title.to_html
+          end
+
+          if container = poll.at_css(".poll-container")
+            container.css("li").each { |li| li.remove_attribute("data-poll-option-id") }
+            html << container.inner_html
+          end
+
+          html << "<p><a href='#{post_url}'>#{I18n.t("poll.email.link_to_poll")}</a></p>"
+
+          poll.replace(html)
         end
     end
   end
@@ -124,14 +120,11 @@ after_initialize do
   on(:reduce_excerpt) do |doc, options|
     post = options[:post]
 
-    replacement =
-      (
-        if post&.url.present?
-          "<a href='#{UrlHelper.normalized_encode(post.url)}'>#{I18n.t("poll.poll")}</a>"
-        else
-          I18n.t("poll.poll")
-        end
-      )
+    if post&.url.present?
+      replacement = "<a href='#{UrlHelper.normalized_encode(post.url)}'>#{I18n.t("poll.poll")}</a>"
+    else
+      replacement = I18n.t("poll.poll")
+    end
 
     doc.css("div.poll").each { |poll| poll.replace(replacement) }
   end
@@ -151,6 +144,26 @@ after_initialize do
         scope: guardian,
       ).as_json
     post.publish_message!("/polls/#{post.topic_id}", post_id: post.id, polls: polls)
+  end
+
+  on(:post_moved) do |new_post, _original_topic_id, old_post|
+    next if old_post.blank? || new_post.id == old_post.id
+
+    ActiveRecord::Base.transaction do
+      # Remove empty polls auto-created by PostCreator on the new post
+      # so the originals (with votes) can be moved without a unique constraint violation.
+      new_polls = Poll.where(post_id: new_post.id)
+      if new_polls.exists?
+        PollVote.where(poll_id: new_polls.select(:id)).delete_all
+        PollOption.where(poll_id: new_polls.select(:id)).delete_all
+        new_polls.delete_all
+      end
+
+      Poll.where(post_id: old_post.id).update_all(post_id: new_post.id)
+    end
+
+    DiscoursePoll::PollsUpdater.update_post_custom_fields(new_post)
+    DiscoursePoll::PollsUpdater.update_post_custom_fields(old_post)
   end
 
   on(:merging_users) do |source_user, target_user|
@@ -181,12 +194,13 @@ after_initialize do
           end
 
         if post_with_polls.present?
-          Poll
-            .where(post_id: post_with_polls)
-            .each do |p|
-              polls[p.post_id] ||= []
-              polls[p.post_id] << p
-            end
+          all_polls = Poll.includes(:poll_options).where(post_id: post_with_polls)
+          Poll.preload!(all_polls, user_id: @user&.id)
+          DiscoursePoll::Poll.preload_serialized_voters!(all_polls)
+          all_polls.each do |p|
+            polls[p.post_id] ||= []
+            polls[p.post_id] << p
+          end
         end
 
         polls
@@ -220,13 +234,22 @@ after_initialize do
   ) do
     preloaded_polls
       .map do |poll|
-        user_poll_votes =
-          poll
-            .poll_votes
-            .where(user_id: scope.user.id)
-            .joins(:poll_option)
-            .pluck("poll_options.digest")
-
+        if poll.ranked_choice?
+          user_poll_votes =
+            poll
+              .poll_votes
+              .where(user_id: scope.user.id)
+              .joins(:poll_option)
+              .pluck("poll_options.digest", "poll_votes.rank")
+              .map { |digest, rank| { digest: digest, rank: rank } }
+        else
+          user_poll_votes =
+            poll
+              .poll_votes
+              .where(user_id: scope.user.id)
+              .joins(:poll_option)
+              .pluck("poll_options.digest")
+        end
         [poll.name, user_poll_votes]
       end
       .to_h

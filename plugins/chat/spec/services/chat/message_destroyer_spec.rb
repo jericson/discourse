@@ -2,8 +2,8 @@
 
 RSpec.describe Chat::MessageDestroyer do
   describe "#destroy_in_batches" do
-    fab!(:message_1) { Fabricate(:chat_message) }
-    fab!(:user_1) { Fabricate(:user) }
+    fab!(:message_1, :chat_message)
+    fab!(:user_1, :user)
 
     it "resets last_read_message_id from memberships" do
       membership =
@@ -12,8 +12,7 @@ RSpec.describe Chat::MessageDestroyer do
           chat_channel: message_1.chat_channel,
           last_read_message: message_1,
           following: true,
-          desktop_notification_level: 2,
-          mobile_notification_level: 2,
+          notification_level: 2,
         )
 
       described_class.new.destroy_in_batches(Chat::Message.where(id: message_1.id))
@@ -33,8 +32,7 @@ RSpec.describe Chat::MessageDestroyer do
           chat_channel: message_1.chat_channel,
           last_read_message: message_4,
           following: true,
-          desktop_notification_level: 2,
-          mobile_notification_level: 2,
+          notification_level: 2,
         )
 
       described_class.new.destroy_in_batches(Chat::Message.where(id: message_4.id))

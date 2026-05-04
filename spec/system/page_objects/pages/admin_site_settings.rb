@@ -22,13 +22,59 @@ module PageObjects
         self
       end
 
-      def find_setting(setting_name)
-        find(".admin-detail .row.setting[data-setting='#{setting_name}']")
+      def navigate_to_category(category)
+        page.find("a.#{category}").click
+        self
+      end
+
+      def setting_row_selector(setting_name)
+        ".row.setting[data-setting='#{setting_name}']"
+      end
+
+      def select_list_values(setting_name, values)
+        setting =
+          PageObjects::Components::SelectKit.new(
+            ".row.setting[data-setting='#{setting_name}'] .list-setting",
+          )
+        setting.expand
+        values.each { |value| setting.select_row_by_value(value) }
+        self
+      end
+
+      def select_enum_value(setting_name, value)
+        setting =
+          PageObjects::Components::SelectKit.new(
+            ".row.setting[data-setting='#{setting_name}'] .single-select",
+          )
+        setting.expand
+        setting.select_row_by_value(value)
+        self
+      end
+
+      def has_setting?(setting_name)
+        has_css?(".row.setting[data-setting=\"#{setting_name}\"]")
+      end
+
+      def find_setting(setting_name, overridden: false)
+        find(
+          ".admin-detail #{setting_row_selector(setting_name)}#{overridden ? ".overridden" : ""}",
+        )
+      end
+
+      def fill_setting(setting_name, value)
+        setting = find_setting(setting_name)
+        setting.fill_in(with: value)
       end
 
       def toggle_setting(setting_name, text = "")
         setting = find_setting(setting_name)
         setting.find(".setting-value span", text: text).click
+        save_setting(setting)
+      end
+
+      def toggle_bool_setting(setting_name)
+        setting = find_setting(setting_name)
+        setting.find(".setting-value input[type='checkbox']").click
         save_setting(setting)
       end
 
@@ -41,12 +87,30 @@ module PageObjects
       def select_from_emoji_list(setting_name, text = "", save_changes = true)
         setting = find(".admin-detail .row.setting[data-setting='#{setting_name}']")
         setting.find(".setting-value .value-list > .value button").click
-        setting.find(".setting-value .emoji-picker .emoji[title='#{text}']").click
+        find(".emoji-picker .emoji[title='#{text}']").click
         save_setting(setting) if save_changes
       end
 
-      def save_setting(setting_element)
-        setting_element.find(".setting-controls button.ok").click
+      def save_setting(setting)
+        setting = find_setting(setting) if setting.is_a?(String)
+        setting.find(".setting-controls button.ok").click
+        self
+      end
+
+      def has_overridden_setting?(setting_name, value: nil)
+        setting_field = find_setting(setting_name, overridden: true)
+        return setting_field.find(".setting-value input").value == value.to_s if value
+        true
+      end
+
+      def has_overridden_topic_setting?(setting_name, value: nil)
+        setting_field = find_setting(setting_name, overridden: true)
+        return setting_field.find(".selected-name")["data-value"] == value.to_s if value
+        true
+      end
+
+      def has_no_overridden_setting?(setting_name)
+        find_setting(setting_name, overridden: false)
       end
 
       def values_in_list(setting_name)
@@ -84,11 +148,52 @@ module PageObjects
       def has_greater_than_n_results?(count)
         assert_selector(".admin-detail .row.setting", minimum: count)
       end
-    end
 
-    # TODO (martin) Remove this after discourse-topic-voting no longer
-    # relies on this, it was renamed to AdminSiteSettings.
-    class AdminSettings < PageObjects::Pages::AdminSiteSettings
+      def error_message(setting_name)
+        setting = find_setting(setting_name)
+        setting.find(".setting-value .validation-error").text
+      end
+
+      def has_theme_warning?(setting_name, theme_name, theme_id)
+        find_setting(setting_name).find(".setting-theme-warning__text").has_text?(theme_name) &&
+          find_setting(setting_name).find(".setting-theme-warning__text").has_link?(
+            href: "/admin/customize/themes/#{theme_id}",
+          )
+      end
+
+      def has_upcoming_change_default_warning?(setting_name, old_default:, new_default:)
+        find_setting(setting_name).find(".setting-upcoming-change-warning__text").has_text?(
+          "The default for this setting has changed from #{old_default} to #{new_default}",
+        ) &&
+          find_setting(setting_name).find(".setting-upcoming-change-warning__text").has_link?(
+            href: "/admin/config/upcoming-changes?changeNamesFilter=enable_upload_debug_mode",
+          )
+      end
+
+      def has_disabled_input?(setting_name)
+        find_setting(setting_name).has_css?("input[disabled]")
+      end
+
+      def has_visible_reorder_buttons?(setting_name)
+        has_css?("#{setting_row_selector(setting_name)} .shift-up-value-btn", visible: :visible) &&
+          has_css?("#{setting_row_selector(setting_name)} .shift-down-value-btn", visible: :visible)
+      end
+
+      def has_hidden_reorder_buttons?(setting_name)
+        has_css?("#{setting_row_selector(setting_name)} .shift-up-value-btn", visible: :hidden) &&
+          has_css?("#{setting_row_selector(setting_name)} .shift-down-value-btn", visible: :hidden)
+      end
+
+      def tag_list_setting(setting_name)
+        PageObjects::Components::SelectKit.new("#{setting_row_selector(setting_name)} .tag-chooser")
+      end
+
+      def has_tags_in_setting?(setting_name, tags)
+        tag_chooser = tag_list_setting(setting_name)
+        tag_names = tags.map(&:name).sort
+        selected_names = tag_chooser.value&.split(",")&.sort || []
+        tag_names == selected_names
+      end
     end
   end
 end

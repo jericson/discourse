@@ -27,7 +27,7 @@ RSpec.describe UserAnonymizer do
 
     let(:original_email) { "edward@example.net" }
     let(:user) { Fabricate(:user, username: "edward", email: original_email) }
-    fab!(:another_user) { Fabricate(:evil_trout) }
+    fab!(:another_user, :evil_trout)
 
     it "changes username" do
       make_anonymous
@@ -37,6 +37,14 @@ RSpec.describe UserAnonymizer do
     it "changes the primary email address" do
       make_anonymous
       expect(user.reload.email).to eq("#{user.username}@anonymized.invalid")
+    end
+
+    it "changes the primary email normalized email address" do
+      make_anonymous
+
+      primary_email = user.reload.primary_email
+
+      expect(primary_email.normalized_email).to eq("#{user.username}@anonymized.invalid")
     end
 
     it "changes the primary email address when there is an email domain allowlist" do
@@ -68,7 +76,7 @@ RSpec.describe UserAnonymizer do
     end
 
     context "when Site Settings do not require full name" do
-      before { SiteSetting.full_name_required = false }
+      before { SiteSetting.full_name_requirement = "optional_at_signup" }
 
       it "resets profile to default values" do
         user.update!(name: "Bibi", date_of_birth: 19.years.ago, title: "Super Star")
@@ -119,7 +127,7 @@ RSpec.describe UserAnonymizer do
     end
 
     context "when Site Settings require full name" do
-      before { SiteSetting.full_name_required = true }
+      before { SiteSetting.full_name_requirement = "required_at_signup" }
 
       it "changes name to anonymized username" do
         prev_username = user.username
@@ -239,6 +247,42 @@ RSpec.describe UserAnonymizer do
       expect(user.user_api_keys).to be_empty
     end
 
+    it "removes user auth tokens" do
+      UserAuthToken.generate!(user_id: user.id)
+
+      expect { make_anonymous }.to change { UserAuthToken.count }.by(-1)
+      expect(user.reload.user_auth_tokens).to be_empty
+    end
+
+    it "removes second factor credentials" do
+      Fabricate(:user_second_factor_totp, user: user)
+
+      expect { make_anonymous }.to change { UserSecondFactor.count }.by(-1)
+      expect(user.reload.user_second_factors).to be_empty
+    end
+
+    it "removes security keys" do
+      Fabricate(:user_security_key_with_random_credential, user: user)
+
+      expect { make_anonymous }.to change { UserSecurityKey.count }.by(-1)
+      expect(UserSecurityKey.where(user_id: user.id).count).to eq(0)
+    end
+
+    it "removes push subscriptions" do
+      Fabricate(:push_subscription, user: user)
+
+      expect { make_anonymous }.to change { PushSubscription.count }.by(-1)
+      expect(user.reload.push_subscriptions).to be_empty
+    end
+
+    it "removes post reply keys" do
+      post = Fabricate(:post)
+      PostReplyKey.create!(user_id: user.id, post_id: post.id)
+
+      expect { make_anonymous }.to change { PostReplyKey.count }.by(-1)
+      expect(PostReplyKey.where(user_id: user.id).count).to eq(0)
+    end
+
     context "when executing jobs" do
       before { Jobs.run_immediately! }
 
@@ -314,6 +358,43 @@ RSpec.describe UserAnonymizer do
         expect { make_anonymous }.to change { user.custom_fields }
         expect(user.reload.custom_fields).to eq("some_field" => "123", "another_field" => "456")
       end
+
+      context "when log_anonymizer_details is disabled" do
+        before { SiteSetting.log_anonymizer_details = false }
+
+        it "anonymizes username only in fields that contain it" do
+          StaffActionLogger.new(admin).log_check_email(
+            user,
+            context: "/admin/users/#{user.id}/#{user.username}",
+          )
+          StaffActionLogger.new(admin).log_username_change(user, user.username, "newname")
+
+          make_anonymous
+
+          reason = I18n.t("user.anonymized")
+          check_email =
+            UserHistory.find_by(action: UserHistory.actions[:check_email], target_user_id: user.id)
+          username_change =
+            UserHistory.find_by(
+              action: UserHistory.actions[:change_username],
+              target_user_id: user.id,
+            )
+
+          expect(check_email.context).to eq(reason)
+          expect(check_email.details).to be_nil
+          expect(check_email.previous_value).to be_nil
+          expect(check_email.new_value).to be_nil
+
+          expect(username_change.previous_value).to eq(reason)
+          expect(username_change.new_value).to eq("newname")
+        end
+
+        it "does not affect records without the username" do
+          StaffActionLogger.new(admin).log_check_email(user, context: "/some/other/path")
+          make_anonymous
+          expect(UserHistory.find_by(target_user_id: user.id).context).to eq("/some/other/path")
+        end
+      end
     end
   end
 
@@ -377,6 +458,8 @@ RSpec.describe UserAnonymizer do
       delete_history = StaffActionLogger.new(admin).log_user_deletion(user)
       user_history = StaffActionLogger.new(user).log_backup_create
 
+      ip_address_history = UserIpAddressHistory.create!(user_id: user.id, ip_address: old_ip)
+
       UserAnonymizer.make_anonymous(user, admin, anonymize_ip: anon_ip)
       expect(user.registration_ip_address).to eq(anon_ip)
       expect(link.reload.ip_address).to eq(anon_ip)
@@ -388,6 +471,7 @@ RSpec.describe UserAnonymizer do
       expect(delete_history.reload.ip_address).to eq(anon_ip)
       expect(user_history.reload.ip_address).to eq(anon_ip)
       expect(user_profile_view.reload.ip_address).to eq(anon_ip)
+      expect(UserIpAddressHistory.exists?(id: ip_address_history.id)).to eq(false)
     end
   end
 
@@ -401,6 +485,73 @@ RSpec.describe UserAnonymizer do
 
       expect(user.email).not_to eq("test@example.com")
       expect(Invite.exists?(id: invite.id)).to eq(false)
+    end
+
+    it "destroys invites matching secondary email addresses" do
+      user = Fabricate(:user)
+      invite = Fabricate(:invite, email: "secondary@example.com")
+      Fabricate(:secondary_email, user: user, email: "secondary@example.com")
+
+      Jobs.run_immediately!
+      described_class.make_anonymous(user, admin)
+
+      expect(Invite.exists?(id: invite.id)).to eq(false)
+    end
+
+    it "destroys invites matching associated account emails" do
+      user = Fabricate(:user)
+      invite = Fabricate(:invite, email: "oauth@example.com")
+      UserAssociatedAccount.create!(
+        user: user,
+        provider_name: "google_oauth2",
+        provider_uid: "12345",
+        info: {
+          email: "oauth@example.com",
+        },
+      )
+
+      Jobs.run_immediately!
+      described_class.make_anonymous(user, admin)
+
+      expect(Invite.exists?(id: invite.id)).to eq(false)
+    end
+
+    it "deletes incoming emails from associated account addresses" do
+      user = Fabricate(:user)
+      UserAssociatedAccount.create!(
+        user: user,
+        provider_name: "google_oauth2",
+        provider_uid: "12345",
+        info: {
+          email: "oauth@example.com",
+        },
+      )
+      incoming = Fabricate(:incoming_email, from_address: "oauth@example.com", error: "some error")
+
+      Jobs.run_immediately!
+      described_class.make_anonymous(user, admin)
+
+      expect(IncomingEmail.exists?(id: incoming.id)).to eq(false)
+    end
+
+    it "anonymizes screened email IPs for associated account emails" do
+      old_ip = "1.2.3.4"
+      anon_ip = "0.0.0.0"
+      user = Fabricate(:user, ip_address: old_ip)
+      UserAssociatedAccount.create!(
+        user: user,
+        provider_name: "google_oauth2",
+        provider_uid: "12345",
+        info: {
+          email: "oauth@example.com",
+        },
+      )
+      screened = ScreenedEmail.create!(email: "oauth@example.com", ip_address: old_ip)
+
+      Jobs.run_immediately!
+      described_class.make_anonymous(user, admin, anonymize_ip: anon_ip)
+
+      expect(screened.reload.ip_address).to eq(anon_ip)
     end
   end
 end

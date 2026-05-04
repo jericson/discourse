@@ -4,6 +4,7 @@ class UserBadgesController < ApplicationController
   MAX_BADGES = 96 # This was limited in PR#2360 to make it divisible by 8
 
   before_action :ensure_badges_enabled
+  before_action :ensure_logged_in, only: %i[create destroy toggle_favorite]
 
   def index
     params.permit %i[granted_before offset username]
@@ -81,7 +82,7 @@ class UserBadgesController < ApplicationController
     params.require(:username)
     user = fetch_user_from_params
 
-    return render json: failed_json, status: 403 unless can_assign_badge_to_user?(user)
+    return render json: failed_json, status: :forbidden unless can_assign_badge_to_user?(user)
 
     badge = fetch_badge_from_params
     post_id = nil
@@ -90,7 +91,7 @@ class UserBadgesController < ApplicationController
       unless is_badge_reason_valid? params[:reason]
         return(
           render json: failed_json.merge(message: I18n.t("invalid_grant_badge_reason_link")),
-                 status: 400
+                 status: :bad_request
         )
       end
 
@@ -103,7 +104,14 @@ class UserBadgesController < ApplicationController
       end
     end
 
-    user_badge = BadgeGranter.grant(badge, user, granted_by: current_user, post_id: post_id)
+    grant_opts_from_params =
+      DiscoursePluginRegistry.apply_modifier(
+        :user_badges_badge_grant_opts,
+        { granted_by: current_user, post_id: post_id },
+        { param: params },
+      )
+
+    user_badge = BadgeGranter.grant(badge, user, grant_opts_from_params)
 
     render_serialized(user_badge, DetailedUserBadgeSerializer, root: "user_badge")
   end
@@ -113,7 +121,7 @@ class UserBadgesController < ApplicationController
     user_badge = UserBadge.find(params[:id])
 
     unless can_assign_badge_to_user?(user_badge.user)
-      render json: failed_json, status: 403
+      render json: failed_json, status: :forbidden
       return
     end
 
@@ -126,18 +134,20 @@ class UserBadgesController < ApplicationController
     user_badge = UserBadge.find(params[:user_badge_id])
     user_badges = user_badge.user.user_badges
 
-    return render json: failed_json, status: 403 unless can_favorite_badge?(user_badge)
+    return render json: failed_json, status: :forbidden unless can_favorite_badge?(user_badge)
 
-    if !user_badge.is_favorite &&
+    is_favorite = user_badges.where(badge: user_badge.badge, is_favorite: true).exists?
+
+    if !is_favorite &&
          user_badges.select(:badge_id).distinct.where(is_favorite: true).count >=
            SiteSetting.max_favorite_badges
-      return render json: failed_json, status: 400
+      return render json: failed_json, status: :bad_request
     end
 
     UserBadge.where(user_id: user_badge.user_id, badge_id: user_badge.badge_id).update_all(
-      is_favorite: !user_badge.is_favorite,
+      is_favorite: !is_favorite,
     )
-    UserBadge.update_featured_ranks!(user_badge.user_id)
+    UserBadge.update_featured_ranks!([user_badge.user_id])
   end
 
   private

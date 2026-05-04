@@ -8,6 +8,7 @@ class ThemeJavascriptsController < ApplicationController
     :handle_theme,
     :preload_json,
     :redirect_to_login_if_required,
+    :redirect_to_profile_if_required,
     :verify_authenticity_token,
     only: %i[show show_map show_tests],
   )
@@ -16,7 +17,7 @@ class ThemeJavascriptsController < ApplicationController
 
   def show
     raise Discourse::NotFound if last_modified.blank?
-    return render body: nil, status: 304 if not_modified?
+    return head :not_modified if not_modified?
 
     # Security: safe due to route constraint
     cache_file = "#{DISK_CACHE_PATH}/#{params[:digest]}.js"
@@ -35,7 +36,7 @@ class ThemeJavascriptsController < ApplicationController
 
   def show_map
     raise Discourse::NotFound if last_modified.blank?
-    return render body: nil, status: 304 if not_modified?
+    return head :not_modified if not_modified?
 
     # Security: safe due to route constraint
     cache_file = "#{DISK_CACHE_PATH}/#{params[:digest]}.map"
@@ -56,7 +57,7 @@ class ThemeJavascriptsController < ApplicationController
     raise Discourse::NotFound if content.blank? || content_digest != digest
 
     @cache_file = "#{TESTS_DISK_CACHE_PATH}/#{digest}.js"
-    return render body: nil, status: 304 if not_modified?
+    return head :not_modified if not_modified?
 
     write_if_not_cached(@cache_file) { content }
 

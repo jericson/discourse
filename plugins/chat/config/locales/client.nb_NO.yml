@@ -12,14 +12,21 @@ nb_NO:
           always: "Alltid"
           never: "Aldri"
     chat:
+      edit_category:
+        channel: "Kanal"
+        description: "Beskrivelse"
+        actions: "Handlinger"
+        settings: "Innstillinger"
       deleted_chat_username: slettet
       dates:
         yesterday: "I går"
       create: "Opprett"
       cancel: "Avbryt"
+      pinned: "Fastsatt"
       channel_settings:
         edit: "Endre"
         add: "Legg til"
+        notification_settings_context: "Varsler"
         join: "Bli medlem"
         leave: "Forlat"
       close: "Lukk"
@@ -41,9 +48,9 @@ nb_NO:
       bookmark_message: "Bokmerke"
       bookmark_message_edit: "Rediger bokmerke"
       save: "Lagre"
+      select: "Velg"
       sounds:
         none: "Ingen"
-      exit: "forrige"
       channel_status:
         closed: "Lukket"
         open: "Åpne"
@@ -55,6 +62,8 @@ nb_NO:
       chat_message_separator:
         today: I dag
         yesterday: I går
+      search_view:
+        filter_placeholder: Søk i meldinger
       about_view:
         title: Tittel
         name: Navn
@@ -64,16 +73,24 @@ nb_NO:
         tabs:
           members: Medlemmer
           settings: Instillinger
+          search: Søk
+        remove_member: "Fjern"
       new_message_modal:
         filter: "Filtrer"
       direct_message_creator:
         title: Ny Melding
         prefix: "Til:"
+      channel:
+        memberships_count:
+          one: "%{count} medlem"
+          other: "%{count} medlemmer"
       create_channel:
         type: "Type"
         types:
           category: "Kategori"
           topic: "Emne"
+      reviewable:
+        message_in_channel: "Kanal"
       composer:
         italic_text: "kursiv tekst"
         bold_text: "sterk tekst"
@@ -97,6 +114,12 @@ nb_NO:
         category_label: "Kategori"
         history_label: "Historie"
         members_label: "Medlemmer"
+      search:
+        short_title: Søk
+        no_results: "Ingen treff funnet"
+        sort:
+          relevance: "Relevanse"
+          latest: "Siste"
       incoming_webhooks:
         back: "Forrige"
         description: "Beskrivelse"
@@ -138,6 +161,8 @@ nb_NO:
             title: "Normal"
           tracking:
             title: "Overvåkning"
+          watching:
+            title: "Følger"
         participants_other_count:
           one: "+%{count}"
           other: "+%{count}"

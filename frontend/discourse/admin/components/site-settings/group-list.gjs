@@ -1,0 +1,46 @@
+/* eslint-disable ember/no-classic-components */
+import Component from "@ember/component";
+import { action, computed } from "@ember/object";
+import { tagName } from "@ember-decorators/component";
+import ListSetting from "discourse/select-kit/components/list-setting";
+
+@tagName("")
+export default class GroupList extends Component {
+  tokenSeparator = "|";
+  nameProperty = "name";
+  valueProperty = "id";
+
+  @computed("site.groups", "setting.disallowed_groups")
+  get groupChoices() {
+    const disallowed = (this.setting?.disallowed_groups || "")
+      .split("|")
+      .filter(Boolean);
+    return (this.site.groups || [])
+      .filter((g) => !disallowed.includes(g.id.toString()))
+      .map((g) => ({ name: g.name, id: g.id.toString() }));
+  }
+
+  @computed("value")
+  get settingValue() {
+    return (this.value || "").split(this.tokenSeparator).filter(Boolean);
+  }
+
+  @action
+  onChangeGroupListSetting(value) {
+    this.set("value", value.join(this.tokenSeparator));
+  }
+
+  <template>
+    <div ...attributes>
+      <ListSetting
+        @value={{this.settingValue}}
+        @choices={{this.groupChoices}}
+        @settingName="name"
+        @mandatoryValues={{this.setting.mandatory_values}}
+        @nameProperty={{this.nameProperty}}
+        @valueProperty={{this.valueProperty}}
+        @onChange={{this.onChangeGroupListSetting}}
+      />
+    </div>
+  </template>
+}

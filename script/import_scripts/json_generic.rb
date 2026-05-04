@@ -1,13 +1,13 @@
 # frozen_string_literal: true
 
 require "csv"
-require File.expand_path(File.dirname(__FILE__) + "/base.rb")
+require_relative "base"
 
 # Edit the constants and initialize method for your import data.
 
 class ImportScripts::JsonGeneric < ImportScripts::Base
   JSON_FILE_PATH = ENV["JSON_FILE"]
-  BATCH_SIZE ||= 1000
+  BATCH_SIZE = 1000
 
   def initialize
     super

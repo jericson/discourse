@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
-RSpec.describe "Dates separators", type: :system do
-  fab!(:current_user) { Fabricate(:user) }
-  fab!(:channel_1) { Fabricate(:chat_channel) }
+RSpec.describe "Dates separators" do
+  fab!(:current_user, :user)
+  fab!(:channel_1, :chat_channel)
 
   let(:chat_page) { PageObjects::Pages::Chat.new }
   let(:channel_page) { PageObjects::Pages::ChatChannel.new }
@@ -15,28 +15,26 @@ RSpec.describe "Dates separators", type: :system do
 
   context "when today separator is out of screen" do
     before do
-      15.times { Fabricate(:chat_message, chat_channel: channel_1, created_at: 1.day.ago) }
+      15.times { Fabricate(:chat_message, chat_channel: channel_1, created_at: 2.days.ago) }
       30.times { Fabricate(:chat_message, chat_channel: channel_1) }
     end
 
-    xit "shows it as a sticky date" do
+    it "shows it as a sticky date" do
       chat_page.visit_channel(channel_1)
 
       expect(page.find(".chat-message-separator__text-container.is-pinned")).to have_content(
         I18n.t("js.chat.chat_message_separator.today"),
       )
       expect(page).to have_css(
-        ".chat-message-separator__text-container:not(.is-pinned)",
-        visible: :hidden,
-        text:
-          "#{I18n.t("js.chat.chat_message_separator.yesterday")} - #{I18n.t("js.chat.last_visit")}",
+        ".chat-message-separator-date.with-last-visit .chat-message-separator__text-container:not(.is-pinned)",
+        text: I18n.t("js.chat.last_visit"),
       )
     end
   end
 
   context "when receiving messages on a different channel" do
-    fab!(:channel_2) { Fabricate(:chat_channel) }
-    fab!(:user_1) { Fabricate(:user) }
+    fab!(:channel_2, :chat_channel)
+    fab!(:user_1, :user)
 
     before do
       channel_2.add(current_user)

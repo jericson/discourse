@@ -8,9 +8,11 @@ class Upload < ActiveRecord::Base
 
   SHA1_LENGTH = 40
   SEEDED_ID_THRESHOLD = 0
-  URL_REGEX ||= %r{(/original/\dX[/\.\w]*/(\h+)[\.\w]*)}
+  URL_REGEX = %r{(/original/\dX[/\.\w]*/(\h+)[\.\w]*)}
   MAX_IDENTIFY_SECONDS = 5
   DOMINANT_COLOR_COMMAND_TIMEOUT_SECONDS = 5
+  # the maximum length of a base62 encoded sha1
+  MAX_BASE62_SHA1_LENGTH = 27
 
   belongs_to :user
   belongs_to :access_control_post, class_name: "Post"
@@ -23,10 +25,14 @@ class Upload < ActiveRecord::Base
 
   has_many :post_hotlinked_media, dependent: :destroy, class_name: "PostHotlinkedMedia"
   has_many :optimized_images, dependent: :destroy
+  has_many :optimized_videos, dependent: :destroy
+  has_many :optimized_video_uploads, through: :optimized_videos, source: :optimized_upload
   has_many :user_uploads, dependent: :destroy
   has_many :upload_references, dependent: :destroy
   has_many :posts, through: :upload_references, source: :target, source_type: "Post"
   has_many :topic_thumbnails
+  has_many :badges, foreign_key: :image_upload_id, dependent: :nullify
+  after_create :enqueue_video_conversion_job, if: :should_convert_video?
 
   attr_accessor :for_group_message
   attr_accessor :for_theme
@@ -34,11 +40,13 @@ class Upload < ActiveRecord::Base
   attr_accessor :for_export
   attr_accessor :for_site_setting
   attr_accessor :for_gravatar
+  attr_accessor :site_setting_name
   attr_accessor :validate_file_size
+  attr_accessor :skip_video_conversion
 
-  validates_presence_of :filesize
-  validates_presence_of :original_filename
-  validates :dominant_color, length: { is: 6 }, allow_blank: true, allow_nil: true
+  validates :filesize, presence: true
+  validates :original_filename, presence: true
+  validates :dominant_color, length: { is: 6 }, allow_blank: true
 
   validates_with UploadValidator
 
@@ -73,6 +81,10 @@ class Upload < ActiveRecord::Base
         invalid_etag: 3, # Used by S3Inventory to mark S3 Upload records that have an invalid ETag value compared to the ETag value of the inventory file
         s3_file_missing_confirmed: 4, # Used by S3Inventory to skip S3 Upload records that are confirmed to not be backed by a file in the S3 file store
       )
+  end
+
+  def self.fetch_from(sha1:, url:)
+    sha1.presence.try { |_| find_by(sha1:) } || get_from_url(url)
   end
 
   def self.mark_invalid_s3_uploads_as_missing
@@ -161,16 +173,12 @@ class Upload < ActiveRecord::Base
 
   def content
     original_path = Discourse.store.path_for(self)
-    external_copy = nil
 
     if original_path.blank?
-      external_copy = Discourse.store.download!(self)
-      original_path = external_copy.path
+      File.read(Discourse.store.download!(self))
+    else
+      File.read(original_path)
     end
-
-    File.read(original_path)
-  ensure
-    File.unlink(external_copy.path) if external_copy
   end
 
   def fix_image_extension
@@ -179,14 +187,13 @@ class Upload < ActiveRecord::Base
     begin
       # this is relatively cheap once cached
       original_path = Discourse.store.path_for(self)
-      if original_path.blank?
-        external_copy = Discourse.store.download_safe(self)
-        original_path = external_copy&.path
-      end
+      original_path = Discourse.store.download(self) if original_path.blank?
 
       image_info =
         begin
-          FastImage.new(original_path)
+          image = FastImage.new(original_path)
+          image.type # eager load to rescue errors early
+          image
         rescue StandardError
           nil
         end
@@ -249,11 +256,11 @@ class Upload < ActiveRecord::Base
     false
   end
 
-  def self.signed_url_from_secure_uploads_url(url)
+  def self.signed_url_from_secure_uploads_url(url, include_content_disposition:)
     route = UrlHelper.rails_route_from_url(url)
     url = Rails.application.routes.url_for(route.merge(only_path: true))
     secure_upload_s3_path = url[url.index(route[:path])..-1]
-    Discourse.store.signed_url_for_path(secure_upload_s3_path)
+    Discourse.store.signed_url_for_path(secure_upload_s3_path, include_content_disposition:)
   end
 
   def self.secure_uploads_url_from_upload_url(url)
@@ -293,7 +300,7 @@ class Upload < ActiveRecord::Base
         if local?
           Discourse.store.path_for(self)
         else
-          Discourse.store.download!(self).path
+          Discourse.store.download!(self)
         end
 
       if extension == "svg"
@@ -334,11 +341,11 @@ class Upload < ActiveRecord::Base
   # on demand image size calculation, this allows us to null out image sizes
   # and still handle as needed
   def get_dimension(key)
-    if v = read_attribute(key)
+    if v = self[key]
       return v
     end
     fix_dimensions!
-    read_attribute(key)
+    self[key]
   end
 
   def width
@@ -377,7 +384,7 @@ class Upload < ActiveRecord::Base
         if local?
           Discourse.store.path_for(self)
         else
-          Discourse.store.download_safe(self)&.path
+          Discourse.store.download(self)
         end
 
       if local_path.nil?
@@ -414,7 +421,7 @@ class Upload < ActiveRecord::Base
           raise "Calculated dominant color but unable to parse output:\n#{data}" if color.nil?
 
           color
-        rescue Discourse::Utils::CommandError => e
+        rescue Discourse::Utils::CommandError
           # Timeout or unable to parse image
           # This can happen due to bad user input - ignore and save
           # an empty string to prevent re-evaluation
@@ -460,6 +467,7 @@ class Upload < ActiveRecord::Base
   end
 
   def self.sha1_from_base62_encoded(encoded_sha1)
+    return nil if encoded_sha1.length > MAX_BASE62_SHA1_LENGTH
     sha1 = Base62.decode(encoded_sha1).to_s(16)
 
     if sha1.length > SHA1_LENGTH
@@ -492,18 +500,26 @@ class Upload < ActiveRecord::Base
     secure_status_did_change = self.secure? != mark_secure
     self.update(secure_params(mark_secure, reason, source))
 
-    if secure_status_did_change && SiteSetting.s3_use_acls && Discourse.store.external?
-      begin
-        Discourse.store.update_upload_ACL(self)
-      rescue Aws::S3::Errors::NotImplemented => err
-        Discourse.warn_exception(
-          err,
-          message: "The file store object storage provider does not support setting ACLs",
-        )
-      end
+    if secure_status_did_change && Discourse.store.external?
+      Discourse.store.update_upload_access_control(self)
+      sync_optimized_videos_secure_status(mark_secure)
     end
 
     secure_status_did_change
+  end
+
+  def sync_optimized_videos_secure_status(mark_secure)
+    optimized_videos
+      .includes(:optimized_upload)
+      .each do |optimized_video|
+        optimized_upload = optimized_video.optimized_upload
+        if optimized_upload.secure? != mark_secure
+          optimized_upload.update_secure_status(
+            source: "sync_with_original_upload",
+            override: mark_secure,
+          )
+        end
+      end
   end
 
   def secure_params(secure, reason, source = "unknown")
@@ -664,6 +680,16 @@ class Upload < ActiveRecord::Base
   def short_url_basename
     "#{Upload.base62_sha1(sha1)}#{extension.present? ? ".#{extension}" : ""}"
   end
+
+  def should_convert_video?
+    !skip_video_conversion && SiteSetting.video_conversion_enabled &&
+      SiteSetting.Upload.enable_s3_uploads && FileHelper.is_supported_video?(original_filename) &&
+      !OptimizedVideo.exists?(upload_id: id)
+  end
+
+  def enqueue_video_conversion_job
+    Jobs.enqueue(:convert_video, upload_id: id)
+  end
 end
 
 # == Schema Information
@@ -680,7 +706,7 @@ end
 #  created_at                   :datetime         not null
 #  updated_at                   :datetime         not null
 #  sha1                         :string(40)
-#  origin                       :string(1000)
+#  origin                       :string(2000)
 #  retain_hours                 :integer
 #  extension                    :string(10)
 #  thumbnail_width              :integer

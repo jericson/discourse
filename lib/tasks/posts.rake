@@ -57,7 +57,7 @@ end
 
 desc "Rebake all posts with a quote using a letter_avatar"
 task "posts:fix_letter_avatars" => :environment do
-  next unless SiteSetting.external_system_avatars_enabled
+  next if SiteSetting.external_system_avatars_url.blank?
 
   search =
     Post.where("user_id <> -1").where(
@@ -207,6 +207,61 @@ def remap_posts(find, type, ignore_case, replace = "")
   i
 end
 
+desc "monitor rebaking progress for the current unbaked post count; Ctrl-C to exit"
+task "posts:monitor_rebaking_progress", [:csv] => [:environment] do |_, args|
+  if args[:csv]
+    puts "utc_time_now,remaining_to_bake,baked_in_last_period,etc_in_days,sidekiq_enqueued,sidekiq_scheduled"
+  end
+
+  # remember last ID right now so the goal post isn't constantly moved by new posts being created
+  last_id_as_of_now = Post.where(baked_version: nil).order("id desc").first&.id
+  if last_id_as_of_now.nil?
+    warn "no posts to bake; all done"
+    exit
+  end
+
+  report_time_in_mins = 10
+  window_size_in_hs = 6
+
+  deltas = []
+  last = nil
+
+  while true
+    now = Post.where("id <= ? and baked_version is null", last_id_as_of_now).count
+
+    if last
+      delta_now = last - now
+      deltas.unshift delta_now
+
+      deltas = deltas.take((window_size_in_hs * 60) / report_time_in_mins)
+      average = deltas.reduce(:+).to_f / deltas.length.to_f / report_time_in_mins.to_f
+      etc_days = sprintf("%.2f", (now.to_f / average) / 60.0 / 24.0)
+    else
+      last = now
+      etc_days = 999 # fake initial value so that the column is 100% valid floats
+    end
+
+    s = Sidekiq::Stats.new
+
+    if args[:csv]
+      puts [Time.now.utc.iso8601, now, last - now, etc_days, s.enqueued, s.scheduled_size].join(",")
+    else
+      puts [
+             Time.now.utc.iso8601,
+             "unbaked old posts remaining: #{now}",
+             "baked in last period: #{last - now}",
+             "ETC based on #{window_size_in_hs}h avg: #{etc_days} days",
+             "SK enqueued: #{s.enqueued}",
+             "SK scheduled: #{s.scheduled_size}",
+             "waiting #{report_time_in_mins}min",
+           ].join(" - ")
+    end
+
+    last = now
+    sleep report_time_in_mins * 60
+  end
+end
+
 desc "Remap all posts matching specific string"
 task "posts:remap", %i[find replace type ignore_case] => [:environment] do |_, args|
   require "highline/import"
@@ -333,16 +388,17 @@ task "posts:reorder_posts", [:topic_id] => [:environment] do |_, args|
     builder = DB.build <<~SQL
       WITH ordered_posts AS (
         SELECT
-          id,
+          p.id,
           ROW_NUMBER() OVER (
             PARTITION BY
-              topic_id
+              p.topic_id
             ORDER BY
-              created_at,
-              post_number
+              p.created_at,
+              p.post_number
           ) AS new_post_number
         FROM
-          posts
+          posts p
+        INNER JOIN topics t ON t.id = p.topic_id
         /*where*/
       )
       UPDATE
@@ -357,7 +413,7 @@ task "posts:reorder_posts", [:topic_id] => [:environment] do |_, args|
         p.post_number <> o.new_post_number
     SQL
 
-    builder.where("topic_id = ?", args[:topic_id]) if args[:topic_id]
+    builder.where("p.topic_id = ?", args[:topic_id]) if args[:topic_id]
     builder.exec
 
     [
@@ -371,11 +427,12 @@ task "posts:reorder_posts", [:topic_id] => [:environment] do |_, args|
         UPDATE
           #{table} AS x
         SET
-          #{column} = p.sort_order * -1
+          #{column} = x.#{column} * -1
         FROM
           posts AS p
-        /*where*/
-      SQL
+        INNER JOIN topics t ON t.id = p.topic_id
+          /*where*/
+        SQL
 
       builder.where("p.topic_id = ?", args[:topic_id]) if args[:topic_id]
       builder.where("p.post_number < 0")
@@ -383,26 +440,66 @@ task "posts:reorder_posts", [:topic_id] => [:environment] do |_, args|
       builder.where("x.#{column} = ABS(p.post_number)")
       builder.exec
 
-      DB.exec <<~SQL
+      # Mark orphaned records from the current table as negative so they
+      # don't collide (PostTimings) or are mismatched when reordering
+
+      orphan_builder = DB.build <<~SQL
+          UPDATE 
+            #{table} AS x
+          SET 
+            #{column} = x.#{column} * -1
+          FROM topics t
+          /*where*/
+        SQL
+
+      orphan_builder.where("t.id = x.topic_id")
+      orphan_builder.where("x.#{column} > 0")
+      orphan_builder.where("x.topic_id = ?", args[:topic_id]) if args[:topic_id]
+      orphan_builder.where(<<~SQL)
+          NOT EXISTS (
+            SELECT 
+              1
+            FROM 
+              posts p
+            WHERE
+              p.topic_id = x.topic_id
+              AND p.post_number = x.#{column}
+          )
+        SQL
+      orphan_builder.exec
+
+      builder = DB.build <<~SQL
         UPDATE
-          #{table}
+          #{table} AS x
         SET
-          #{column} = #{column} * -1
-        WHERE
-          #{column} < 0
+          #{column} = p.sort_order
+        FROM
+          posts AS p
+        INNER JOIN topics t ON t.id = p.topic_id
+        /*where*/
       SQL
+
+      builder.where("p.topic_id = ?", args[:topic_id]) if args[:topic_id]
+      builder.where("p.post_number < 0")
+      builder.where("x.#{column} < 0")
+      builder.where("x.topic_id = p.topic_id")
+      builder.where("ABS(x.#{column}) = ABS(p.post_number)")
+      builder.exec
     end
 
     builder = DB.build <<~SQL
       UPDATE
-        posts
+        posts AS p
       SET
         post_number = sort_order
+      FROM
+        topics t
       /*where*/
     SQL
 
-    builder.where("topic_id = ?", args[:topic_id]) if args[:topic_id]
-    builder.where("post_number < 0")
+    builder.where("t.id = p.topic_id")
+    builder.where("p.topic_id = ?", args[:topic_id]) if args[:topic_id]
+    builder.where("p.post_number < 0")
     builder.exec
   end
 

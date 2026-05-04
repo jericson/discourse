@@ -3,6 +3,7 @@
 class StylesheetsController < ApplicationController
   skip_before_action :preload_json,
                      :redirect_to_login_if_required,
+                     :redirect_to_profile_if_required,
                      :check_xhr,
                      :verify_authenticity_token,
                      only: %i[show show_source_map color_scheme]
@@ -23,8 +24,12 @@ class StylesheetsController < ApplicationController
     params.require("id")
     params.permit("theme_id")
 
-    manager = Stylesheet::Manager.new(theme_id: params[:theme_id])
-    stylesheet = manager.color_scheme_stylesheet_details(params[:id], "all")
+    theme_id = params[:theme_id]&.to_i
+    theme_id = nil if theme_id && !guardian.allow_themes?([theme_id])
+
+    manager = Stylesheet::Manager.new(theme_id: theme_id)
+    stylesheet = manager.color_scheme_stylesheet_details(params[:id], fallback_to_base: true)
+
     render json: stylesheet
   end
 
@@ -64,19 +69,19 @@ class StylesheetsController < ApplicationController
     handle_missing_cache(location, target, digest) if !stylesheet_time
 
     if cache_time.present? && stylesheet_time && stylesheet_time <= cache_time
-      return render body: nil, status: 304
+      return head :not_modified
     end
 
     unless File.exist?(location)
       if current = query.pick(source_map ? :source_map : :content)
         FileUtils.mkdir_p(cache_path)
-        File.write(location, current)
+        Discourse::Utils.atomic_write_file(location, current)
       else
         raise Discourse::NotFound
       end
     end
 
-    if Rails.env == "development"
+    if Rails.env.development?
       response.headers["Last-Modified"] = Time.zone.now.httpdate
       immutable_for(1.second)
     else

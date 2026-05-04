@@ -4,6 +4,10 @@ require "digest/sha1"
 class UserAuthToken < ActiveRecord::Base
   belongs_to :user
 
+  # Store a reference to the raw association reader, since we're
+  # overriding `#user` later in the class definition.
+  alias_method :acting_user, :user
+
   ROTATE_TIME_MINS = 10
   ROTATE_TIME = ROTATE_TIME_MINS.minutes
   # used when token did not arrive at client
@@ -24,6 +28,22 @@ class UserAuthToken < ActiveRecord::Base
       client_ip: self.client_ip,
       auth_token: self.auth_token,
     )
+  end
+
+  def user
+    impersonated_user || acting_user
+  end
+
+  def impersonated_user
+    return if impersonated_user_id.blank?
+    return if impersonation_expires_at.blank? || impersonation_expires_at.past?
+
+    guardian = Guardian.new(acting_user)
+    puppet = User.find_by(id: impersonated_user_id)
+
+    return if !guardian.can_impersonate?(puppet)
+
+    puppet.tap { |u| u.is_impersonating = true }
   end
 
   def self.log(info)
@@ -78,7 +98,8 @@ class UserAuthToken < ActiveRecord::Base
     client_ip: nil,
     path: nil,
     staff: nil,
-    impersonate: false
+    impersonate: false,
+    authenticated_with_oauth: false
   )
     token = SecureRandom.hex(16)
     hashed_token = hash_token(token)
@@ -90,6 +111,7 @@ class UserAuthToken < ActiveRecord::Base
         auth_token: hashed_token,
         prev_auth_token: hashed_token,
         rotated_at: Time.zone.now,
+        authenticated_with_oauth: !!authenticated_with_oauth,
       )
     user_auth_token.unhashed_auth_token = token
 
@@ -202,12 +224,11 @@ class UserAuthToken < ActiveRecord::Base
   end
 
   def self.cleanup!
-    if SiteSetting.verbose_auth_token_logging
-      UserAuthTokenLog.where(
-        "created_at < :time",
-        time: SiteSetting.maximum_session_age.hours.ago - ROTATE_TIME,
-      ).delete_all
-    end
+    UserAuthTokenLog.where(
+      "created_at < :time AND action NOT IN (:preserved_actions)",
+      time: SiteSetting.maximum_session_age.hours.ago - ROTATE_TIME,
+      preserved_actions: %w[suspicious generate],
+    ).delete_all
 
     where(
       "rotated_at < :time",
@@ -278,21 +299,25 @@ end
 #
 # Table name: user_auth_tokens
 #
-#  id              :integer          not null, primary key
-#  user_id         :integer          not null
-#  auth_token      :string           not null
-#  prev_auth_token :string           not null
-#  user_agent      :string
-#  auth_token_seen :boolean          default(FALSE), not null
-#  client_ip       :inet
-#  rotated_at      :datetime         not null
-#  created_at      :datetime         not null
-#  updated_at      :datetime         not null
-#  seen_at         :datetime
+#  id                       :integer          not null, primary key
+#  auth_token               :string           not null
+#  auth_token_seen          :boolean          default(FALSE), not null
+#  authenticated_with_oauth :boolean          default(FALSE)
+#  client_ip                :inet
+#  impersonation_expires_at :datetime
+#  prev_auth_token          :string           not null
+#  rotated_at               :datetime         not null
+#  seen_at                  :datetime
+#  user_agent               :string
+#  created_at               :datetime         not null
+#  updated_at               :datetime         not null
+#  impersonated_user_id     :integer
+#  user_id                  :integer          not null
 #
 # Indexes
 #
-#  index_user_auth_tokens_on_auth_token       (auth_token) UNIQUE
-#  index_user_auth_tokens_on_prev_auth_token  (prev_auth_token) UNIQUE
-#  index_user_auth_tokens_on_user_id          (user_id)
+#  index_user_auth_tokens_on_auth_token                (auth_token) UNIQUE
+#  index_user_auth_tokens_on_impersonation_expires_at  (impersonation_expires_at) WHERE (impersonation_expires_at IS NOT NULL)
+#  index_user_auth_tokens_on_prev_auth_token           (prev_auth_token) UNIQUE
+#  index_user_auth_tokens_on_user_id                   (user_id)
 #

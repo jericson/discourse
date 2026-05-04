@@ -26,8 +26,24 @@ module PageObjects
 
       def filter_by_action(action)
         filter = PageObjects::Components::SelectKit.new("#staff-action-logs-action-filter")
-        filter.search(I18n.t("admin_js.admin.logs.staff_actions.actions.change_site_setting"))
-        filter.select_row_by_value(UserHistory.actions.key(UserHistory.actions[action.to_sym]).to_s)
+        filter.search(I18n.t("admin_js.admin.logs.staff_actions.actions.#{action}"))
+        filter.select_row_by_value(action.to_s)
+      end
+
+      def clear_filter
+        find(".clear-filters").click
+      end
+
+      def click_export_button
+        find(".export-staff-action-logs").click
+      end
+
+      def fill_date_filter_from(date)
+        find(".d-date-time-input.from .d-date-input input").set(date)
+      end
+
+      def fill_date_filter_to(date)
+        find(".d-date-time-input.to .d-date-input input").set(date)
       end
     end
   end

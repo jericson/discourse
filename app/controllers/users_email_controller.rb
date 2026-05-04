@@ -1,11 +1,12 @@
 # frozen_string_literal: true
 
 class UsersEmailController < ApplicationController
-  requires_login only: %i[index update]
+  requires_login only: %i[index update create]
 
   skip_before_action :check_xhr, only: %i[show_confirm_old_email show_confirm_new_email]
 
   skip_before_action :redirect_to_login_if_required,
+                     :redirect_to_profile_if_required,
                      only: %i[
                        show_confirm_old_email
                        show_confirm_new_email
@@ -17,7 +18,7 @@ class UsersEmailController < ApplicationController
   end
 
   def create
-    return render json: failed_json, status: 410 if !SiteSetting.enable_secondary_emails
+    return render json: failed_json, status: :gone if !SiteSetting.enable_secondary_emails
 
     params.require(:email)
     user = fetch_user_from_params
@@ -64,7 +65,7 @@ class UsersEmailController < ApplicationController
         updater.user.user_stat.reset_bounce_score!
         render json: success_json
       else
-        render json: { error: I18n.t("change_email.already_done") }, status: 400
+        render json: { error: I18n.t("change_email.already_done") }, status: :bad_request
       end
     end
   end
@@ -88,7 +89,7 @@ class UsersEmailController < ApplicationController
     if updater.confirm(params[:token]) == :authorizing_new
       render json: success_json
     else
-      render json: { error: I18n.t("change_email.already_done") }, status: 400
+      render json: { error: I18n.t("change_email.already_done") }, status: :bad_request
     end
   end
 

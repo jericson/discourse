@@ -5,9 +5,9 @@ RSpec.describe UserSearch do
   before { SearchIndexer.enable } # Enable for each test
 
   fab!(:topic)
-  fab!(:topic2) { Fabricate :topic }
-  fab!(:topic3) { Fabricate :topic }
-  fab!(:topic4) { Fabricate :topic }
+  fab!(:topic2, :topic)
+  fab!(:topic3, :topic)
+  fab!(:topic4, :topic)
   fab!(:mr_b) do
     Fabricate :user, username: "mrb", name: "Michael Madsen", last_seen_at: 10.days.ago
   end
@@ -38,7 +38,7 @@ RSpec.describe UserSearch do
 
   context "with a secure category" do
     fab!(:user)
-    fab!(:searching_user) { Fabricate(:user) }
+    fab!(:searching_user, :user)
     fab!(:group)
     fab!(:category) { Fabricate(:category, read_restricted: true, user: user) }
 
@@ -179,6 +179,35 @@ RSpec.describe UserSearch do
       expect(results).to eq [mr_b, mr_brown, mr_blue].map(&:username)
     end
 
+    it "prioritises the replying to user within a topic" do
+      results = search_for("mr", topic_id: topic.id, prioritized_user_id: mr_b.id)
+      expect(results).to eq [mr_b, mr_pink, mr_orange, mr_brown, mr_blue].map(&:username)
+
+      results = search_for("mr", topic_id: topic.id, prioritized_user_id: mr_orange.id)
+      expect(results).to eq [mr_orange, mr_pink, mr_b, mr_brown, mr_blue].map(&:username)
+
+      results = search_for("mr", topic_id: topic.id, prioritized_user_id: mr_pink.id)
+      expect(results).to eq [mr_pink, mr_orange, mr_b, mr_brown, mr_blue].map(&:username)
+    end
+
+    it "returns the replying to user if the term includes the username" do
+      results = search_for(mr_blue.username, topic_id: topic.id, prioritized_user_id: post1.user_id)
+      expect(results).to eq [mr_blue].map(&:username)
+      results = search_for(mr_blue.username, topic_id: topic.id, prioritized_user_id: post3.user_id)
+      expect(results).to eq [mr_blue].map(&:username)
+    end
+
+    it "returns firstly the replying to user if the term is blank" do
+      results = search_for("", topic_id: topic.id, prioritized_user_id: post1.user_id)
+      expect(results).to eq [mr_b, mr_pink, mr_orange].map(&:username)
+
+      results = search_for("", topic_id: topic.id, prioritized_user_id: post3.user_id)
+      expect(results).to eq [mr_orange, mr_pink, mr_b].map(&:username)
+
+      results = search_for("", topic_id: topic.id, prioritized_user_id: post4.user_id)
+      expect(results).to eq [mr_pink, mr_orange, mr_b].map(&:username)
+    end
+
     it "does not reveal whisper users" do
       results = search_for("", topic_id: topic2.id)
       expect(results).to eq [mr_blue.username]
@@ -277,46 +306,6 @@ RSpec.describe UserSearch do
       expect(results[0]).to eq("mrbrown")
       expect(results[1]).to eq("mrpink")
       expect(results[2]).to eq("mrorange")
-    end
-  end
-
-  context "when using SiteSetting.user_search_similar_results" do
-    it "should find the user even with a typo if the setting is enabled" do
-      rafael = Fabricate(:user, username: "rafael", name: "Rafael Silva")
-      codinghorror = Fabricate(:user, username: "codinghorror", name: "Jeff Atwood")
-      pfaffman = Fabricate(:user, username: "pfaffman")
-      zogstrip = Fabricate(:user, username: "zogstrip", name: "Régis Hanol")
-      roman = Fabricate(:user, username: "roman", name: "Roman Rizzi")
-
-      SiteSetting.user_search_similar_results = false
-      expect(UserSearch.new("rafel").search).to be_blank
-      expect(UserSearch.new("codding").search).to be_blank
-      expect(UserSearch.new("pffman").search).to be_blank
-
-      SiteSetting.user_search_similar_results = true
-      expect(UserSearch.new("rafel").search).to include(rafael)
-      expect(UserSearch.new("codding").search).to include(codinghorror)
-      expect(UserSearch.new("pffman").search).to include(pfaffman)
-
-      SiteSetting.user_search_similar_results = false
-      expect(UserSearch.new("silvia").search).to be_blank
-      expect(UserSearch.new("atwod").search).to be_blank
-      expect(UserSearch.new("regis").search).to be_blank
-      expect(UserSearch.new("reg").search).to be_blank
-
-      SiteSetting.user_search_similar_results = true
-      expect(UserSearch.new("silvia").search).to include(rafael)
-      expect(UserSearch.new("atwod").search).to include(codinghorror)
-      expect(UserSearch.new("regis").search).to include(zogstrip)
-      expect(UserSearch.new("reg").search).to include(zogstrip)
-    end
-
-    it "orders the results by similarity" do
-      zogstrip = Fabricate(:user, username: "zogstrip", name: "Régis Hanol")
-      roman = Fabricate(:user, username: "roman", name: "Roman Rizzi")
-      SiteSetting.user_search_similar_results = true
-
-      expect(UserSearch.new("regis").search.first).to eq(zogstrip)
     end
   end
 end

@@ -248,6 +248,45 @@ RSpec.describe CookedPostProcessor do
           expect(cpp.html).to_not have_tag("a[rel='noopener nofollow ugc']")
         end
       end
+
+      describe "engine-supplied css_class" do
+        let(:url) { "https://example.com/foo" }
+        let(:post) { Fabricate(:post, user: user_with_auto_groups, raw: "Look at #{url} today") }
+        let(:cpp) { CookedPostProcessor.new(post, invalidate_oneboxes: true) }
+
+        before do
+          allow(Oneboxer).to receive(:inline_data_for).with(url).and_return(
+            title: "engine title",
+            css_class: "--gh-status-merged",
+          )
+        end
+
+        after { InlineOneboxer.invalidate(url) }
+
+        it "adds the css_class alongside inline-onebox" do
+          cpp.post_process
+
+          link = Nokogiri::HTML5.fragment(cpp.html).at_css(%(a[href="#{url}"]))
+          expect(link["class"]).to eq("inline-onebox --gh-status-merged")
+          expect(link.text).to eq("engine title")
+        end
+
+        it "escapes HTML in engine-supplied title and css_class" do
+          allow(Oneboxer).to receive(:inline_data_for).with(url).and_return(
+            title: %(<script>alert("xss")</script>),
+            css_class: %(broken" onerror="alert(1)),
+          )
+
+          cpp.post_process
+
+          doc = Nokogiri::HTML5.fragment(cpp.html)
+          link = doc.at_css(%(a[href="#{url}"]))
+
+          expect(link.text).to eq(%(<script>alert("xss")</script>))
+          expect(link["onerror"]).to be_nil
+          expect(doc.css("script")).to be_empty
+        end
+      end
     end
 
     context "when processing images" do
@@ -401,6 +440,40 @@ RSpec.describe CookedPostProcessor do
         end
       end
 
+      context "with small images" do
+        fab!(:upload) { Fabricate(:image_upload, width: 150, height: 150) }
+        fab!(:post) { Fabricate(:post, user: user_with_auto_groups, raw: <<~HTML) }
+          <img src="#{upload.url}">
+          HTML
+        let(:cpp) { CookedPostProcessor.new(post, disable_dominant_color: true) }
+
+        before { SiteSetting.create_thumbnails = true }
+
+        it "shows the lightbox when both dimensions are above the minimum" do
+          cpp.post_process
+          expect(cpp.html).to match(/<div class="lightbox-wrapper">/)
+        end
+
+        it "does not show lightbox when both dimensions are below the minimum" do
+          upload.update!(width: 50, height: 50)
+          cpp.post_process
+
+          expect(cpp.html).not_to match(/<div class="lightbox-wrapper">/)
+        end
+
+        it "does not show lightbox when either dimension is below the minimum" do
+          upload.update!(width: 50, height: 150)
+          cpp.post_process
+
+          expect(cpp.html).not_to match(/<div class="lightbox-wrapper">/)
+        end
+
+        it "does not create thumbnails for small images" do
+          Upload.any_instance.expects(:create_thumbnail!).never
+          cpp.post_process
+        end
+      end
+
       context "with large images" do
         fab!(:upload) { Fabricate(:image_upload, width: 1750, height: 2000) }
 
@@ -419,7 +492,7 @@ RSpec.describe CookedPostProcessor do
           cpp.post_process
 
           expect(cpp.html).to match_html <<~HTML
-            <p><div class="lightbox-wrapper"><a class="lightbox" href="//test.localhost#{upload.url}" data-download-href="//test.localhost/#{upload_path}/#{upload.sha1}" title="logo.png"><img src="//test.localhost/#{upload_path}/optimized/1X/#{upload.sha1}_#{OptimizedImage::VERSION}_690x788.png" width="690" height="788"><div class="meta"><svg class="fa d-icon d-icon-far-image svg-icon" aria-hidden="true"><use href="#far-image"></use></svg><span class="filename">logo.png</span><span class="informations">1750×2000 1.21 KB</span><svg class="fa d-icon d-icon-discourse-expand svg-icon" aria-hidden="true"><use href="#discourse-expand"></use></svg></div></a></div></p>
+            <p><div class="lightbox-wrapper"><a class="lightbox" href="//test.localhost#{upload.url}" data-download-href="//test.localhost/#{upload_path}/#{upload.sha1}" title="logo.png"><img src="//test.localhost#{upload.thumbnail(690, 788).url}" width="690" height="788"><div class="meta"><svg class="fa d-icon d-icon-far-image svg-icon" aria-hidden="true"><use href="#far-image"></use></svg><span class="filename">logo.png</span><span class="informations">1750×2000 1.21 KB</span><svg class="fa d-icon d-icon-discourse-expand svg-icon" aria-hidden="true"><use href="#discourse-expand"></use></svg></div></a></div></p>
           HTML
 
           expect(cpp).to be_dirty
@@ -517,9 +590,13 @@ RSpec.describe CookedPostProcessor do
             )
           end
 
+          let(:secure_uploads_url) do
+            "//test.localhost/secure-uploads/original/1X/#{upload.sha1}.png"
+          end
+
           let(:cooked_html) { <<~HTML }
-            <p><div class="lightbox-wrapper"><a class="lightbox" href="//test.localhost/secure-uploads/original/1X/#{upload.sha1}.png" data-download-href="//test.localhost/uploads/short-url/#{upload.base62_sha1}.unknown?dl=1" title="large.png"><img src="" alt="large.png" data-base62-sha1="#{upload.base62_sha1}" width="600" height="500"><div class="meta">
-            <svg class="fa d-icon d-icon-far-image svg-icon" aria-hidden="true"><use href="#far-image"></use></svg><span class="filename">large.png</span><span class="informations">1750×2000 1.21 KB</span><svg class="fa d-icon d-icon-discourse-expand svg-icon" aria-hidden="true"><use href="#discourse-expand"></use></svg>
+            <p><div class="lightbox-wrapper"><a class="lightbox" href="#{secure_uploads_url}" data-download-href="//test.localhost/uploads/short-url/#{upload.base62_sha1}.png?dl=1" title="large.png"><img src="#{secure_uploads_url}" alt="large.png" data-base62-sha1="#{upload.base62_sha1}" width="600" height="500"><div class="meta">
+            <svg class="fa d-icon d-icon-far-image svg-icon" aria-hidden="true"><use href="#far-image"></use></svg><span class="filename">large.png</span><span class="informations">#{upload.width}×#{upload.height} 1.21 KB</span><svg class="fa d-icon d-icon-discourse-expand svg-icon" aria-hidden="true"><use href="#discourse-expand"></use></svg>
             </div></a></div></p>
             HTML
 
@@ -536,10 +613,7 @@ RSpec.describe CookedPostProcessor do
               post.link_post_uploads
             end
 
-            # TODO fix this spec, it is sometimes getting CDN links when it runs concurrently
-            xit "handles secure images with the correct lightbox link href" do
-              FastImage.expects(:size).returns([1750, 2000])
-              OptimizedImage.expects(:resize).returns(true)
+            it "handles secure images with the correct lightbox link href" do
               cpp.post_process
 
               expect(cpp.html).to match_html cooked_html
@@ -653,7 +727,7 @@ RSpec.describe CookedPostProcessor do
           cpp.post_process
 
           expect(cpp.html).to match_html <<~HTML
-            <p><div class="lightbox-wrapper"><a class="lightbox" href="//test.localhost#{upload.url}" data-download-href="//test.localhost/#{upload_path}/#{upload.sha1}" title="logo.png"><img src="//test.localhost/#{upload_path}/optimized/1X/#{upload.sha1}_#{OptimizedImage::VERSION}_230x500.png" width="230" height="500"><div class="meta"><svg class="fa d-icon d-icon-far-image svg-icon" aria-hidden="true"><use href="#far-image"></use></svg><span class="filename">logo.png</span><span class="informations">1125×2436 1.21 KB</span><svg class="fa d-icon d-icon-discourse-expand svg-icon" aria-hidden="true"><use href="#discourse-expand"></use></svg></div></a></div></p>
+            <p><div class="lightbox-wrapper"><a class="lightbox" href="//test.localhost#{upload.url}" data-download-href="//test.localhost/#{upload_path}/#{upload.sha1}" title="logo.png"><img src="//test.localhost#{upload.thumbnail(230, 500).url}" width="230" height="500"><div class="meta"><svg class="fa d-icon d-icon-far-image svg-icon" aria-hidden="true"><use href="#far-image"></use></svg><span class="filename">logo.png</span><span class="informations">1125×2436 1.21 KB</span><svg class="fa d-icon d-icon-discourse-expand svg-icon" aria-hidden="true"><use href="#discourse-expand"></use></svg></div></a></div></p>
           HTML
 
           expect(cpp).to be_dirty
@@ -684,7 +758,7 @@ RSpec.describe CookedPostProcessor do
           cpp.post_process
 
           expect(cpp.html).to match_html <<~HTML
-            <p><div class="lightbox-wrapper"><a class="lightbox" href="//test.localhost/subfolder#{upload.url}" data-download-href="//test.localhost/subfolder/#{upload_path}/#{upload.sha1}" title="logo.png"><img src="//test.localhost/subfolder/#{upload_path}/optimized/1X/#{upload.sha1}_#{OptimizedImage::VERSION}_690x788.png" width="690" height="788"><div class="meta"><svg class="fa d-icon d-icon-far-image svg-icon" aria-hidden="true"><use href="#far-image"></use></svg><span class="filename">logo.png</span><span class="informations">1750×2000 1.21 KB</span><svg class="fa d-icon d-icon-discourse-expand svg-icon" aria-hidden="true"><use href="#discourse-expand"></use></svg></div></a></div></p>
+            <p><div class="lightbox-wrapper"><a class="lightbox" href="//test.localhost/subfolder#{upload.url}" data-download-href="//test.localhost/subfolder/#{upload_path}/#{upload.sha1}" title="logo.png"><img src="//test.localhost#{upload.thumbnail(690, 788).url}" width="690" height="788"><div class="meta"><svg class="fa d-icon d-icon-far-image svg-icon" aria-hidden="true"><use href="#far-image"></use></svg><span class="filename">logo.png</span><span class="informations">1750×2000 1.21 KB</span><svg class="fa d-icon d-icon-discourse-expand svg-icon" aria-hidden="true"><use href="#discourse-expand"></use></svg></div></a></div></p>
           HTML
 
           expect(cpp).to be_dirty
@@ -695,7 +769,7 @@ RSpec.describe CookedPostProcessor do
           cpp.post_process
 
           expect(cpp.html).to match_html <<~HTML
-            <p><div class="lightbox-wrapper"><a class="lightbox" href="//test.localhost/subfolder#{upload.url}" data-download-href="//test.localhost/subfolder/#{upload_path}/#{upload.sha1}" title="><img src=x onerror=alert('haha')>.png"><img src="//test.localhost/subfolder/#{upload_path}/optimized/1X/#{upload.sha1}_#{OptimizedImage::VERSION}_690x788.png" width="690" height="788"><div class="meta"><svg class="fa d-icon d-icon-far-image svg-icon" aria-hidden="true"><use href="#far-image"></use></svg><span class="filename">&gt;&lt;img src=x onerror=alert('haha')&gt;.png</span><span class="informations">1750×2000 1.21 KB</span><svg class="fa d-icon d-icon-discourse-expand svg-icon" aria-hidden="true"><use href="#discourse-expand"></use></svg></div></a></div></p>
+            <p><div class="lightbox-wrapper"><a class="lightbox" href="//test.localhost/subfolder#{upload.url}" data-download-href="//test.localhost/subfolder/#{upload_path}/#{upload.sha1}" title="><img src=x onerror=alert('haha')>.png"><img src="//test.localhost#{upload.thumbnail(690, 788).url}" width="690" height="788"><div class="meta"><svg class="fa d-icon d-icon-far-image svg-icon" aria-hidden="true"><use href="#far-image"></use></svg><span class="filename">&gt;&lt;img src=x onerror=alert('haha')&gt;.png</span><span class="informations">1750×2000 1.21 KB</span><svg class="fa d-icon d-icon-discourse-expand svg-icon" aria-hidden="true"><use href="#discourse-expand"></use></svg></div></a></div></p>
           HTML
         end
       end
@@ -718,7 +792,7 @@ RSpec.describe CookedPostProcessor do
           cpp.post_process
 
           expect(cpp.html).to match_html <<~HTML
-            <p><div class="lightbox-wrapper"><a class="lightbox" href="//test.localhost#{upload.url}" data-download-href="//test.localhost/#{upload_path}/#{upload.sha1}" title="WAT"><img src="//test.localhost/#{upload_path}/optimized/1X/#{upload.sha1}_#{OptimizedImage::VERSION}_690x788.png" title="WAT" alt="RED" width="690" height="788"><div class="meta"><svg class="fa d-icon d-icon-far-image svg-icon" aria-hidden="true"><use href="#far-image"></use></svg><span class="filename">WAT</span><span class="informations">1750×2000 1.21 KB</span><svg class="fa d-icon d-icon-discourse-expand svg-icon" aria-hidden="true"><use href="#discourse-expand"></use></svg></div></a></div></p>
+            <p><div class="lightbox-wrapper"><a class="lightbox" href="//test.localhost#{upload.url}" data-download-href="//test.localhost/#{upload_path}/#{upload.sha1}" title="WAT"><img src="//test.localhost#{upload.thumbnail(690, 788).url}" title="WAT" alt="RED" width="690" height="788"><div class="meta"><svg class="fa d-icon d-icon-far-image svg-icon" aria-hidden="true"><use href="#far-image"></use></svg><span class="filename">WAT</span><span class="informations">1750×2000 1.21 KB</span><svg class="fa d-icon d-icon-discourse-expand svg-icon" aria-hidden="true"><use href="#discourse-expand"></use></svg></div></a></div></p>
           HTML
 
           expect(cpp).to be_dirty
@@ -743,7 +817,7 @@ RSpec.describe CookedPostProcessor do
           cpp.post_process
 
           expect(cpp.html).to match_html <<~HTML
-            <p><div class="lightbox-wrapper"><a class="lightbox" href="//test.localhost#{upload.url}" data-download-href="//test.localhost/#{upload_path}/#{upload.sha1}" title="WAT"><img src="//test.localhost/#{upload_path}/optimized/1X/#{upload.sha1}_#{OptimizedImage::VERSION}_690x788.png" title="WAT" width="690" height="788"><div class="meta"><svg class="fa d-icon d-icon-far-image svg-icon" aria-hidden="true"><use href="#far-image"></use></svg><span class="filename">WAT</span><span class="informations">1750×2000 1.21 KB</span><svg class="fa d-icon d-icon-discourse-expand svg-icon" aria-hidden="true"><use href="#discourse-expand"></use></svg></div></a></div></p>
+            <p><div class="lightbox-wrapper"><a class="lightbox" href="//test.localhost#{upload.url}" data-download-href="//test.localhost/#{upload_path}/#{upload.sha1}" title="WAT"><img src="//test.localhost#{upload.thumbnail(690, 788).url}" title="WAT" width="690" height="788"><div class="meta"><svg class="fa d-icon d-icon-far-image svg-icon" aria-hidden="true"><use href="#far-image"></use></svg><span class="filename">WAT</span><span class="informations">1750×2000 1.21 KB</span><svg class="fa d-icon d-icon-discourse-expand svg-icon" aria-hidden="true"><use href="#discourse-expand"></use></svg></div></a></div></p>
           HTML
 
           expect(cpp).to be_dirty
@@ -768,7 +842,7 @@ RSpec.describe CookedPostProcessor do
           cpp.post_process
 
           expect(cpp.html).to match_html <<~HTML
-            <p><div class="lightbox-wrapper"><a class="lightbox" href="//test.localhost#{upload.url}" data-download-href="//test.localhost/#{upload_path}/#{upload.sha1}" title="RED"><img src="//test.localhost/#{upload_path}/optimized/1X/#{upload.sha1}_#{OptimizedImage::VERSION}_690x788.png" alt="RED" width="690" height="788"><div class="meta"><svg class="fa d-icon d-icon-far-image svg-icon" aria-hidden="true"><use href="#far-image"></use></svg><span class="filename">RED</span><span class="informations">1750×2000 1.21 KB</span><svg class="fa d-icon d-icon-discourse-expand svg-icon" aria-hidden="true"><use href="#discourse-expand"></use></svg></div></a></div></p>
+            <p><div class="lightbox-wrapper"><a class="lightbox" href="//test.localhost#{upload.url}" data-download-href="//test.localhost/#{upload_path}/#{upload.sha1}" title="RED"><img src="//test.localhost#{upload.thumbnail(690, 788).url}" alt="RED" width="690" height="788"><div class="meta"><svg class="fa d-icon d-icon-far-image svg-icon" aria-hidden="true"><use href="#far-image"></use></svg><span class="filename">RED</span><span class="informations">1750×2000 1.21 KB</span><svg class="fa d-icon d-icon-discourse-expand svg-icon" aria-hidden="true"><use href="#discourse-expand"></use></svg></div></a></div></p>
           HTML
 
           expect(cpp).to be_dirty
@@ -851,6 +925,30 @@ RSpec.describe CookedPostProcessor do
           cpp.post_process
           reply.reload
           expect(reply.image_upload_id).to be_present
+        end
+
+        context "when upload filename doesn't match SHA1" do
+          let(:upload_with_secure_url) do
+            Fabricate(
+              :upload,
+              sha1: "a" * 40,
+              url: "/uploads/default/original/3X/b/c/#{"d" * 40}.png",
+            )
+          end
+          let(:post_with_secure_upload) do
+            Fabricate(
+              :post,
+              user: user_with_auto_groups,
+              raw: "<img src='#{upload_with_secure_url.url}'>",
+            )
+          end
+          let(:cpp) { CookedPostProcessor.new(post_with_secure_upload) }
+
+          it "sets image_upload via URL fallback" do
+            expect { cpp.post_process }.to change {
+              post_with_secure_upload.reload.image_upload
+            }.to eq(upload_with_secure_url)
+          end
         end
       end
     end
@@ -1439,9 +1537,9 @@ RSpec.describe CookedPostProcessor do
   end
 
   describe "#post_process_oneboxes with square image" do
-    it "generates a onebox-avatar class" do
-      url = "https://square-image.com/onebox"
+    fab!(:post) { Fabricate(:post, raw: "https://square-image.com/onebox") }
 
+    it "generates a onebox-avatar class" do
       body = <<~HTML
       <html>
       <head>
@@ -1452,16 +1550,14 @@ RSpec.describe CookedPostProcessor do
       </html>
       HTML
 
-      stub_request(:head, url)
-      stub_request(:get, url).to_return(body: body)
+      stub_request(:head, post.raw)
+      stub_request(:get, post.raw).to_return(body: body)
 
       # not an ideal stub but shipping the whole image to fast image can add
       # a lot of cost to this test
       stub_image_size(width: 200, height: 200)
 
-      post = Fabricate.build(:post, raw: url)
       cpp = CookedPostProcessor.new(post, invalidate_oneboxes: true)
-
       cpp.post_process_oneboxes
 
       expect(cpp.doc.to_s).not_to include("aspect-image")
@@ -1631,7 +1727,7 @@ RSpec.describe CookedPostProcessor do
         end
 
         context "with media uploads" do
-          fab!(:image_upload) { Fabricate(:upload) }
+          fab!(:image_upload, :upload)
           fab!(:audio_upload) { Fabricate(:upload, extension: "ogg") }
           fab!(:video_upload) { Fabricate(:upload, extension: "mov") }
 
@@ -2287,6 +2383,177 @@ RSpec.describe CookedPostProcessor do
       post = Fabricate(:post, user: user_with_auto_groups, raw: '<img alt="&<something>">')
       expect(post.cook(post.raw)).to eq('<p><img alt="&amp;<something>"></p>')
       expect(CookedPostProcessor.new(post).html).to eq('<p><img alt="&amp;<something>"></p>')
+    end
+  end
+
+  describe "#post_process_videos" do
+    fab!(:video_upload) { Fabricate(:upload, extension: "mp4") }
+    fab!(:optimized_video_upload) { Fabricate(:upload, extension: "mp4") }
+    fab!(:optimized_video) do
+      Fabricate(:optimized_video, upload: video_upload, optimized_upload: optimized_video_upload)
+    end
+
+    let(:post) { Fabricate(:post, user: user_with_auto_groups, raw: <<~RAW) }
+        <div class="video-placeholder-container" data-video-src="#{video_upload.url}">
+          <div class="video-placeholder">
+            <div class="video-placeholder-error">
+              <div class="video-placeholder-error-content">
+                <span class="video-placeholder-error-text">Video processing...</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      RAW
+
+    let(:cpp) { CookedPostProcessor.new(post) }
+
+    before do
+      # Add video extensions to authorized extensions
+      extensions = SiteSetting.authorized_extensions.split("|")
+      SiteSetting.authorized_extensions = (extensions | %w[mp4 mov avi mkv]).join("|")
+    end
+
+    context "when CDN is not configured" do
+      before do
+        SiteSetting.s3_cdn_url = ""
+        Rails.configuration.action_controller.stubs(:asset_host).returns(nil)
+      end
+
+      it "uses the original optimized video URL without CDN" do
+        cpp.send(:post_process_videos)
+
+        doc = Nokogiri::HTML5.fragment(cpp.html)
+        container = doc.css(".video-placeholder-container").first
+        expect(container["data-video-src"]).to eq(optimized_video_upload.url)
+        expect(container["data-original-video-src"]).to eq(video_upload.url)
+      end
+    end
+
+    context "when S3 CDN is configured" do
+      before do
+        setup_s3
+        SiteSetting.s3_cdn_url = "https://s3-cdn.example.com"
+        SiteSetting.enable_s3_uploads = true
+        SiteSetting.authorized_extensions = "png|jpg|gif|mov|ogg|mp4|"
+
+        # Ensure we're using S3Store
+        store = FileStore::S3Store.new
+        Discourse.stubs(:store).returns(store)
+
+        # Update uploads to use S3 URLs that match the store's absolute_base_url
+        base_url = Discourse.store.absolute_base_url
+        video_upload.update!(url: "#{base_url}/original/1X/#{video_upload.sha1}.mp4")
+        optimized_video_upload.update!(
+          url: "#{base_url}/original/1X/#{optimized_video_upload.sha1}.mp4",
+        )
+      end
+
+      it "uses CDN URL for optimized video" do
+        cpp.send(:post_process_videos)
+
+        doc = Nokogiri::HTML5.fragment(cpp.html)
+        container = doc.css(".video-placeholder-container").first
+        expected_cdn_url =
+          "https://s3-cdn.example.com/original/1X/#{optimized_video_upload.sha1}.mp4"
+        expect(container["data-video-src"]).to eq(expected_cdn_url)
+        expect(container["data-original-video-src"]).to eq(video_upload.url)
+      end
+    end
+
+    context "when local CDN is configured" do
+      before do
+        Rails.configuration.action_controller.stubs(:asset_host).returns("https://cdn.example.com")
+      end
+
+      it "uses local CDN URL for optimized video" do
+        cpp.send(:post_process_videos)
+
+        doc = Nokogiri::HTML5.fragment(cpp.html)
+        container = doc.css(".video-placeholder-container").first
+        expected_cdn_url = "https://cdn.example.com#{optimized_video_upload.url}"
+        expect(container["data-video-src"]).to eq(expected_cdn_url)
+        expect(container["data-original-video-src"]).to eq(video_upload.url)
+      end
+    end
+
+    context "when no optimized video exists" do
+      before { optimized_video.destroy }
+
+      it "does not modify the video container" do
+        cpp.send(:post_process_videos)
+
+        doc = Nokogiri::HTML5.fragment(cpp.html)
+        container = doc.css(".video-placeholder-container").first
+        expect(container["data-video-src"]).to eq(video_upload.url)
+        expect(container["data-original-video-src"]).to be_nil
+      end
+    end
+
+    context "when optimized video URL is the same as original" do
+      before { optimized_video_upload.update!(url: video_upload.url) }
+
+      it "does not update the container" do
+        cpp.send(:post_process_videos)
+
+        doc = Nokogiri::HTML5.fragment(cpp.html)
+        container = doc.css(".video-placeholder-container").first
+        expect(container["data-video-src"]).to eq(video_upload.url)
+        expect(container["data-original-video-src"]).to be_nil
+      end
+    end
+
+    context "when video container has no data-video-src" do
+      let(:post) { Fabricate(:post, user: user_with_auto_groups, raw: <<~RAW) }
+          <div class="video-placeholder-container">
+            <div class="video-placeholder">
+              <div class="video-placeholder-error">
+                <div class="video-placeholder-error-content">
+                  <span class="video-placeholder-error-text">Video processing...</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        RAW
+
+      it "skips processing the container" do
+        cpp.send(:post_process_videos)
+
+        doc = Nokogiri::HTML5.fragment(cpp.html)
+        container = doc.css(".video-placeholder-container").first
+        expect(container["data-video-src"]).to be_nil
+        expect(container["data-original-video-src"]).to be_nil
+      end
+    end
+
+    context "when upload cannot be found from URL" do
+      before { video_upload.update!(url: "//different-bucket.s3.amazonaws.com/nonexistent.mp4") }
+
+      it "does not modify the video container" do
+        cpp.send(:post_process_videos)
+
+        doc = Nokogiri::HTML5.fragment(cpp.html)
+        container = doc.css(".video-placeholder-container").first
+        expect(container["data-video-src"]).to eq(video_upload.url)
+        expect(container["data-original-video-src"]).to be_nil
+      end
+    end
+
+    context "when CDN URL is already present in optimized video URL" do
+      before do
+        SiteSetting.s3_cdn_url = "https://s3-cdn.example.com"
+        optimized_video_upload.update!(
+          url: "https://s3-cdn.example.com/original/1X/#{optimized_video_upload.sha1}.mp4",
+        )
+      end
+
+      it "does not double-apply CDN URL" do
+        cpp.send(:post_process_videos)
+
+        doc = Nokogiri::HTML5.fragment(cpp.html)
+        container = doc.css(".video-placeholder-container").first
+        expect(container["data-video-src"]).to eq(optimized_video_upload.url)
+        expect(container["data-original-video-src"]).to eq(video_upload.url)
+      end
     end
   end
 end

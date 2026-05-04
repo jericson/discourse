@@ -29,6 +29,7 @@ class PostAlerter
         post_number: post.post_number,
         topic_title: post.topic.title,
         topic_id: post.topic.id,
+        post_id: post.id,
         excerpt:
           excerpt ||
             post.excerpt(
@@ -83,32 +84,17 @@ class PostAlerter
       return
     end
 
-    if user.push_subscriptions.exists?
-      if user.seen_since?(SiteSetting.push_notification_time_window_mins.minutes.ago)
-        delay =
-          (SiteSetting.push_notification_time_window_mins - (Time.now - user.last_seen_at) / 60)
-        Jobs.enqueue_in(delay.minutes, :send_push_notification, user_id: user.id, payload: payload)
-      else
-        Jobs.enqueue(:send_push_notification, user_id: user.id, payload: payload)
-      end
+    return unless user.push_subscriptions.exists? || UserApiKey.push_clients_for(user).any?
+
+    push_window = SiteSetting.push_notification_time_window_mins
+    if push_window > 0 && user.seen_since?(push_window.minutes.ago)
+      delay = (push_window - (Time.now - user.last_seen_at) / 60)
     end
 
-    if SiteSetting.allow_user_api_key_scopes.split("|").include?("push") &&
-         SiteSetting.allowed_user_api_push_urls.present?
-      clients =
-        user
-          .user_api_keys
-          .joins(:scopes)
-          .where("user_api_key_scopes.name IN ('push', 'notifications')")
-          .where("push_url IS NOT NULL AND push_url <> ''")
-          .where("position(push_url IN ?) > 0", SiteSetting.allowed_user_api_push_urls)
-          .where("revoked_at IS NULL")
-          .order(client_id: :asc)
-          .pluck(:client_id, :push_url)
-
-      if clients.length > 0
-        Jobs.enqueue(:push_notification, clients: clients, payload: payload, user_id: user.id)
-      end
+    if delay.present?
+      Jobs.enqueue_in(delay.minutes, :deliver_push_notification, user_id: user.id, payload: payload)
+    else
+      Jobs.enqueue(:deliver_push_notification, user_id: user.id, payload: payload)
     end
   end
 
@@ -298,13 +284,6 @@ class PostAlerter
   end
 
   def category_or_tag_muters(topic)
-    user_option_condition_sql_fragment =
-      if SiteSetting.watched_precedence_over_muted
-        "uo.watched_precedence_over_muted IS false"
-      else
-        "(uo.watched_precedence_over_muted IS NULL OR uo.watched_precedence_over_muted IS false)"
-      end
-
     user_ids_sql = <<~SQL
         SELECT uo.user_id FROM user_options uo
         LEFT JOIN topic_users tus ON tus.user_id = uo.user_id AND tus.topic_id = #{topic.id}
@@ -314,7 +293,7 @@ class PostAlerter
         WHERE
           (tus.id IS NULL OR tus.notification_level != #{TopicUser.notification_levels[:watching]})
           AND (cu.notification_level = #{CategoryUser.notification_levels[:muted]} OR tu.notification_level = #{TagUser.notification_levels[:muted]})
-          AND #{user_option_condition_sql_fragment}
+          AND uo.watched_precedence_over_muted IS false
         SQL
 
     User.where("id IN (#{user_ids_sql})")
@@ -332,11 +311,14 @@ class PostAlerter
     users = users.where.not(id: notified.map(&:id)) if notified.present?
 
     DiscourseEvent.trigger(:before_create_notifications_for_users, users, post)
+    received_notifications = []
     each_user_in_batches(users) do |user|
-      create_notification(user, Notification.types[:watching_first_post], post)
+      if create_notification(user, Notification.types[:watching_first_post], post).present?
+        received_notifications << user
+      end
     end
 
-    users
+    received_notifications
   end
 
   def sync_group_mentions(post, mentioned_groups)
@@ -504,7 +486,7 @@ class PostAlerter
     end
   end
 
-  COLLAPSED_NOTIFICATION_TYPES ||= [
+  COLLAPSED_NOTIFICATION_TYPES = [
     Notification.types[:replied],
     Notification.types[:posted],
     Notification.types[:private_message],
@@ -525,6 +507,8 @@ class PostAlerter
            UserOption.like_notification_frequency_type[:never]
       return
     end
+
+    return if type == Notification.types[:linked] && !user.user_option.notify_on_linked_posts
 
     return if !Guardian.new(user).can_receive_post_notifications?(post)
 
@@ -626,6 +610,10 @@ class PostAlerter
       display_username: opts[:display_username] || post.user.username,
     }
 
+    if display_name = opts[:display_name] || post.user.name
+      notification_data[:display_name] = display_name
+    end
+
     opts[:custom_data].each { |k, v| notification_data[k] = v } if opts[:custom_data].is_a?(Hash)
 
     if group = opts[:group]
@@ -705,14 +693,11 @@ class PostAlerter
   end
 
   def expand_here_mention(post, exclude_ids: nil)
-    posts = Post.where(topic_id: post.topic_id)
-    posts = posts.where.not(user_id: exclude_ids) if exclude_ids.present?
+    post_type = [Post.types[:regular], Post.types[:moderator_action]]
+    post_type << Post.types[:whisper] if post.user.staff?
 
-    if post.user.staff?
-      posts = posts.where(post_type: [Post.types[:regular], Post.types[:whisper]])
-    else
-      posts = posts.where(post_type: Post.types[:regular])
-    end
+    posts = Post.where(topic_id: post.topic_id, post_type:)
+    posts = posts.where.not(user_id: exclude_ids) if exclude_ids.present?
 
     User.real.where(id: posts.select(:user_id)).limit(SiteSetting.max_here_mentioned)
   end
@@ -786,9 +771,7 @@ class PostAlerter
     warn_if_not_sidekiq
 
     DiscourseEvent.trigger(:before_create_notifications_for_users, users, post)
-    users.each { |u| create_notification(u, Notification.types[type], post, opts) }
-
-    users
+    users.select { |u| create_notification(u, Notification.types[type], post, opts).present? }
   end
 
   def pm_watching_users(post)
@@ -804,9 +787,8 @@ class PostAlerter
 
     warn_if_not_sidekiq
 
-    # To simplify things and to avoid IMAP double sync issues, and to cut down
-    # on emails sent via SMTP, any topic_allowed_users (except those who are
-    # not_allowed?) for a group that has SMTP enabled will have their notification
+    # To simplify things and to cut down on emails sent via SMTP, any topic_allowed_users
+    # (except those who are not_allowed?) for a group that has SMTP enabled will have their notification
     # email combined into one and sent via a single group SMTP email with CC addresses.
     emails_to_skip_send = email_using_group_smtp_if_configured(post)
 
@@ -831,7 +813,7 @@ class PostAlerter
     # flow will not be sent via group SMTP if it is enabled.
     users = indirectly_targeted_users(post).reject { |u| notified.include?(u) }
     DiscourseEvent.trigger(:before_create_notifications_for_users, users, post)
-    users.each do |user|
+    users.select do |user|
       case TopicUser.get(post.topic, user)&.notification_level
       when TopicUser.notification_levels[:watching]
         create_pm_notification(user, post, emails_to_skip_send)
@@ -882,9 +864,12 @@ class PostAlerter
       post
         .topic
         .topic_allowed_users
-        .includes(:user)
+        .includes(user: :user_option)
         .order(:created_at)
-        .reject { |tau| not_allowed?(tau.user, post) }
+        .reject do |tau|
+          not_allowed?(tau.user, post) ||
+            tau.user.user_option.email_messages_level == UserOption.email_level_types[:never]
+        end
     return emails_to_skip_send if topic_allowed_users_by_age.empty?
 
     # This should usually be the OP of the topic, unless they are the one
@@ -1020,7 +1005,7 @@ class PostAlerter
     notify = notify.where(staged: false).staff if post.topic.private_message?
 
     exclude_user_ids = notified.map(&:id)
-    notify = notify.where("users.id NOT IN (?)", exclude_user_ids) if exclude_user_ids.present?
+    notify = notify.where.not(id: exclude_user_ids) if exclude_user_ids.present?
 
     DiscourseEvent.trigger(:before_create_notifications_for_users, notify, post)
 
@@ -1032,6 +1017,7 @@ class PostAlerter
           .pluck(:user_id),
       )
 
+    received_notifications = []
     each_user_in_batches(notify) do |user|
       calculated_type =
         if !new_record && already_seen_user_ids.include?(user.id)
@@ -1044,10 +1030,12 @@ class PostAlerter
       opts = {}
       opts[:display_username] = post.last_editor.username if calculated_type ==
         Notification.types[:edited]
-      create_notification(user, calculated_type, post, opts)
+      if create_notification(user, calculated_type, post, opts).present?
+        received_notifications << user
+      end
     end
 
-    notify
+    received_notifications
   end
 
   def warn_if_not_sidekiq

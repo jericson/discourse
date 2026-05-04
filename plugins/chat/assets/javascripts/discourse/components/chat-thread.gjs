@@ -1,16 +1,17 @@
 import Component from "@glimmer/component";
 import { cached, tracked } from "@glimmer/tracking";
-import { getOwner } from "@ember/application";
 import { action } from "@ember/object";
+import { getOwner } from "@ember/owner";
 import didInsert from "@ember/render-modifiers/modifiers/did-insert";
 import willDestroy from "@ember/render-modifiers/modifiers/will-destroy";
 import { cancel, next } from "@ember/runloop";
 import { service } from "@ember/service";
 import concatClass from "discourse/helpers/concat-class";
 import { popupAjaxError } from "discourse/lib/ajax-error";
+import discourseDebounce from "discourse/lib/debounce";
+import { bind } from "discourse/lib/decorators";
 import { NotificationLevels } from "discourse/lib/notification-levels";
-import discourseDebounce from "discourse-common/lib/debounce";
-import { bind } from "discourse-common/utils/decorators";
+import { i18n } from "discourse-i18n";
 import ChatThreadTitlePrompt from "discourse/plugins/chat/discourse/components/chat-thread-title-prompt";
 import firstVisibleMessageId from "discourse/plugins/chat/discourse/helpers/first-visible-message-id";
 import ChatChannelThreadSubscriptionManager from "discourse/plugins/chat/discourse/lib/chat-channel-thread-subscription-manager";
@@ -19,8 +20,8 @@ import {
   PAST,
   READ_INTERVAL_MS,
 } from "discourse/plugins/chat/discourse/lib/chat-constants";
-import { stackingContextFix } from "discourse/plugins/chat/discourse/lib/chat-ios-hacks";
 import ChatMessagesLoader from "discourse/plugins/chat/discourse/lib/chat-messages-loader";
+import ChatPaneState from "discourse/plugins/chat/discourse/lib/chat-pane-state";
 import DatesSeparatorsPositioner from "discourse/plugins/chat/discourse/lib/dates-separators-positioner";
 import { extractCurrentTopicInfo } from "discourse/plugins/chat/discourse/lib/extract-current-topic-info";
 import {
@@ -33,32 +34,39 @@ import UserChatThreadMembership from "discourse/plugins/chat/discourse/models/us
 import ChatComposerThread from "./chat/composer/thread";
 import ChatScrollToBottomArrow from "./chat/scroll-to-bottom-arrow";
 import ChatSelectionManager from "./chat/selection-manager";
+import ChatChannelPreviewCard from "./chat-channel-preview-card";
 import Message from "./chat-message";
 import ChatMessagesContainer from "./chat-messages-container";
 import ChatMessagesScroller from "./chat-messages-scroller";
 import ChatSkeleton from "./chat-skeleton";
+import ChatThreadHeading from "./chat-thread-heading";
 import ChatUploadDropZone from "./chat-upload-drop-zone";
 
 export default class ChatThread extends Component {
-  @service appEvents;
   @service capabilities;
-  @service chat;
   @service chatApi;
-  @service chatComposerPresenceManager;
-  @service chatHistory;
   @service chatDraftsManager;
   @service chatThreadComposer;
   @service chatThreadPane;
+  @service dialog;
   @service currentUser;
-  @service router;
   @service siteSettings;
 
   @tracked atBottom = true;
   @tracked isScrolling = false;
-  @tracked needsArrow = false;
   @tracked uploadDropZone;
 
   scroller = null;
+
+  paneState = new ChatPaneState(getOwner(this), {
+    contextKey: this.pendingContextKey,
+    onUserPresent: this.debouncedUpdateLastReadMessage,
+  });
+
+  @action
+  registerScroller(element) {
+    this.scroller = element;
+  }
 
   @cached
   get messagesLoader() {
@@ -69,14 +77,13 @@ export default class ChatThread extends Component {
     return this.args.thread.messagesManager;
   }
 
-  @action
-  handleKeydown(event) {
-    if (event.key === "Escape") {
-      return this.router.transitionTo(
-        "chat.channel",
-        ...this.args.thread.channel.routeModels
-      );
-    }
+  get showChannelPreview() {
+    const channel = this.args.thread.channel;
+    return channel?.isCategoryChannel && !channel?.isFollowing;
+  }
+
+  get pendingContextKey() {
+    return this.args.thread?.id ? `thread:${this.args.thread.id}` : null;
   }
 
   @action
@@ -99,9 +106,10 @@ export default class ChatThread extends Component {
 
   @action
   teardown() {
+    this.paneState.teardown();
     this.subscriptionManager.teardown();
     cancel(this._debouncedFillPaneAttemptHandler);
-    cancel(this._debounceUpdateLastReadMessageHandler);
+    cancel(this._debouncedUpdateLastReadMessageHandler);
   }
 
   @action
@@ -112,13 +120,14 @@ export default class ChatThread extends Component {
       }
 
       DatesSeparatorsPositioner.apply(this.scroller);
-
-      this.needsArrow =
-        (this.messagesLoader.fetchedOnce &&
-          this.messagesLoader.canLoadMoreFuture) ||
-        (state.distanceToBottom.pixels > 250 && !state.atBottom);
+      this.paneState.updatePendingContentFromScrollState({
+        scroller: this.scroller,
+        fetchedOnce: this.messagesLoader.fetchedOnce,
+        canLoadMoreFuture: this.messagesLoader.canLoadMoreFuture,
+        state,
+      });
       this.isScrolling = true;
-      this.debounceUpdateLastReadMessage();
+      this.debouncedUpdateLastReadMessage();
 
       if (
         state.atTop ||
@@ -135,21 +144,27 @@ export default class ChatThread extends Component {
 
   @action
   onScrollEnd(state) {
-    this.needsArrow =
-      (this.messagesLoader.fetchedOnce &&
-        this.messagesLoader.canLoadMoreFuture) ||
-      (state.distanceToBottom.pixels > 250 && !state.atBottom);
     this.isScrolling = false;
     this.atBottom = state.atBottom;
-    this.args.setFullTitle?.(state.atTop);
 
     if (state.atBottom) {
+      if (this.paneState.userIsPresent) {
+        this.paneState.clearPendingMessages();
+      }
       this.fetchMoreMessages({ direction: FUTURE });
+    } else {
+      this.paneState.updatePendingContentFromScrollState({
+        scroller: this.scroller,
+        fetchedOnce: this.messagesLoader.fetchedOnce,
+        canLoadMoreFuture: this.messagesLoader.canLoadMoreFuture,
+        state,
+      });
     }
   }
 
-  debounceUpdateLastReadMessage() {
-    this._debounceUpdateLastReadMessageHandler = discourseDebounce(
+  @bind
+  debouncedUpdateLastReadMessage() {
+    this._debouncedUpdateLastReadMessageHandler = discourseDebounce(
       this,
       this.updateLastReadMessage,
       READ_INTERVAL_MS
@@ -158,6 +173,10 @@ export default class ChatThread extends Component {
 
   @bind
   updateLastReadMessage() {
+    if (!this.paneState.userIsPresent) {
+      return;
+    }
+
     if (!this.args.thread?.currentUserMembership) {
       return;
     }
@@ -187,11 +206,6 @@ export default class ChatThread extends Component {
   }
 
   @action
-  registerScroller(element) {
-    this.scroller = element;
-  }
-
-  @action
   loadMessages() {
     this.fetchMessages();
     this.subscriptionManager = new ChatChannelThreadSubscriptionManager(
@@ -205,8 +219,14 @@ export default class ChatThread extends Component {
   didResizePane() {
     this._ignoreNextScroll = true;
     this.debounceFillPaneAttempt();
-    this.debounceUpdateLastReadMessage();
+    this.debouncedUpdateLastReadMessage();
     DatesSeparatorsPositioner.apply(this.scroller);
+
+    this.paneState.updatePendingContentFromScrollerPosition({
+      scroller: this.scroller,
+      fetchedOnce: this.messagesLoader.fetchedOnce,
+      canLoadMoreFuture: this.messagesLoader.canLoadMoreFuture,
+    });
   }
 
   async fetchMessages(findArgs = {}) {
@@ -231,9 +251,7 @@ export default class ChatThread extends Component {
     }
 
     const [messages, meta] = this.processMessages(this.args.thread, result);
-    stackingContextFix(this.scroller, () => {
-      this.messagesManager.addMessages(messages);
-    });
+    this.messagesManager.addMessages(messages);
     this.args.thread.details = meta;
 
     if (meta.target_message_id) {
@@ -261,18 +279,16 @@ export default class ChatThread extends Component {
       return;
     }
 
-    stackingContextFix(this.scroller, () => {
-      this.messagesManager.addMessages(messages);
-    });
+    this.messagesManager.addMessages(messages);
     this.args.thread.details = meta;
 
     if (direction === FUTURE) {
-      this.scrollToMessageId(messages.firstObject.id, {
+      this.scrollToMessageId(messages[0].id, {
         position: "end",
         behavior: "auto",
       });
     } else if (direction === PAST) {
-      this.scrollToMessageId(messages.lastObject.id);
+      this.scrollToMessageId(messages.at(-1).id);
     }
 
     this.debounceFillPaneAttempt();
@@ -309,7 +325,7 @@ export default class ChatThread extends Component {
       return;
     }
 
-    const firstMessage = this.messagesManager.messages.firstObject;
+    const firstMessage = this.messagesManager.messages[0];
     if (!firstMessage?.visible) {
       return;
     }
@@ -328,14 +344,11 @@ export default class ChatThread extends Component {
 
   @bind
   onNewMessage(message) {
-    if (!this.atBottom) {
-      this.needsArrow = true;
-      this.messagesLoader.canLoadMoreFuture = true;
-      return;
-    }
-
-    stackingContextFix(this.scroller, () => {
-      this.messagesManager.addMessages([message]);
+    this.paneState.handleIncomingMessage({
+      scroller: this.scroller,
+      shouldAutoScroll: this.paneState.userIsPresent && this.atBottom,
+      addMessage: () => this.messagesManager.addMessages([message]),
+      onAutoAdd: () => this.debouncedUpdateLastReadMessage(),
     });
   }
 
@@ -359,6 +372,17 @@ export default class ChatThread extends Component {
 
   @action
   async onSendMessage(message) {
+    if (
+      message.message.length > this.siteSettings.chat_maximum_message_length
+    ) {
+      this.dialog.alert(
+        i18n("chat.message_too_long", {
+          count: this.siteSettings.chat_maximum_message_length,
+        })
+      );
+      return;
+    }
+
     await message.cook();
     if (message.editing) {
       await this.#sendEditMessage(message);
@@ -420,9 +444,7 @@ export default class ChatThread extends Component {
 
     this.chatThreadPane.sending = true;
     this._ignoreNextScroll = true;
-    stackingContextFix(this.scroller, async () => {
-      await this.args.thread.stageMessage(message);
-    });
+    await this.args.thread.stageMessage(message);
     this.resetComposerMessage();
 
     if (!this.messagesLoader.canLoadMoreFuture) {
@@ -430,17 +452,17 @@ export default class ChatThread extends Component {
     }
 
     try {
-      const params = {
-        message: message.message,
-        in_reply_to_id: null,
-        staged_id: message.id,
-        upload_ids: message.uploads.map((upload) => upload.id),
-        thread_id: message.thread.id,
-      };
-
       const response = await this.chatApi.sendMessage(
         this.args.thread.channel.id,
-        Object.assign({}, params, extractCurrentTopicInfo(this))
+        {
+          message: message.message,
+          in_reply_to_id: null,
+          staged_id: message.id,
+          upload_ids: message.uploads.map((upload) => upload.id),
+          thread_id: message.thread.id,
+          client_created_at: message.createdAt.toISOString(),
+          ...extractCurrentTopicInfo(this),
+        }
       );
 
       this.args.thread.currentUserMembership ??=
@@ -492,6 +514,7 @@ export default class ChatThread extends Component {
   async scrollToBottom() {
     this._ignoreNextScroll = true;
     await scrollListToBottom(this.scroller);
+    this.paneState.clearPendingMessages();
   }
 
   @action
@@ -510,7 +533,6 @@ export default class ChatThread extends Component {
       if (error.jqXHR?.responseJSON?.errors?.length) {
         stagedMessage.error = error.jqXHR.responseJSON.errors[0];
       } else {
-        this.chat.markNetworkAsUnreliable();
         stagedMessage.error = "network_error";
       }
     }
@@ -528,7 +550,8 @@ export default class ChatThread extends Component {
     <div
       class={{concatClass
         "chat-thread"
-        (if this.messagesLoader.loading "loading")
+        (if this.messagesLoader.loading "--loading")
+        (if this.messagesLoader.fetchedOnce "--loaded")
       }}
       data-id={{@thread.id}}
       {{didInsert this.setup}}
@@ -556,11 +579,13 @@ export default class ChatThread extends Component {
             {{/if}}
           {{/unless}}
         </ChatMessagesContainer>
+
+        <ChatThreadHeading @thread={{@thread}} />
       </ChatMessagesScroller>
 
       <ChatScrollToBottomArrow
         @onScrollToBottom={{this.scrollToLatestMessage}}
-        @isVisible={{this.needsArrow}}
+        @isVisible={{this.paneState.hasPendingContentBelow}}
       />
 
       {{#if this.chatThreadPane.selectingMessages}}
@@ -569,13 +594,17 @@ export default class ChatThread extends Component {
           @messagesManager={{this.messagesManager}}
         />
       {{else}}
-        <ChatComposerThread
-          @channel={{@channel}}
-          @thread={{@thread}}
-          @onSendMessage={{this.onSendMessage}}
-          @uploadDropZone={{this.uploadDropZone}}
-          @scroller={{this.scroller}}
-        />
+        {{#if this.showChannelPreview}}
+          <ChatChannelPreviewCard @channel={{@thread.channel}} />
+        {{else}}
+          <ChatComposerThread
+            @channel={{@channel}}
+            @thread={{@thread}}
+            @onSendMessage={{this.onSendMessage}}
+            @uploadDropZone={{this.uploadDropZone}}
+            @scroller={{this.scroller}}
+          />
+        {{/if}}
       {{/if}}
 
       <ChatUploadDropZone @model={{@thread}} />

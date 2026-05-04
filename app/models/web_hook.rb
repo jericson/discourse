@@ -7,20 +7,26 @@ class WebHook < ActiveRecord::Base
   has_and_belongs_to_many :tags
 
   has_many :web_hook_events, dependent: :destroy
+  has_many :redelivering_webhook_events
+  has_many :web_hook_events_daily_aggregates, dependent: :destroy
 
   default_scope { order("id ASC") }
 
   validates :payload_url, presence: true, format: URI.regexp(%w[http https])
   validates :secret, length: { minimum: 12 }, allow_blank: true
-  validates_presence_of :content_type
-  validates_presence_of :last_delivery_status
-  validates_presence_of :web_hook_event_types, unless: :wildcard_web_hook?
+  validates :content_type, presence: true
+  validates :last_delivery_status, presence: true
+  validates :web_hook_event_types, presence: { unless: :wildcard_web_hook? }
   validate :ensure_payload_url_allowed, if: :payload_url_changed?
 
   before_save :strip_url
 
   def tag_names=(tag_names_arg)
     DiscourseTagging.add_or_create_tags_by_name(self, tag_names_arg, unlimited: true)
+  end
+
+  def tag_ids=(ids)
+    self.tags = Tag.where(id: ids).to_a
   end
 
   def self.content_types
@@ -111,14 +117,17 @@ class WebHook < ActiveRecord::Base
 
   def self.enqueue_post_hooks(event, post, payload = nil)
     if active_web_hooks(event).exists? && post.present?
+      topic = post.topic || Topic.with_deleted.find_by(id: post.topic_id)
+      return if topic.nil?
+
       payload ||= WebHook.generate_payload(:post, post)
 
       WebHook.enqueue_hooks(
         :post,
         event,
         id: post.id,
-        category_id: post.topic&.category_id,
-        tag_ids: post.topic&.tags&.pluck(:id),
+        category_id: topic.category_id,
+        tag_ids: topic.tags.pluck(:id),
         payload: payload,
       )
     end

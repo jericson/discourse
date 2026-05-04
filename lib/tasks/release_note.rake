@@ -1,4 +1,5 @@
 # frozen_string_literal: true
+# rubocop:disable Lint/OrAssignmentToConstant
 
 DATE_REGEX ||= /\A\d{4}-\d{2}-\d{2}/
 

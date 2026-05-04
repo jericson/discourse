@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
-describe "Uploading files in chat messages", type: :system do
-  fab!(:current_user) { Fabricate(:user) }
-  fab!(:channel_1) { Fabricate(:chat_channel) }
+describe "Uploading files in chat messages" do
+  fab!(:current_user, :user)
+  fab!(:channel_1, :chat_channel)
   fab!(:message_1) { Fabricate(:chat_message, chat_channel: channel_1) }
 
   let(:chat) { PageObjects::Pages::Chat.new }
@@ -17,49 +17,64 @@ describe "Uploading files in chat messages", type: :system do
       sign_in(current_user)
     end
 
+    it "allows to drag files to start upload" do
+      chat.visit_channel(channel_1)
+
+      # Define the JavaScript to simulate dragging an external image
+      page.execute_script(<<-JS)
+        const target = document.querySelector('.chat-channel');
+        const dataTransfer = new DataTransfer();
+        const file = new File(['dummy content'], 'test-image.png', { type: 'image/png' });
+
+        dataTransfer.items.add(file);
+
+        const dragEnterEvent = new DragEvent('dragenter', { dataTransfer: dataTransfer });
+        target.dispatchEvent(dragEnterEvent);
+
+        const dragOverEvent = new DragEvent('dragover', { dataTransfer: dataTransfer });
+        target.dispatchEvent(dragOverEvent);
+      JS
+
+      expect(find(".chat-upload-drop-zone__text__title")).to have_content(
+        I18n.t("js.chat.upload_to_channel", { title: channel_1.title }),
+      )
+    end
+
     it "allows uploading a single file" do
       chat.visit_channel(channel_1)
       file_path = file_from_fixtures("logo.png", "images").path
-
-      attach_file(file_path) do
-        channel_page.open_action_menu
-        channel_page.click_action_button("chat-upload-btn")
-      end
+      attach_file("channel-file-uploader", file_path, make_visible: true)
 
       expect(page).to have_css(".chat-composer-upload .preview .preview-img")
 
       channel_page.send_message("upload testing")
 
       expect(page).to have_no_css(".chat-composer-upload")
-
       expect(channel_page.messages).to have_message(
         text: "upload testing\n#{File.basename(file_path)}",
         persisted: true,
+        exact: false,
       )
-
       expect(Chat::Message.last.uploads.count).to eq(1)
     end
 
-    xit "adds a thumbnail for large images" do
+    it "adds a thumbnail for large images" do
       SiteSetting.create_thumbnails = true
+      SiteSetting.max_image_megapixels = 150
 
       chat.visit_channel(channel_1)
       file_path = file_from_fixtures("huge.jpg", "images").path
+      attach_file("channel-file-uploader", file_path, make_visible: true)
 
-      attach_file(file_path) do
-        channel_page.open_action_menu
-        channel_page.click_action_button("chat-upload-btn")
-      end
+      expect(page).to have_css(".chat-composer-upload .preview .preview-img")
 
       expect { channel_page.send_message }.to change { Chat::Message.count }.by(1)
 
       expect(channel_page).to have_no_css(".chat-composer-upload")
 
       message = Chat::Message.last
-
-      try_until_success(timeout: 5) { expect(message.uploads.first.thumbnail).to be_present }
-
       upload = message.uploads.first
+      expect(upload.thumbnail).to be_present
 
       # image has src attribute with thumbnail url
       expect(channel_page).to have_css(".chat-uploads img[src$='#{upload.thumbnail.url}']")
@@ -71,12 +86,7 @@ describe "Uploading files in chat messages", type: :system do
     it "adds dominant color attribute to images" do
       chat.visit_channel(channel_1)
       file_path = file_from_fixtures("logo.png", "images").path
-
-      attach_file(file_path) do
-        channel_page.open_action_menu
-        channel_page.click_action_button("chat-upload-btn")
-      end
-
+      attach_file("channel-file-uploader", file_path, make_visible: true)
       channel_page.click_send_message
 
       expect(channel_page.messages).to have_css(".chat-img-upload[data-dominant-color]", count: 1)
@@ -87,10 +97,7 @@ describe "Uploading files in chat messages", type: :system do
 
       file_path_1 = file_from_fixtures("logo.png", "images").path
       file_path_2 = file_from_fixtures("logo.jpg", "images").path
-      attach_file([file_path_1, file_path_2]) do
-        channel_page.open_action_menu
-        channel_page.click_action_button("chat-upload-btn")
-      end
+      attach_file("channel-file-uploader", [file_path_1, file_path_2], make_visible: true)
 
       expect(page).to have_css(".chat-composer-upload .preview .preview-img", count: 2)
       channel_page.send_message("upload testing")
@@ -100,36 +107,26 @@ describe "Uploading files in chat messages", type: :system do
         text: "upload testing\n#{I18n.t("js.chat.uploaded_files", count: 2)}",
         persisted: true,
       )
+
       expect(Chat::Message.last.uploads.count).to eq(2)
     end
 
-    it "allows uploading a huge image file with preprocessing" do
-      skip("This test is flaky on CI") if ENV["CI"]
-
-      SiteSetting.composer_media_optimization_image_bytes_optimization_threshold = 200.kilobytes
+    it "allows uploading an image with client-side preprocessing enabled" do
+      SiteSetting.composer_media_optimization_image_bytes_optimization_threshold = 1
       chat.visit_channel(channel_1)
-      file_path = file_from_fixtures("huge.jpg", "images").path
 
-      attach_file(file_path) do
-        channel_page.open_action_menu
-        channel_page.click_action_button("chat-upload-btn")
-      end
+      file_path = file_from_fixtures("logo.jpg", "images").path
+      attach_file("channel-file-uploader", file_path, make_visible: true)
 
-      expect(find(".chat-composer-upload")).to have_content("Processing")
-
-      # image processing clientside is slow! here we are waiting for processing
-      # to complete then the upload to complete as well
-      expect(page).to have_css(".chat-composer-upload .preview .preview-img", wait: 25)
+      expect(page).to have_css(".chat-composer-upload .preview .preview-img")
 
       channel_page.send_message("upload testing")
 
       expect(page).to have_no_css(".chat-composer-upload")
-
       expect(channel_page.messages).to have_message(
         text: "upload testing\n#{File.basename(file_path)}",
         persisted: true,
       )
-
       expect(Chat::Message.last.uploads.count).to eq(1)
     end
   end
@@ -161,18 +158,14 @@ describe "Uploading files in chat messages", type: :system do
       expect(channel_page.message_by_id(message_2.id)).to have_no_css(".chat-uploads")
 
       channel_page.click_send_message
-      try_until_success(timeout: 5) { expect(message_2.reload.upload_ids).to be_empty }
+      expect(message_2.reload.upload_ids).to be_empty
     end
 
     it "allows adding more uploads" do
       chat.visit_channel(channel_1)
       channel_page.messages.edit(message_2)
-
       file_path = file_from_fixtures("logo.png", "images").path
-      attach_file(file_path) do
-        channel_page.open_action_menu
-        channel_page.click_action_button("chat-upload-btn")
-      end
+      attach_file("channel-file-uploader", file_path, make_visible: true)
 
       expect(page).to have_css(".chat-composer-upload .preview .preview-img", count: 2)
 
@@ -180,13 +173,12 @@ describe "Uploading files in chat messages", type: :system do
 
       expect(page).to have_no_css(".chat-composer-upload")
       expect(page).to have_css(".chat-img-upload", count: 2)
-
-      try_until_success(timeout: 5) { expect(message_2.reload.uploads.count).to eq(2) }
+      expect(message_2.reload.uploads.count).to eq(2)
     end
   end
 
   context "when uploads are not allowed" do
-    fab!(:user_2) { Fabricate(:user) }
+    fab!(:user_2, :user)
     fab!(:direct_message_channel_1) do
       Fabricate(:direct_message_channel, users: [current_user, user_2])
     end

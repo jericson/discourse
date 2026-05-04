@@ -51,7 +51,7 @@ RSpec.describe ReviewablesController do
       end
 
       it "returns JSON with reviewable content" do
-        reviewable = Fabricate(:reviewable)
+        reviewable = Fabricate(:reviewable_flagged_post)
 
         get "/review.json"
         expect(response.code).to eq("200")
@@ -62,7 +62,7 @@ RSpec.describe ReviewablesController do
         expect(json_review["id"]).to eq(reviewable.id)
         expect(json_review["created_by_id"]).to eq(reviewable.created_by_id)
         expect(json_review["status"]).to eq(Reviewable.statuses[:pending])
-        expect(json_review["type"]).to eq("ReviewableUser")
+        expect(json_review["type"]).to eq("ReviewableFlaggedPost")
         expect(json_review["target_created_by_id"]).to eq(reviewable.target_created_by_id)
         expect(json_review["score"]).to eq(reviewable.score)
         expect(json_review["version"]).to eq(reviewable.version)
@@ -73,6 +73,111 @@ RSpec.describe ReviewablesController do
         expect(json["meta"]["reviewable_count"]).to eq(1)
         expect(json["meta"]["unseen_reviewable_count"]).to eq(1)
         expect(json["meta"]["status"]).to eq("pending")
+      end
+
+      context "with trashed topics and posts" do
+        fab!(:post1, :post)
+        fab!(:reviewable) do
+          Fabricate(
+            :reviewable,
+            target_id: post1.id,
+            target_type: "Post",
+            topic: post1.topic,
+            type: "ReviewableFlaggedPost",
+            category: post1.topic.category,
+          )
+        end
+        fab!(:moderator)
+        let(:topic) { post1.topic }
+
+        fab!(:category_mod, :user)
+        fab!(:group)
+        fab!(:group_user) { GroupUser.create!(group_id: group.id, user_id: category_mod.id) }
+        fab!(:mod_group) do
+          CategoryModerationGroup.create!(category_id: post1.topic.category.id, group_id: group.id)
+        end
+
+        it "supports returning information for trashed topics and posts to staff" do
+          sign_in(moderator)
+
+          topic.trash!
+          post1.trash!
+
+          get "/review.json"
+          expect(response.code).to eq("200")
+          json = response.parsed_body
+
+          reviewable_json = json["reviewables"].find { |r| r["id"] == reviewable.id }
+          topic_json = json["topics"].find { |t| t["id"] == topic.id }
+
+          expect(reviewable_json["raw"]).to eq(post1.raw)
+          expect(reviewable_json["deleted_at"]).to be_present
+          expect(topic_json["title"]).to eq(topic.title)
+        end
+
+        it "does not return information for trashed topics and posts to category mods" do
+          SiteSetting.enable_category_group_moderation = true
+          sign_in(category_mod)
+          post1.trash!
+          topic.trash!
+
+          get "/review.json"
+          expect(response.code).to eq("200")
+          json = response.parsed_body
+
+          reviewable_json = json["reviewables"].find { |r| r["id"] == reviewable.id }
+          expect(reviewable_json["raw"]).to be_blank
+        end
+      end
+
+      it "supports filtering by flag reason" do
+        # this is not flagged by the user
+        reviewable = Fabricate(:reviewable)
+        reviewable.reviewable_scores.create!(
+          user: admin,
+          score: 1000,
+          status: "pending",
+          reviewable_score_type: 1,
+        )
+
+        reviewable = Fabricate(:reviewable)
+        user = Fabricate(:user)
+        reviewable.reviewable_scores.create!(
+          user: user,
+          score: 1000,
+          status: "pending",
+          reviewable_score_type: 2,
+        )
+
+        get "/review.json?score_type=1"
+        expect(response.code).to eq("200")
+        json = response.parsed_body
+        expect(json["reviewables"].length).to eq(1)
+      end
+
+      it "supports filtering by flagged_by" do
+        # this is not flagged by the user
+        reviewable = Fabricate(:reviewable)
+        reviewable.reviewable_scores.create!(
+          user: admin,
+          score: 1000,
+          status: "pending",
+          reviewable_score_type: 1,
+        )
+
+        reviewable = Fabricate(:reviewable)
+        user = Fabricate(:user)
+        reviewable.reviewable_scores.create!(
+          user: user,
+          score: 1000,
+          status: "pending",
+          reviewable_score_type: 1,
+        )
+
+        get "/review.json?flagged_by=#{user.username}"
+        expect(response.code).to eq("200")
+        json = response.parsed_body
+        expect(json["reviewables"].length).to eq(1)
       end
 
       it "supports filtering by score" do
@@ -216,7 +321,7 @@ RSpec.describe ReviewablesController do
         let(:reviewables) { response.parsed_body["reviewables"] }
 
         it "returns an empty array when no reviewable matches the date range" do
-          reviewable = Fabricate(:reviewable)
+          Fabricate(:reviewable)
 
           get "/review.json?from_date=#{from}&to_date=#{to}"
 
@@ -224,7 +329,7 @@ RSpec.describe ReviewablesController do
         end
 
         it "returns reviewable content that matches the date range" do
-          reviewable = Fabricate(:reviewable, created_at: 2.day.ago)
+          reviewable = Fabricate(:reviewable, created_at: 2.days.ago)
 
           get "/review.json?from_date=#{from}&to_date=#{to}"
 
@@ -247,7 +352,7 @@ RSpec.describe ReviewablesController do
           user.custom_fields["private_field"] = "private"
           user.save!
 
-          reviewable = Fabricate(:reviewable, target_created_by: user)
+          reviewable = Fabricate(:reviewable_flagged_post, target_created_by: user)
 
           get "/review.json"
           json = response.parsed_body
@@ -269,7 +374,7 @@ RSpec.describe ReviewablesController do
 
       it "supports filtering by id" do
         reviewable_a = Fabricate(:reviewable)
-        reviewable_b = Fabricate(:reviewable)
+        _reviewable_b = Fabricate(:reviewable)
 
         get "/review.json?ids[]=#{reviewable_a.id}"
 
@@ -277,6 +382,51 @@ RSpec.describe ReviewablesController do
         json = response.parsed_body
         expect(json["reviewables"]).to be_present
         expect(json["reviewables"].size).to eq(1)
+      end
+
+      context "with reviewable notes" do
+        fab!(:moderator)
+        fab!(:reviewable)
+
+        it "doesn't cause N+1 queries when notes are added" do
+          # post sign-in warmup
+          get "/review.json"
+
+          post "/reviewables/#{reviewable.id}/notes.json",
+               params: {
+                 reviewable_note: {
+                   content: "This is a test note",
+                 },
+               }
+
+          initial_sql_queries =
+            track_sql_queries do
+              get "/review.json"
+              expect(response.status).to eq(200)
+            end
+
+          sign_in(moderator)
+
+          post "/reviewables/#{reviewable.id}/notes.json",
+               params: {
+                 reviewable_note: {
+                   content: "This is another test note",
+                 },
+               }
+
+          sign_in(admin)
+
+          # second post sign-in warmup
+          get "/review.json"
+
+          new_sql_queries =
+            track_sql_queries do
+              get "/review.json"
+              expect(response.status).to eq(200)
+            end
+
+          expect(new_sql_queries.count).to eq(initial_sql_queries.count)
+        end
       end
     end
 
@@ -323,7 +473,7 @@ RSpec.describe ReviewablesController do
       end
 
       it "responds with current user's reviewables count" do
-        reviewable = Fabricate(:reviewable)
+        _reviewable = Fabricate(:reviewable)
 
         get "/review/user-menu-list.json"
 
@@ -481,10 +631,6 @@ RSpec.describe ReviewablesController do
         json = response.parsed_body
         expect(json["reviewable_perform_result"]["success"]).to eq(true)
         expect(json["reviewable_perform_result"]["version"]).to eq(1)
-        expect(json["reviewable_perform_result"]["transition_to"]).to eq("approved")
-        expect(json["reviewable_perform_result"]["transition_to_id"]).to eq(
-          Reviewable.statuses[:approved],
-        )
         expect(json["reviewable_perform_result"]["remove_reviewable_ids"]).to eq([reviewable.id])
         expect(json["reviewable_perform_result"]["reviewable_count"]).to eq(1)
 
@@ -497,7 +643,7 @@ RSpec.describe ReviewablesController do
       end
 
       it "doesn't send email when `send_email` is false" do
-        other_reviewable = Fabricate(:reviewable)
+        _other_reviewable = Fabricate(:reviewable)
 
         SiteSetting.must_approve_users = true
         put "/review/#{reviewable.id}/perform/approve_user.json?version=#{reviewable.version}&send_email=false"
@@ -507,7 +653,7 @@ RSpec.describe ReviewablesController do
       end
 
       context "with claims" do
-        fab!(:qp) { Fabricate(:reviewable_queued_post) }
+        fab!(:qp, :reviewable_queued_post)
 
         it "fails when reviewables must be claimed" do
           SiteSetting.reviewable_claiming = "required"
@@ -566,14 +712,23 @@ RSpec.describe ReviewablesController do
       fab!(:reviewable_phony) { Fabricate(:reviewable, type: "ReviewablePhony") }
 
       it "passes the added param into the reviewable class' perform method" do
-        MessageBus
-          .expects(:publish)
-          .with(
-            "/phony-reviewable-test",
-            { args: { :version => reviewable_phony.version, "fake_id" => "2" } },
-            user_ids: [1],
-          )
-          .once
+        MessageBus.expects(:publish).with(
+          "/phony-reviewable-test",
+          { args: { :version => reviewable_phony.version, "fake_id" => "2" } },
+          user_ids: [1],
+        )
+
+        MessageBus.expects(:publish).with(
+          "/reviewable_action",
+          {
+            success: true,
+            remove_reviewable_ids: [reviewable_phony.id],
+            version: 1,
+            reviewable_count: 0,
+            unseen_reviewable_count: 0,
+          },
+          group_ids: [3],
+        )
 
         put "/review/#{reviewable_phony.id}/perform/approve_phony.json?version=#{reviewable_phony.version}",
             params: {
@@ -584,9 +739,9 @@ RSpec.describe ReviewablesController do
     end
 
     describe "#topics" do
-      fab!(:post0) { Fabricate(:post) }
+      fab!(:post0, :post)
       fab!(:post1) { Fabricate(:post, topic: post0.topic) }
-      fab!(:post2) { Fabricate(:post) }
+      fab!(:post2, :post)
       fab!(:user0) { Fabricate(:user, refresh_auto_groups: true) }
       fab!(:user1) { Fabricate(:user, refresh_auto_groups: true) }
 
@@ -601,15 +756,18 @@ RSpec.describe ReviewablesController do
         SiteSetting.reviewable_claiming = "optional"
         PostActionCreator.spam(user0, post0)
         moderator = Fabricate(:moderator)
-        ReviewableClaimedTopic.create!(user: moderator, topic: post0.topic)
+        claim = ReviewableClaimedTopic.create!(user: moderator, topic: post0.topic)
 
         get "/review/topics.json"
         expect(response.code).to eq("200")
         json = response.parsed_body
         json_topic = json["reviewable_topics"].find { |rt| rt["id"] == post0.topic_id }
-        expect(json_topic["claimed_by_id"]).to eq(moderator.id)
+        expect(json_topic["claimed_by_id"]).to eq(claim.id)
 
-        json_user = json["users"].find { |u| u["id"] == json_topic["claimed_by_id"] }
+        json_claim = json["claimed_bies"].find { |c| c["id"] == claim.id }
+        expect(json_claim["user_id"]).to eq(moderator.id)
+
+        json_user = json["users"].find { |u| u["id"] == json_claim["user_id"] }
         expect(json_user).to be_present
       end
 
@@ -682,8 +840,8 @@ RSpec.describe ReviewablesController do
 
     describe "#update" do
       fab!(:reviewable)
-      fab!(:reviewable_post) { Fabricate(:reviewable_queued_post) }
-      fab!(:reviewable_topic) { Fabricate(:reviewable_queued_post_topic) }
+      fab!(:reviewable_post, :reviewable_queued_post)
+      fab!(:reviewable_topic, :reviewable_queued_post_topic)
       fab!(:moderator)
       fab!(:reviewable_approved_post) do
         Fabricate(:reviewable_queued_post, status: Reviewable.statuses[:approved])
@@ -899,6 +1057,74 @@ RSpec.describe ReviewablesController do
           let(:response_code) { 200 }
           let(:reviewable_deleted) { true }
         end
+      end
+    end
+
+    describe "#scrub" do
+      it "only allows admins to scrub reviewables" do
+        moderator = Fabricate(:moderator)
+
+        Jobs.run_immediately!
+        SiteSetting.must_approve_users = true
+        user = Fabricate(:user)
+        user.activate
+        reviewable = ReviewableUser.find_by(target: user)
+
+        sign_in(moderator)
+        put "/review/#{reviewable.id}/perform/delete_user.json?version=0"
+        expect(response.status).to eq(200)
+
+        put "/review/#{reviewable.id}/scrub.json?reason=spam"
+        expect(response.status).to eq(403)
+
+        sign_in(admin)
+        put "/review/#{reviewable.id}/scrub.json?reason=spam"
+        expect(response.status).to eq(200)
+      end
+
+      it "doesn't allow scrubbing of reviewables that haven't been rejected" do
+        Jobs.run_immediately!
+        SiteSetting.must_approve_users = true
+        user = Fabricate(:user)
+        user.activate
+        reviewable = ReviewableUser.find_by(target: user)
+
+        sign_in(admin)
+        put "/review/#{reviewable.id}/scrub.json?reason=spam"
+        expect(response.status).to eq(404)
+      end
+
+      it "doesn't allow scrubbing of reviewables that don't exist" do
+        sign_in(admin)
+        put "/review/123456789/scrub.json?reason=spam"
+        expect(response.status).to eq(404)
+      end
+
+      it "doesn't allow scrubbing of reviewables that aren't scrubbable" do
+        reviewable = Fabricate(:reviewable)
+        expect(Reviewable.scrubbable_types).not_to include(reviewable.type)
+
+        sign_in(admin)
+        put "/review/#{reviewable.id}/scrub.json?reason=spam"
+        expect(response.status).to eq(404)
+      end
+
+      it "doesn't allow scrubbing of reviewables that have already been scrubbed" do
+        Jobs.run_immediately!
+        SiteSetting.must_approve_users = true
+        user = Fabricate(:user)
+        user.activate
+        reviewable = ReviewableUser.find_by(target: user)
+
+        sign_in(admin)
+        put "/review/#{reviewable.id}/perform/delete_user.json?version=0"
+        expect(response.status).to eq(200)
+
+        put "/review/#{reviewable.id}/scrub.json?reason=spam"
+        expect(response.status).to eq(200)
+
+        put "/review/#{reviewable.id}/scrub.json?reason=spam"
+        expect(response.status).to eq(403)
       end
     end
 

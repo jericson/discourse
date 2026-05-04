@@ -7,7 +7,8 @@
 sl:
   js:
     discourse_automation:
-      create: Ustvari
+      back: Nazaj
+      edit: Uredi
       fields:
         user:
           label: Uporabnik
@@ -22,6 +23,12 @@ sl:
         text:
           label: Besedilo
       triggerables:
+        post_flag_created:
+          fields:
+            categories:
+              label: Kategorije
+            tags:
+              label: Oznake
         user_badge_granted:
           fields:
             badge:
@@ -55,11 +62,15 @@ sl:
               label: ID teme
         post_created_edited:
           fields:
-            restricted_category:
-              label: Kategorija
-            restricted_group:
-              label: Skupina
+            restricted_tags:
+              label: Oznake
+            restricted_categories:
+              label: Kategorije
           created: Ustvarjeno
+          with_images: Slike
+          with_links: Povezave
+          with_code: Koda
+          with_uploads: Prenosi
         category_created_edited:
           fields:
             restricted_category:
@@ -119,6 +130,8 @@ sl:
               label: ID teme
             user:
               label: Uporabnik
+        set_topic_timer:
+          title: Nastavi opomnik teme
       models:
         trigger:
           name:
@@ -130,7 +143,7 @@ sl:
             label: Sproži
           version:
             label: Verzija
-          enabled:
-            label: Vključeno
+          status:
+            label: Stanje
           disabled:
             label: Onemogočeno

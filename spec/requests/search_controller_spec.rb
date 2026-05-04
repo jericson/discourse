@@ -230,8 +230,6 @@ RSpec.describe SearchController do
     context "when rate limited" do
       before { RateLimiter.enable }
 
-      use_redis_snapshotting
-
       def unlimited_request(ip_address = "1.2.3.4")
         get "/search/query.json", params: { term: "wookie" }, env: { REMOTE_ADDR: ip_address }
 
@@ -305,6 +303,15 @@ RSpec.describe SearchController do
         end
       end
     end
+
+    context "when visited by a crawler" do
+      it "responds with a noindex page" do
+        get "/search", params: { q: "test" }, headers: { "HTTP_USER_AGENT" => "Googlebot" }
+        expect(response.status).to eq(200)
+        expect(response.headers["X-Robots-Tag"]).to eq("noindex")
+        expect(response.body).to include("<meta name='robots' content='noindex'>")
+      end
+    end
   end
 
   describe "#show" do
@@ -347,6 +354,11 @@ RSpec.describe SearchController do
 
     it "returns a 400 error if the page parameter is padded with spaces" do
       get "/search.json", params: { q: "kittens", page: " 3  " }
+      expect(response.status).to eq(400)
+    end
+
+    it "returns a 400 error if the page parameter is above the limit" do
+      get "/search.json", params: { q: "kittens", page: 11 }
       expect(response.status).to eq(400)
     end
 
@@ -393,7 +405,7 @@ RSpec.describe SearchController do
         SearchIndexer.index(awesome_topic, force: true)
       end
 
-      it "works for user with tag group permision" do
+      it "works for user with tag group permission" do
         sign_in(admin)
         get "/search.json",
             params: {
@@ -421,8 +433,6 @@ RSpec.describe SearchController do
 
     context "when rate limited" do
       before { RateLimiter.enable }
-
-      use_redis_snapshotting
 
       def unlimited_request(ip_address = "1.2.3.4")
         get "/search.json", params: { q: "wookie" }, env: { REMOTE_ADDR: ip_address }
@@ -497,7 +507,7 @@ RSpec.describe SearchController do
     end
 
     context "with lazy loaded categories" do
-      fab!(:parent_category) { Fabricate(:category) }
+      fab!(:parent_category, :category)
       fab!(:category) { Fabricate(:category, parent_category: parent_category) }
       fab!(:other_category) { Fabricate(:category, parent_category: parent_category) }
 
@@ -526,6 +536,49 @@ RSpec.describe SearchController do
           category.id,
           other_category.id,
         )
+      end
+    end
+
+    describe "with content localization" do
+      fab!(:localized_post) do
+        post = Fabricate(:post, locale: "en", cooked: "<p>Original EN</p>")
+        Fabricate(:post_localization, post: post, locale: "ja", cooked: "<p>Translated JA</p>")
+        post
+      end
+
+      before do
+        SiteSetting.content_localization_enabled = true
+        I18n.locale = "en"
+      end
+
+      context "when show_original cookie is not set" do
+        it "returns translated blurb in search results" do
+          with_search_indexer_enabled { SearchIndexer.index(localized_post.topic, force: true) }
+
+          get "/search.json", params: { q: localized_post.topic.title }
+
+          expect(response.status).to eq(200)
+          body = response.parsed_body
+          expect(body["posts"]).to be_present
+          cooked_or_blurb = body["posts"].first["blurb"] || body["posts"].first["cooked"]
+          expect(cooked_or_blurb).to include("Translated JA").or include("Original EN")
+        end
+      end
+
+      context "when show_original cookie is set" do
+        before { cookies[ContentLocalization::SHOW_ORIGINAL_COOKIE] = "true" }
+
+        it "returns original blurb in search results" do
+          with_search_indexer_enabled { SearchIndexer.index(localized_post.topic, force: true) }
+
+          get "/search.json", params: { q: localized_post.topic.title }
+
+          expect(response.status).to eq(200)
+          body = response.parsed_body
+          expect(body["posts"]).to be_present
+          cooked_or_blurb = body["posts"].first["blurb"] || body["posts"].first["cooked"]
+          expect(cooked_or_blurb).to include("Original EN")
+        end
       end
     end
   end

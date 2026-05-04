@@ -1,5 +1,6 @@
-import { renderIcon } from "discourse-common/lib/icon-library";
-import I18n from "discourse-i18n";
+import { uniqueItemsFromArray } from "discourse/lib/array-tools";
+import { renderIcon } from "discourse/lib/icon-library";
+import { i18n } from "discourse-i18n";
 import DateWithZoneHelper from "./date-with-zone-helper";
 
 const DATETIME_FORMAT = "LLL";
@@ -113,7 +114,7 @@ export default class LocalDateBuilder {
       displayedTimezone === this.localTimezone &&
       this.timezone !== displayedTimezone &&
       !this._isEqualZones(displayedTimezone, this.timezone) &&
-      !this.timezones.any((t) => this._isEqualZones(t, this.timezone))
+      !this.timezones.some((t) => this._isEqualZones(t, this.timezone))
     ) {
       timezones.unshift(this.timezone);
     }
@@ -141,7 +142,7 @@ export default class LocalDateBuilder {
       });
     });
 
-    return previewedTimezones.uniqBy("timezone");
+    return uniqueItemsFromArray(previewedTimezones, "timezone");
   }
 
   _isEqualZones(timezoneA, timezoneB) {
@@ -217,7 +218,7 @@ export default class LocalDateBuilder {
       if (diffTime < 0) {
         return moment.duration(diffTime).humanize();
       } else {
-        return I18n.t("discourse_local_dates.relative_dates.countdown.passed");
+        return i18n("discourse_local_dates.relative_dates.countdown.passed");
       }
     }
 
@@ -269,7 +270,7 @@ export default class LocalDateBuilder {
   }
 
   _translateCalendarKey(time, key) {
-    const translated = I18n.t(`discourse_local_dates.relative_dates.${key}`, {
+    const translated = i18n(`discourse_local_dates.relative_dates.${key}`, {
       time: "LT",
     });
 

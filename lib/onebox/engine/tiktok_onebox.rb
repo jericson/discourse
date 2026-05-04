@@ -6,9 +6,17 @@ module Onebox
       include Engine
       include StandardEmbed
 
-      matches_regexp(%r{^https?://((?:m|www)\.)?tiktok\.com(?:/@(.+)\/video/|/v/)\d+(/\w+)?/?})
+      matches_domain("tiktok.com", "www.tiktok.com", "m.tiktok.com")
       requires_iframe_origins "https://www.tiktok.com"
       always_https
+
+      def self.matches_path(path)
+        path.match?(%r{^(/@.+/video/\d+|/v/\d+)(/\w+)?/?$})
+      end
+
+      def self.embed_url(video_id)
+        "https://www.tiktok.com/embed/v2/#{video_id}"
+      end
 
       def placeholder_html
         <<-HTML
@@ -29,7 +37,7 @@ module Onebox
         <<-HTML
           <iframe
             class="tiktok-onebox"
-            src="https://www.tiktok.com/embed/v2/#{oembed_data.embed_product_id}"
+            src="#{self.class.embed_url(oembed_data.embed_product_id)}"
             sandbox="allow-popups allow-popups-to-escape-sandbox allow-scripts allow-top-navigation allow-same-origin"
             frameborder="0"
             seamless="seamless"

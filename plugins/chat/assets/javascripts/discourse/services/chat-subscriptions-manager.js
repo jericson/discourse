@@ -1,13 +1,12 @@
 import Service, { service } from "@ember/service";
-import { bind } from "discourse-common/utils/decorators";
-import I18n from "discourse-i18n";
+import { bind } from "discourse/lib/decorators";
+import { NotificationLevels } from "discourse/lib/notification-levels";
+import { i18n } from "discourse-i18n";
 import { CHANNEL_STATUSES } from "discourse/plugins/chat/discourse/models/chat-channel";
 import ChatChannelArchive from "../models/chat-channel-archive";
 
 export default class ChatSubscriptionsManager extends Service {
-  @service store;
   @service chatChannelsManager;
-  @service chatTrackingStateManager;
   @service currentUser;
   @service appEvents;
   @service chat;
@@ -57,6 +56,7 @@ export default class ChatSubscriptionsManager extends Service {
     this._startNewChannelSubscription(messageBusIds.new_channel);
     this._startChannelArchiveStatusSubscription(messageBusIds.archive_status);
     this._startUserTrackingStateSubscription(messageBusIds.user_tracking_state);
+    this._startUserHasThreadsSubscription(messageBusIds.user_has_threads);
     this._startChannelsEditsSubscription(messageBusIds.channel_edits);
     this._startChannelsStatusChangesSubscription(messageBusIds.channel_status);
     this._startChannelsMetadataChangesSubscription(
@@ -68,6 +68,7 @@ export default class ChatSubscriptionsManager extends Service {
     this._stopNewChannelSubscription();
     this._stopChannelArchiveStatusSubscription();
     this._stopUserTrackingStateSubscription();
+    this._stopUserHasThreadsSubscription();
     this._stopChannelsEditsSubscription();
     this._stopChannelsStatusChangesSubscription();
     this._stopChannelsMetadataChangesSubscription();
@@ -139,9 +140,9 @@ export default class ChatSubscriptionsManager extends Service {
   @bind
   _onKickFromChannel(busData) {
     this.chatChannelsManager.find(busData.channel_id).then((channel) => {
-      if (this.chat.activeChannel.id === channel.id) {
+      if (this.chat.activeChannel?.id === channel.id) {
         this.dialog.alert({
-          message: I18n.t("chat.kicked_from_channel"),
+          message: i18n("chat.kicked_from_channel"),
           didConfirm: () => {
             this.chatChannelsManager.remove(channel);
 
@@ -267,7 +268,17 @@ export default class ChatSubscriptionsManager extends Service {
                   busData.thread_id,
                   busData.message.created_at
                 );
-                thread.tracking.unreadCount++;
+
+                if (
+                  thread.currentUserMembership.notificationLevel ===
+                  NotificationLevels.WATCHING
+                ) {
+                  thread.tracking.watchedThreadsUnreadCount++;
+                  channel.tracking.watchedThreadsUnreadCount++;
+                } else {
+                  thread.tracking.unreadCount++;
+                }
+
                 this._updateActiveLastViewedAt(channel);
               }
             }
@@ -317,6 +328,36 @@ export default class ChatSubscriptionsManager extends Service {
     );
   }
 
+  _startUserHasThreadsSubscription(lastId) {
+    if (!this.currentUser) {
+      return;
+    }
+
+    this.messageBus.subscribe(
+      `/chat/user-has-threads/${this.currentUser.id}`,
+      this._onUserHasThreads,
+      lastId
+    );
+  }
+
+  _stopUserHasThreadsSubscription() {
+    if (!this.currentUser) {
+      return;
+    }
+
+    this.messageBus.unsubscribe(
+      `/chat/user-has-threads/${this.currentUser.id}`,
+      this._onUserHasThreads
+    );
+  }
+
+  @bind
+  _onUserHasThreads(busData) {
+    if (busData.has_threads) {
+      this.chatChannelsManager.userHasThreads = true;
+    }
+  }
+
   @bind
   _onBulkUserTrackingStateUpdate(busData) {
     Object.keys(busData).forEach((channelId) => {
@@ -339,6 +380,8 @@ export default class ChatSubscriptionsManager extends Service {
 
       channel.tracking.unreadCount = busData.unread_count;
       channel.tracking.mentionCount = busData.mention_count;
+      channel.tracking.watchedThreadsUnreadCount =
+        busData.watched_threads_unread_count;
 
       if (
         busData.hasOwnProperty("unread_thread_overview") &&
@@ -366,6 +409,8 @@ export default class ChatSubscriptionsManager extends Service {
                 busData.thread_tracking.unread_count;
               thread.tracking.mentionCount =
                 busData.thread_tracking.mention_count;
+              thread.tracking.watchedThreadsUnreadCount =
+                busData.thread_tracking.watched_threads_unread_count;
             }
           });
       }

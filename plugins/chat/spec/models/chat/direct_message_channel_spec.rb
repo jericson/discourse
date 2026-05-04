@@ -52,6 +52,12 @@ RSpec.describe Chat::DirectMessageChannel do
     end
   end
 
+  describe "#threading_enabled" do
+    it "defaults to false" do
+      expect(channel.threading_enabled).to be(false)
+    end
+  end
+
   describe "#title" do
     subject(:title) { channel.title(user) }
 
@@ -64,6 +70,36 @@ RSpec.describe Chat::DirectMessageChannel do
     end
   end
 
+  describe "#leave" do
+    subject(:leave) { channel.leave(user) }
+
+    let(:channel) { Fabricate(:direct_message_channel, group:) }
+    let(:user) { channel.chatable.users.first }
+    let(:membership) { channel.membership_for(user) }
+
+    context "when DM is not a group" do
+      let(:group) { false }
+
+      it "unfollows the channel for the provided user" do
+        expect { leave }.to change { membership.reload.following? }.to(false)
+      end
+    end
+
+    context "when DM is a group" do
+      let(:group) { true }
+
+      it "destroys the provided user’s membership" do
+        expect { leave }.to change { channel.user_chat_channel_memberships.where(user:).count }.by(
+          -1,
+        )
+      end
+
+      it "removes the provided user from the DM" do
+        expect { leave }.to change { channel.chatable.users.where(id: user).count }.by(-1)
+      end
+    end
+  end
+
   describe "slug generation" do
     subject(:channel) { Fabricate(:direct_message_channel) }
 
@@ -71,6 +107,17 @@ RSpec.describe Chat::DirectMessageChannel do
       channel.name = "Cool Channel"
       channel.validate!
       expect(channel.slug).to eq(nil)
+    end
+  end
+
+  describe "#direct_message_group?" do
+    it "returns false if the DirectMessage chatable is not for a group DM" do
+      channel.chatable.update!(group: false)
+      expect(channel).not_to be_direct_message_group
+    end
+    it "returns true if the DirectMessage chatable is for a group DM" do
+      channel.chatable.update!(group: true)
+      expect(channel).to be_direct_message_group
     end
   end
 end

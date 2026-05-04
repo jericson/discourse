@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-RSpec.describe "Create channel", type: :system do
-  fab!(:category_1) { Fabricate(:category) }
+RSpec.describe "Create channel" do
+  fab!(:category_1, :category)
 
   let(:chat_page) { PageObjects::Pages::Chat.new }
   let(:channel_modal) { PageObjects::Modals::ChatChannelCreate.new }
@@ -9,7 +9,7 @@ RSpec.describe "Create channel", type: :system do
   before { chat_system_bootstrap }
 
   context "when user cannot create channel" do
-    fab!(:current_user) { Fabricate(:user) }
+    fab!(:current_user, :user)
 
     before { sign_in(current_user) }
 
@@ -20,7 +20,7 @@ RSpec.describe "Create channel", type: :system do
   end
 
   context "when can create channel" do
-    fab!(:current_admin_user) { Fabricate(:admin) }
+    fab!(:current_admin_user, :admin)
     before { sign_in(current_admin_user) }
 
     context "when selecting a category" do
@@ -50,7 +50,7 @@ RSpec.describe "Create channel", type: :system do
       end
 
       context "when category is private" do
-        fab!(:group_1) { Fabricate(:group) }
+        fab!(:group_1, :group)
         fab!(:private_category_1) { Fabricate(:private_category, group: group_1) }
 
         it "shows access hint when selecting the category" do
@@ -62,7 +62,7 @@ RSpec.describe "Create channel", type: :system do
         end
 
         context "when category is a child" do
-          fab!(:group_2) { Fabricate(:group) }
+          fab!(:group_2, :group)
           fab!(:child_category) do
             Fabricate(:private_category, parent_category_id: private_category_1.id, group: group_2)
           end
@@ -176,8 +176,8 @@ RSpec.describe "Create channel", type: :system do
         end
 
         context "for a private category" do
-          fab!(:group_1) { Fabricate(:group) }
-          fab!(:user_1) { Fabricate(:user) }
+          fab!(:group_1, :group)
+          fab!(:user_1, :user)
           fab!(:private_category) { Fabricate(:private_category, group: group_1) }
 
           before do
@@ -200,30 +200,31 @@ RSpec.describe "Create channel", type: :system do
           end
 
           context "when 2 groups can access the category" do
-            fab!(:group_2) { Fabricate(:group) }
+            fab!(:group_2, :group)
             fab!(:category_group_2) do
               CategoryGroup.create(group: group_2, category: private_category)
             end
 
             it "displays the correct warning" do
+              sorted_names = [group_1.name, group_2.name].sort
               expect(dialog).to have_content(
                 I18n.t(
                   "js.chat.create_channel.auto_join_users.warning_2_groups",
                   count: 1,
-                  group1: "@#{group_1.name}",
-                  group2: "@#{group_2.name}",
+                  group1: "@#{sorted_names.first}",
+                  group2: "@#{sorted_names.second}",
                 ),
               )
             end
           end
 
           context "when > 2 groups can access the category" do
-            fab!(:group_2) { Fabricate(:group) }
+            fab!(:group_2, :group)
             fab!(:category_group_2) do
               CategoryGroup.create(group: group_2, category: private_category)
             end
 
-            fab!(:group_3) { Fabricate(:group) }
+            fab!(:group_3, :group)
             fab!(:category_group_3) do
               CategoryGroup.create(group: group_3, category: private_category)
             end
@@ -231,8 +232,9 @@ RSpec.describe "Create channel", type: :system do
             it "displays the correct warning" do
               # NOTE: This has to be hardcoded because the I18n module in ruby
               # does not support messageFormat.
+              first_group = [group_1.name, group_2.name, group_3.name].sort.first
               expect(dialog).to have_content(
-                "Automatically add 1 user from @#{group_1.name} and 2 other groups?",
+                "Automatically add 1 user from @#{first_group} and 2 other groups?",
               )
             end
           end
@@ -273,12 +275,14 @@ RSpec.describe "Create channel", type: :system do
           chat_page.visit_browse
           chat_page.new_channel_button.click
           channel_modal.select_category(category_1)
+
           expect(channel_modal).to have_name_prefilled(category_1.name)
 
           channel_modal.fill_description("All kind of cute cats")
           channel_modal.click_primary_button
 
-          expect(page).to have_content(category_1.name)
+          expect(channel_modal).to be_closed
+
           created_channel = Chat::Channel.find_by(chatable_id: category_1.id)
           expect(page).to have_current_path(
             chat.channel_path(created_channel.slug, created_channel.id),

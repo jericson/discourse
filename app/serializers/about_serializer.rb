@@ -20,6 +20,9 @@ class AboutSerializer < ApplicationSerializer
 
   attributes :stats,
              :description,
+             :extended_site_description,
+             :banner_image,
+             :site_creation_date,
              :title,
              :locale,
              :version,

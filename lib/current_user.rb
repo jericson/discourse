@@ -19,8 +19,16 @@ module CurrentUser
     user.logged_in
   end
 
-  def log_off_user
-    current_user_provider.log_off_user(session, cookies)
+  def log_off_user(push_subscription: nil)
+    current_user_provider.log_off_user(session, cookies, push_subscription:)
+  end
+
+  def start_impersonating_user(user)
+    current_user_provider.start_impersonating_user(user)
+  end
+
+  def stop_impersonating_user
+    current_user_provider.stop_impersonating_user
   end
 
   def is_api?
@@ -33,6 +41,10 @@ module CurrentUser
 
   def current_user
     current_user_provider.current_user
+  end
+
+  def impersonation_acting_user
+    current_user_provider.impersonation_acting_user
   end
 
   def refresh_session(user)

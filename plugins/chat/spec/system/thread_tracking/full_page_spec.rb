@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
-describe "Thread tracking state | full page", type: :system do
-  fab!(:current_user) { Fabricate(:user) }
+describe "Thread tracking state | full page" do
+  fab!(:current_user, :user)
   fab!(:channel) { Fabricate(:chat_channel, threading_enabled: true) }
-  fab!(:other_user) { Fabricate(:user) }
+  fab!(:other_user, :user)
   fab!(:thread) { Fabricate(:chat_thread, channel: channel) }
 
   let(:chat_page) { PageObjects::Pages::Chat.new }
@@ -11,7 +11,7 @@ describe "Thread tracking state | full page", type: :system do
   let(:thread_page) { PageObjects::Pages::ChatThread.new }
   let(:channel_threads_page) { PageObjects::Pages::ChatChannelThreads.new }
   let(:thread_list_page) { PageObjects::Components::Chat::ThreadList.new }
-  let(:sidebar_page) { PageObjects::Pages::Sidebar.new }
+  let(:sidebar_page) { PageObjects::Pages::ChatSidebar.new }
 
   before do
     chat_system_bootstrap(current_user, [channel])
@@ -74,6 +74,18 @@ describe "Thread tracking state | full page", type: :system do
       expect(thread_list_page).to have_no_unread_item(thread.id)
     end
 
+    it "shows and urgent for the header of the list when a new watched unread arrives" do
+      thread.membership_for(current_user).update!(last_read_message_id: message_2.id)
+      thread.membership_for(current_user).update!(notification_level: :watching)
+
+      chat_page.visit_channel(channel)
+      channel_page.open_thread_list
+
+      expect(thread_list_page).to have_no_unread_item(thread.id, urgent: true)
+      Fabricate(:chat_message, thread: thread, use_service: true)
+      expect(thread_list_page).to have_unread_item(thread.id, urgent: true)
+    end
+
     it "allows the user to change their tracking level for an existing thread" do
       chat_page.visit_thread(thread)
       thread_page.notification_level = :normal
@@ -87,14 +99,10 @@ describe "Thread tracking state | full page", type: :system do
       thread_page.notification_level = :tracking
 
       expect(thread_page).to have_notification_level("tracking")
-
-      chat_page.visit_channel(channel)
-
-      expect(thread_list_page).to have_thread(new_thread)
     end
 
     describe "sidebar unread indicators" do
-      fab!(:other_channel) { Fabricate(:chat_channel) }
+      fab!(:other_channel, :chat_channel)
 
       before do
         other_channel.add(current_user)

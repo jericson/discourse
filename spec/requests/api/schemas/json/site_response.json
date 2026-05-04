@@ -119,6 +119,15 @@
         "chat_quoted": {
           "type": "integer"
         },
+        "chat_watched_thread": {
+          "type": "integer"
+        },
+        "upcoming_change_available": {
+          "type": "integer"
+        },
+        "upcoming_change_automatically_promoted": {
+          "type": "integer"
+        },
         "assigned": {
           "type": "integer"
         },
@@ -135,6 +144,15 @@
           "type": "integer"
         },
         "circles_activity": {
+          "type": "integer"
+        },
+        "boost": {
+          "type": "integer"
+        },
+        "suggested_edit_created": {
+          "type": "integer"
+        },
+        "suggested_edit_accepted": {
           "type": "integer"
         }
       },
@@ -285,6 +303,11 @@
                 "string",
                 "null"
               ]
+            },
+            "automatic": {
+              "type": [
+                "boolean"
+              ]
             }
           },
           "required": [
@@ -292,7 +315,8 @@
             "name",
             "flair_url",
             "flair_bg_color",
-            "flair_color"
+            "flair_color",
+            "automatic"
           ]
         }
     },
@@ -351,10 +375,25 @@
             "is_flag": {
               "type": "boolean"
             },
-            "is_custom_flag": {
+            "require_message": {
               "type": "boolean"
             },
             "enabled": {
+              "type": "boolean"
+            },
+            "applies_to": {
+              "type": "array"
+            },
+            "is_used": {
+              "type": "boolean"
+            },
+            "position": {
+              "type": "integer"
+            },
+            "auto_action_type": {
+              "type": "boolean"
+            },
+            "system": {
               "type": "boolean"
             }
           },
@@ -365,8 +404,11 @@
             "description",
             "short_description",
             "is_flag",
-            "is_custom_flag",
-            "enabled"
+            "require_message",
+            "enabled",
+            "applies_to",
+            "is_used",
+            "auto_action_type"
           ]
         }
     },
@@ -395,10 +437,25 @@
             "is_flag": {
               "type": "boolean"
             },
-            "is_custom_flag": {
+            "require_message": {
               "type": "boolean"
             },
             "enabled": {
+              "type": "boolean"
+            },
+            "applies_to": {
+              "type": "array"
+            },
+            "is_used": {
+              "type": "boolean"
+            },
+            "position": {
+              "type": "integer"
+            },
+            "auto_action_type": {
+              "type": "boolean"
+            },
+            "system": {
               "type": "boolean"
             }
           },
@@ -409,8 +466,11 @@
             "description",
             "short_description",
             "is_flag",
-            "is_custom_flag",
-            "enabled"
+            "require_message",
+            "enabled",
+            "applies_to",
+            "is_used",
+            "auto_action_type"
           ]
         }
     },
@@ -429,13 +489,28 @@
     "top_tags": {
       "type": "array",
       "items": {
-
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": ["id", "name", "slug"]
       }
     },
     "wizard_required": {
       "type": "boolean"
     },
     "can_associate_groups": {
+      "type": "boolean"
+    },
+    "email_configured": {
       "type": "boolean"
     },
     "topic_featured_link_allowed_category_ids": {
@@ -465,6 +540,15 @@
                 "integer",
                 "null"
               ]
+            },
+            "dark_color_scheme_id": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "only_theme_color_schemes": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -490,14 +574,27 @@
             },
             "is_dark": {
               "type": "boolean"
+            },
+            "theme_id": {
+              "type": ["integer", "null"]
+            },
+            "colors": {
+              "type": "array"
             }
           },
           "required": [
             "id",
             "name",
-            "is_dark"
+            "is_dark",
+            "colors"
           ]
         }
+    },
+    "default_light_color_scheme": {
+      "type": [
+        "object",
+        "null"
+      ]
     },
     "default_dark_color_scheme": {
       "type": [
@@ -560,6 +657,21 @@
             "text_color": {
               "type": "string"
             },
+            "style_type": {
+              "type": "string"
+            },
+            "emoji": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "icon": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "slug": {
               "type": "string"
             },
@@ -603,6 +715,12 @@
               "type": "integer"
             },
             "topic_template": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "topic_title_placeholder": {
               "type": [
                 "string",
                 "null"
@@ -753,6 +871,7 @@
             "permission",
             "notification_level",
             "topic_template",
+            "topic_title_placeholder",
             "has_children",
             "subcategory_count",
             "sort_order",
@@ -823,7 +942,19 @@
     "denied_emojis" : {
       "type": "array"
     },
+    "valid_flag_applies_to_types" : {
+      "type": "array"
+    },
     "navigation_menu_site_top_tags": {
+      "type": "array"
+    },
+    "full_name_required_for_signup": {
+      "type": "boolean"
+    },
+    "full_name_visible_in_signup": {
+      "type": "boolean"
+    },
+    "admin_config_login_routes" : {
       "type": "array"
     }
   },
@@ -849,6 +980,7 @@
     "topic_featured_link_allowed_category_ids",
     "user_themes",
     "user_color_schemes",
+    "default_light_color_scheme",
     "default_dark_color_scheme",
     "censored_regexp",
     "custom_emoji_translation",
@@ -857,6 +989,9 @@
     "categories",
     "archetypes",
     "user_fields",
-    "auth_providers"
+    "auth_providers",
+    "full_name_required_for_signup",
+    "full_name_visible_in_signup",
+    "email_configured"
   ]
 }

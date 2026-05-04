@@ -17,12 +17,21 @@ class RemoteThemeSerializer < ApplicationSerializer
              :authors,
              :theme_version,
              :minimum_discourse_version,
-             :maximum_discourse_version
+             :maximum_discourse_version,
+             :has_private_key
 
-  # wow, AMS has some pretty nutty logic where it tries to find the path here
-  # from action dispatch, tell it not to
+  def has_private_key
+    object.private_key.present?
+  end
+
+  # ActiveModelSerializer has some pretty nutty logic where it tries to find
+  # the path here from action dispatch, tell it not to
   def about_url
-    object.about_url
+    object.about_url if UrlHelper.is_valid_url?(object.about_url)
+  end
+
+  def license_url
+    object.license_url if UrlHelper.is_valid_url?(object.license_url)
   end
 
   def include_github_diff_link?

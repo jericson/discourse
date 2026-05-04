@@ -1,13 +1,13 @@
 # frozen_string_literal: true
 
-RSpec.describe "Reply to message - channel - full page", type: :system do
+RSpec.describe "Reply to message - channel - full page" do
   let(:chat_page) { PageObjects::Pages::Chat.new }
   let(:channel_page) { PageObjects::Pages::ChatChannel.new }
   let(:thread_page) { PageObjects::Pages::ChatThread.new }
   let(:side_panel_page) { PageObjects::Pages::ChatSidePanel.new }
 
-  fab!(:current_user) { Fabricate(:user) }
-  fab!(:channel_1) { Fabricate(:category_channel) }
+  fab!(:current_user, :user)
+  fab!(:channel_1, :category_channel)
   fab!(:original_message) do
     Fabricate(
       :chat_message,
@@ -102,13 +102,13 @@ RSpec.describe "Reply to message - channel - full page", type: :system do
       update_message!(
         original_message,
         user: current_user,
-        text: "@#{other_user.username} <mark>not marked</mark>",
+        text: "@#{other_user.username} <abbr>not abbr</abbr>",
       )
       chat_page.visit_channel(channel_1)
       channel_page.reply_to(original_message)
 
       expect(find(".chat-reply .chat-reply__excerpt")["innerHTML"].strip).to eq(
-        "@#{other_user.username} &lt;mark&gt;not marked&lt;/mark&gt;",
+        "@#{other_user.username} &lt;abbr&gt;not abbr&lt;/abbr&gt;",
       )
 
       channel_page.fill_composer("reply to message")

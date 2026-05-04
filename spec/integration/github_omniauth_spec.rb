@@ -6,8 +6,8 @@ describe "GitHub Oauth2" do
   let(:client_secret) { "adddcccdddd99922" }
   let(:temp_code) { "github_temp_code_544254" }
 
-  fab!(:user1) { Fabricate(:user) }
-  fab!(:user2) { Fabricate(:user) }
+  fab!(:user1, :user)
+  fab!(:user2, :user)
 
   def setup_github_emails_stub(emails)
     stub_request(:get, "https://api.github.com/user/emails").with(
@@ -182,5 +182,24 @@ describe "GitHub Oauth2" do
     expect(response.status).to eq(302)
     expect(response.location).to eq("http://test.localhost/")
     expect(session[:current_user_id]).to eq(user1.id)
+  end
+
+  it "doesn't log in the user if discourse connect is enabled" do
+    SiteSetting.discourse_connect_url = "https://example.com/sso"
+    SiteSetting.enable_discourse_connect = true
+    post "/auth/github"
+    expect(response.status).to eq(302)
+    expect(response.location).to start_with("https://github.com/login/oauth/authorize?")
+
+    setup_github_emails_stub(
+      [
+        { email: user1.email, primary: true, verified: true, visibility: "private" },
+        { email: user2.email, primary: false, verified: true, visibility: "private" },
+      ],
+    )
+
+    post "/auth/github/callback", params: { state: session["omniauth.state"], code: temp_code }
+    expect(response.status).to eq(403)
+    expect(session[:current_user_id]).to be_blank
   end
 end

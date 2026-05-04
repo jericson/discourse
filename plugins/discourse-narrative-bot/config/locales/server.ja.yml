@@ -169,21 +169,21 @@ ja:
           - コミュニティーでは常に礼節ある行動 (%{base_uri}/guidelines) を取ってもらえると信じています。
       onebox:
         instructions: |-
-          次に、下のいずれかのリンクを私にシェアしてください。**リンクだけを 1 行で**返信すると、気の利いた要約を含めて自動的に展開表示されます。
+          次に、以下のリンクを 1 つ共有してもらえますか？**リンクだけの行**で返信すると、自動的に展開して便利な要約が含められます。
 
-          リンクは、モバイルでは長押しし、マウスを使用している場合は右クリックするとコピーできます。
+          リンクをコピーするには、モバイルの場合は長押し、ポインティングデバイスの場合は右クリックしてください。
 
-          <https://en.wikipedia.org/wiki/Inherently_funny_word>
-          <https://en.wikipedia.org/wiki/Death_by_coconut>
-          <https://en.wikipedia.org/wiki/Calculator_spelling>
+          [https://en.wikipedia.org/wiki/Inherently_funny_word](https://en.wikipedia.org/wiki/Inherently_funny_word)
+          [https://en.wikipedia.org/wiki/Death_by_coconut](https://en.wikipedia.org/wiki/Death_by_coconut)
+          [https://en.wikipedia.org/wiki/Calculator_spelling](https://en.wikipedia.org/wiki/Calculator_spelling)
         reply: |-
           うまくいきましたね！この方法は、ほとんどの <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-link.png" width="16" height="16"> リンクで使用できます。_リンクだけ_を 1 行に入力し、前後にリンクに含まれない文字などを含めないようにしましょう。
         not_found: |-
-          残念ですが、返信にリンクが見つかりませんでした！:cry:
+          返信にリンクが見つかりません！:cry:
 
-          次のリンクを追加してみてください。次の返信にリンクだけを 1 行に含めてください。
+          次の返信で下のリンクをリンクだけの 1 行で追加してみてください。
 
-          <https://en.wikipedia.org/wiki/Exotic_Shorthair>
+          [https://en.wikipedia.org/wiki/Exotic_Shorthair](https://en.wikipedia.org/wiki/Exotic_Shorthair)
       images:
         instructions: |-
           ここにユニコーンの画像があります。
@@ -250,7 +250,7 @@ ja:
         instructions: |-
           もっと詳しく知るには、下の <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-ellipsis.png" width="16" height="16"> を選択して<img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-bookmark.png" width="16" height="16"> **この個人メッセージをブックマーク**してください。ブックマークすると、後で :gift: がもらえるかも！
         reply: |-
-          お見事！これで、[プロファイルのブックマークタブ](%{bookmark_url})からこの非公開の会話にいつでも簡単に戻れるようになりました。右上のプロファイル写真を選択するだけです &#8599;
+          お見事！これで、[プロファイルのブックマークタブ](%{bookmark_url})からこの会話にいつでも簡単に戻れるようになりました。右上のプロファイル写真を選択するだけです &#8599;
         not_found: |-
           あれ？このトピックにはブックマークがありませんね。投稿の下にあるブックマークを見つけられましたか？必要であれば、もっと表示 <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-ellipsis.png" width="16" height="16"> を使うと、ほかの操作を表示できます。
       emoji:
@@ -286,16 +286,20 @@ ja:
           ](https://www.youtube.com/watch?v=B_wGI3_sGf8) :dancer:)
       flag:
         instructions: |-
-          ディスカッションを友好的に保ちたいと思っています。そこで、[マナーを維持](%{guidelines_url})するにはあなたの力が必要です。問題に遭遇したら、非公開で作成者に知らせるか、[スタッフ](%{about_url})に通報してください。投稿を通報する理由は、無害なトピックの分割から明確なコミュニティー規則の違反までさまざまです。**その他**を選択すると、モデレーターと非公開メッセージでのディスカッションを始められます。さらに詳しく質問できます。
+          ディスカッションを友好的に保ちたいと思っています。そこで、[マナーを維持](%{guidelines_url})するにはあなたの力が必要です。問題に遭遇したら、作成者に知らせるか、[スタッフ](%{about_url})に通報してください。投稿を通報する理由は、無害なトピックの分割から明確なコミュニティー規則の違反までさまざまです。**その他**を選択すると、モデレーターと個人メッセージでのディスカッションを始められます。さらに詳しく質問できます。
 
           > :imp: 不愉快なことを書き込みました
 
           早速**この投稿を通報** <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-flag.png" width="16" height="16"> して、理由に「**不適切**」を選択しましょう！
         reply: |-
-          この通報は[スタッフ](%{base_uri}/groups/staff)に非公開で通知されます。十分な数のコミュニティーメンバーからこの投稿への通報が寄せられた場合は、予防措置として自動的に非表示になります。(実際には、不愉快な内容は書き込まなかった :angel: ので、この通報は取り消しておきました。)
+          この通報は[スタッフ](%{group_url})に非公開で通知されます。十分な数のコミュニティーメンバーからこの投稿への通報が寄せられた場合は、予防措置として自動的に非表示になります。(実際には、不愉快な内容は書き込まなかった :angel: ので、この通報は取り消しておきました。)
         not_found: |-
           おや？私の不愉快な投稿はまだ不適切の通報を受けていないようです。:worried: **通報** <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-flag.png" width="16" height="16"> を使って投稿を不適切だと通報してみてください。投稿の操作をさらに表示するには、もっと表示ボタン <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-ellipsis.png" width="16" height="16"> を使用してくださいね。
       search:
+        instructions: |-
+          _トントン_ … このトピックにサプライズを仕掛けましたよ。受けて立つなら、右上&#8599; にある**検索アイコンを選択** <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-search.png" width="16" height="16">し、'このトピック' を選択してからサプライズを検索してみましょう。
+
+          このトピックから "カピ&#8203;バラ" という言葉を探してみましょう
         hidden_message: |-
           カピバラを見逃しましたか？:wink:
 
@@ -336,7 +340,7 @@ ja:
         instructions: |-
           誰でもミスは起こします。でも心配する必要はありません。投稿はいつでも編集して修正することができます！
 
-          まずは、あなたの代わりに作成した投稿を**削除**することから始めましょう。
+          まずは、あなたの代わりに作成した投稿を**編集**することから始めましょう。
         not_found: |-
           あなたのために私が作成した[post](%{url})をまだ編集していないようです。もう一度やってみましょう。
 
@@ -385,7 +389,7 @@ ja:
         instructions: |-
           すべてのトピックに通知レベルがあります。誰かがあなたに直接話しかけている場合にのみ通知される '通常' で始まります。
 
-          デフォルトでは、非公開メッセージの通知レベルは最高レベルの 'ウォッチ中' に設定されています。この設定では、新しい返信があるたびに通知が届きます。ただし、トピックの通知レベルを 'ウォッチ'、'追跡'、または 'ミュート' にオーバーライドすることができます。
+          デフォルトでは、個人メッセージの通知レベルは最高レベルの 'ウォッチ中' に設定されています。この設定では、新しい返信があるたびに通知が届きます。ただし、トピックの通知レベルを 'ウォッチ'、'追跡'、または 'ミュート' にオーバーライドすることができます。
 
           このトピックの通知レベルを変更してみましょう。トピックの一番下に、このトピックを**ウォッチ中**と示されています。この通知レベルを**追跡**に変更できますか？
         not_found: |-
@@ -396,11 +400,11 @@ ja:
           トピックに返信する際、またはトピックを数分以上閲覧している場合は、自動的に通知レベルが '追跡' に設定されます。この設定は[ユーザー設定](%{base_uri}/my/preferences)で変更可能です。
       poll:
         instructions: |-
-          投稿に投票を追加できることを知っていますか？エディタの <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-gear.png" width="16" height="16"> 歯車を使って**投票を作成**してみましょう。
+          投稿に投票を追加できることをご存知ですか？エディターで**投票を作成**アイコン <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-plus.png" width="16" height="16"> を使ってみましょう。
         not_found: |-
           あれれ？返信に投票がありませんよ。
 
-          エディタの <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-gear.png" width="16" height="16"> 歯車アイコンを使うか、この投票をコピーして、次の返信に貼り付けてください。
+          エディターの <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-plus.png" width="16" height="16"> アイコンを使うか下の投票をコピーして次の返信に貼り付けましょう。
 
           ```text
           [poll]
@@ -423,13 +427,13 @@ ja:
 
           - まとめて一度に読むと多すぎる可能性のある詳細な情報を投稿に含める必要がある場合。
 
-          [詳細=これを選択してどのように動作するか見てみましょう！]
-          1. エディタの <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-gear.png" width="16" height="16"> 歯車を選択します。
-          2. "詳細を非表示" を選択します。
+          [details=これを選択してどのように動作するか見てみましょう！]
+          1. エディターの <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-plus.png" width="16" height="16"> アイコンを選択します。
+          2. 「詳細を非表示」を選択します。
           3. 詳細の要約を編集して、コンテンツを追加します。
           [/details]
 
-          エディタの <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-gear.png" width="16" height="16"> 歯車を使って、次の返信に詳細セクションを追加してみましょう。
+          エディターの<img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-plus.png" width="16" height="16"> アイコンを使って、次の返信に詳細セクションを追加してみましょう。
         not_found: |-
           詳細ウィジェットを作成できませんか？次の返信に以下のテキストを含めてみてください。
 

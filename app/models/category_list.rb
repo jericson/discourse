@@ -4,6 +4,9 @@ class CategoryList
   CATEGORIES_PER_PAGE = 20
   SUBCATEGORIES_PER_CATEGORY = 5
 
+  # Maximum number of categories before the optimized category page style is enforced
+  MAX_UNOPTIMIZED_CATEGORIES = 1000
+
   include ActiveModel::Serialization
 
   cattr_accessor :preloaded_topic_custom_fields
@@ -12,8 +15,8 @@ class CategoryList
   attr_accessor :categories, :uncategorized
 
   def self.register_included_association(association)
-    @included_assocations ||= []
-    @included_assocations << association if !@included_assocations.include?(association)
+    @included_associations ||= []
+    @included_associations << association if !@included_associations.include?(association)
   end
 
   def self.included_associations
@@ -24,7 +27,7 @@ class CategoryList
       :uploaded_logo_dark,
       :topic_only_relative_url,
       subcategories: [:topic_only_relative_url],
-    ].concat(@included_assocations || [])
+    ].concat(@included_associations || [])
   end
 
   def initialize(guardian = nil, options = {})
@@ -73,7 +76,11 @@ class CategoryList
   def relevant_topics_query
     @all_topics =
       Topic
-        .secured(@guardian)
+        .secured(
+          @guardian,
+          include_uncategorized: false,
+        ) # perf optimization since category featured topics can't have `category_id` set to null
+        .listable_topics
         .joins(
           "INNER JOIN category_featured_topics ON topics.id = category_featured_topics.topic_id",
         )
@@ -103,7 +110,10 @@ class CategoryList
           )
     end
 
-    @all_topics = TopicQuery.remove_muted_tags(@all_topics, @guardian.user).includes(:last_poster)
+    inclusions = [:last_poster]
+    preload = DiscoursePluginRegistry.category_list_topics_preloader_associations
+    inclusions.concat(preload) if preload.present?
+    @all_topics = TopicQuery.remove_muted_tags(@all_topics, @guardian.user).includes(inclusions)
   end
 
   def find_relevant_topics
@@ -134,21 +144,30 @@ class CategoryList
   def find_categories
     query = Category.includes(CategoryList.included_associations).secured(@guardian)
 
-    query =
-      query.where(
-        "categories.parent_category_id = ?",
-        @options[:parent_category_id].to_i,
-      ) if @options[:parent_category_id].present?
+    if SiteSetting.content_localization_enabled
+      locale = I18n.locale.to_s
+      query =
+        query.joins(
+          ActiveRecord::Base.sanitize_sql_array(
+            [
+              "LEFT JOIN category_localizations cl ON cl.category_id = categories.id AND cl.locale = ?",
+              locale,
+            ],
+          ),
+        )
+    end
 
     query = self.class.order_categories(query)
 
+    paginate = paginate_results?
+
+    if @options[:parent_category_id].present? || paginate
+      query = query.where(parent_category_id: @options[:parent_category_id])
+    end
+
     page = [1, @options[:page].to_i].max
-    if @guardian.can_lazy_load_categories? && @options[:parent_category_id].blank?
-      query =
-        query
-          .where(parent_category_id: nil)
-          .limit(CATEGORIES_PER_PAGE)
-          .offset((page - 1) * CATEGORIES_PER_PAGE)
+    if paginate
+      query = query.limit(CATEGORIES_PER_PAGE).offset((page - 1) * CATEGORIES_PER_PAGE)
     elsif page > 1
       # Pagination is supported only when lazy load is enabled. If it is not,
       # everything is returned on page 1.
@@ -158,9 +177,18 @@ class CategoryList
     query =
       DiscoursePluginRegistry.apply_modifier(:category_list_find_categories_query, query, self)
 
+    if SiteSetting.content_localization_enabled
+      query =
+        query.group("categories.id").select(
+          "categories.*,
+           MAX(COALESCE(cl.name, categories.name)) AS name,
+           MAX(COALESCE(cl.description, categories.description)) AS description",
+        )
+    end
+
     @categories = query.to_a
 
-    if @guardian.can_lazy_load_categories? && @options[:parent_category_id].blank?
+    if paginate && @options[:parent_category_id].blank?
       categories_with_rownum =
         Category
           .secured(@guardian)
@@ -180,7 +208,7 @@ class CategoryList
 
     include_subcategories = @options[:include_subcategories] == true
 
-    if @guardian.can_lazy_load_categories?
+    if paginate
       subcategory_ids = {}
       Category
         .secured(@guardian)
@@ -262,5 +290,19 @@ class CategoryList
     @categories_with_children = result if categories == @categories
 
     result
+  end
+
+  def paginate_results?
+    return true if @guardian.can_lazy_load_categories?
+
+    query = Category.secured(@guardian)
+
+    if @options[:parent_category_id].present?
+      query = query.where(parent_category_id: @options[:parent_category_id])
+    end
+
+    # Enforce pagination for users who can see a large number of categories to
+    # smooth out the performance of the category list page.
+    query.count > MAX_UNOPTIMIZED_CATEGORIES
   end
 end

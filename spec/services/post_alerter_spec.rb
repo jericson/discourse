@@ -61,12 +61,13 @@ RSpec.describe PostAlerter do
 
   def setup_push_notification_subscription_for(user:)
     2.times do |i|
-      UserApiKey.create!(
-        user_id: user.id,
-        client_id: "xxx#{i}",
-        application_name: "iPhone#{i}",
+      client = Fabricate(:user_api_key_client, client_id: "xxx#{i}", application_name: "iPhone#{i}")
+      Fabricate(
+        :user_api_key,
+        user: user,
         scopes: ["notifications"].map { |name| UserApiKeyScope.new(name: name) },
         push_url: "https://site2.com/push",
+        user_api_key_client_id: client.id,
       )
     end
   end
@@ -131,8 +132,8 @@ RSpec.describe PostAlerter do
     end
 
     context "with group inboxes" do
-      fab!(:user1) { Fabricate(:user) }
-      fab!(:user2) { Fabricate(:user) }
+      fab!(:user1, :user)
+      fab!(:user2, :user)
       fab!(:group) do
         Fabricate(:group, users: [user2], name: "TestGroup", default_notification_level: 2)
       end
@@ -732,6 +733,24 @@ RSpec.describe PostAlerter do
         staged_user.notifications.where(notification_type: Notification.types[:linked]).count,
       ).to eq(0)
     end
+
+    it "does not notify when user has disabled linked post notifications" do
+      user.user_option.update!(notify_on_linked_posts: false)
+      linking_post
+
+      expect(user.notifications.where(notification_type: Notification.types[:linked]).count).to eq(
+        0,
+      )
+    end
+
+    it "still notifies when user has enabled linked post notifications (default)" do
+      expect(user.user_option.notify_on_linked_posts).to eq(true)
+      linking_post
+
+      expect(user.notifications.where(notification_type: Notification.types[:linked]).count).to eq(
+        1,
+      )
+    end
   end
 
   context "with @here" do
@@ -771,6 +790,15 @@ RSpec.describe PostAlerter do
               post2.user.notifications,
               :count,
             ).by(1).and change(post3.user.notifications, :count).by(1)
+    end
+
+    it "notifies users who posted with staff colour" do
+      post2 = Fabricate(:post, topic: topic, post_type: Post.types[:moderator_action])
+
+      expect { post }.to change(other_post.user.notifications, :count).by(1).and change(
+              post2.user.notifications,
+              :count,
+            ).by(1)
     end
 
     it "notifies only last max_here_mentioned users" do
@@ -1116,6 +1144,7 @@ RSpec.describe PostAlerter do
         post_number: post.post_number,
         topic_title: post.topic.title,
         topic_id: post.topic.id,
+        post_id: post.id,
         excerpt: post.excerpt(400, text_entities: true, strip_links: true, remap_emoji: true),
         username: post.username,
         post_url: post.url,
@@ -1163,6 +1192,20 @@ RSpec.describe PostAlerter do
       )
     end
 
+    it "adds display name to notification_data" do
+      Plugin::Instance
+        .new
+        .register_modifier(:notification_data) do |notification_data|
+          notification_data[:display_name] = "Benji McCool"
+          notification_data
+        end
+
+      notification = PostAlerter.new.create_notification(user, type, post)
+      expect(notification.data_hash[:display_name]).to eq("Benji McCool")
+
+      DiscoursePluginRegistry.clear_modifiers!
+    end
+
     it "applies modifiers to notification_data" do
       Plugin::Instance
         .new
@@ -1196,7 +1239,7 @@ RSpec.describe PostAlerter do
 
         alerts =
           MessageBus.track_publish("/notification-alert/#{evil_trout.id}") do
-            expect { mention_post }.to change { Jobs::PushNotification.jobs.count }.by(1)
+            expect { mention_post }.to change { Jobs::DeliverPushNotification.jobs.count }.by(1)
           end
 
         expect(alerts).not_to be_empty
@@ -1207,7 +1250,7 @@ RSpec.describe PostAlerter do
 
         alerts =
           MessageBus.track_publish("/notification-alert/#{evil_trout.id}") do
-            expect { mention_post }.not_to change { Jobs::PushNotification.jobs.count }
+            expect { mention_post }.not_to change { Jobs::DeliverPushNotification.jobs.count }
           end
 
         expect(alerts).to be_empty
@@ -1226,7 +1269,7 @@ RSpec.describe PostAlerter do
 
     it "pushes nothing to suspended users" do
       evil_trout.update_columns(suspended_till: 1.year.from_now)
-      expect { mention_post }.to_not change { Jobs::PushNotification.jobs.count }
+      expect { mention_post }.to_not change { Jobs::DeliverPushNotification.jobs.count }
 
       events = DiscourseEvent.track_events { mention_post }
       expect(events.find { |event| event[:event_name] == :push_notification }).not_to be_present
@@ -1240,7 +1283,7 @@ RSpec.describe PostAlerter do
         ends_at: 1.day.from_now,
       )
 
-      expect { mention_post }.to_not change { Jobs::PushNotification.jobs.count }
+      expect { mention_post }.to_not change { Jobs::DeliverPushNotification.jobs.count }
 
       events = DiscourseEvent.track_events { mention_post }
       expect(events.find { |event| event[:event_name] == :push_notification }).not_to be_present
@@ -1258,6 +1301,8 @@ RSpec.describe PostAlerter do
       end
 
       set_subfolder "/subpath"
+      post = mention_post
+
       payload = {
         "secret_key" => SiteSetting.push_api_secret_key,
         "url" => Discourse.base_url,
@@ -1269,9 +1314,10 @@ RSpec.describe PostAlerter do
             "post_number" => 1,
             "topic_title" => topic.title,
             "topic_id" => topic.id,
+            "post_id" => post.id,
             "excerpt" => "Hello @eviltrout ❤",
             "username" => user.username,
-            "url" => UrlHelper.absolute(Discourse.base_path + mention_post.url),
+            "url" => UrlHelper.absolute(Discourse.base_path + post.url),
             "client_id" => "xxx0",
           },
           {
@@ -1279,15 +1325,14 @@ RSpec.describe PostAlerter do
             "post_number" => 1,
             "topic_title" => topic.title,
             "topic_id" => topic.id,
+            "post_id" => post.id,
             "excerpt" => "Hello @eviltrout ❤",
             "username" => user.username,
-            "url" => UrlHelper.absolute(Discourse.base_path + mention_post.url),
+            "url" => UrlHelper.absolute(Discourse.base_path + post.url),
             "client_id" => "xxx1",
           },
         ],
       }
-
-      post = mention_post
 
       expect(JSON.parse(body)).to eq(payload)
       expect(headers["Content-Type"]).to eq("application/json")
@@ -1313,6 +1358,7 @@ RSpec.describe PostAlerter do
       changes = {
         "notification_type" => Notification.types[:posted],
         "post_number" => new_post.post_number,
+        "post_id" => new_post.id,
         "username" => new_post.user.username,
         "excerpt" => new_post.raw,
         "url" => UrlHelper.absolute(Discourse.base_path + new_post.url),
@@ -1333,6 +1379,7 @@ RSpec.describe PostAlerter do
 
       changes = {
         "post_number" => new_post.post_number,
+        "post_id" => new_post.id,
         "username" => new_post.user.username,
         "excerpt" => new_post.raw,
         "url" => UrlHelper.absolute(Discourse.base_path + new_post.url),
@@ -1359,6 +1406,16 @@ RSpec.describe PostAlerter do
       )
     end
 
+    it "delays push notification for active online user" do
+      SiteSetting.push_notification_time_window_mins = 10
+      evil_trout.update!(last_seen_at: 5.minutes.ago)
+
+      expect { mention_post }.to change { Jobs::DeliverPushNotification.jobs.count }
+      expect(Jobs::DeliverPushNotification.jobs[0]["at"]).to be_within(30.seconds).of(
+        5.minutes.from_now.to_f,
+      )
+    end
+
     context "with push subscriptions" do
       before do
         Fabricate(:push_subscription, user: evil_trout)
@@ -1368,8 +1425,8 @@ RSpec.describe PostAlerter do
       it "delays sending push notification for active online user" do
         evil_trout.update!(last_seen_at: 5.minutes.ago)
 
-        expect { mention_post }.to change { Jobs::SendPushNotification.jobs.count }
-        expect(Jobs::SendPushNotification.jobs[0]["at"]).not_to be_nil
+        expect { mention_post }.to change { Jobs::DeliverPushNotification.jobs.count }
+        expect(Jobs::DeliverPushNotification.jobs[0]["at"]).not_to be_nil
       end
 
       it "delays sending push notification for active online user for the correct delay ammount" do
@@ -1380,15 +1437,15 @@ RSpec.describe PostAlerter do
         # 10 minutes from now - 5 minutes ago = 5 minutes
         delay = 5.minutes.from_now.to_f
 
-        expect { mention_post }.to change { Jobs::SendPushNotification.jobs.count }
-        expect(Jobs::SendPushNotification.jobs[0]["at"]).to be_within(30.second).of(delay)
+        expect { mention_post }.to change { Jobs::DeliverPushNotification.jobs.count }
+        expect(Jobs::DeliverPushNotification.jobs[0]["at"]).to be_within(30.seconds).of(delay)
       end
 
       it "does not delay push notification for inactive offline user" do
         evil_trout.update!(last_seen_at: 40.minutes.ago)
 
-        expect { mention_post }.to change { Jobs::SendPushNotification.jobs.count }
-        expect(Jobs::SendPushNotification.jobs[0]["at"]).to be_nil
+        expect { mention_post }.to change { Jobs::DeliverPushNotification.jobs.count }
+        expect(Jobs::DeliverPushNotification.jobs[0]["at"]).to be_nil
       end
     end
   end
@@ -1467,17 +1524,16 @@ RSpec.describe PostAlerter do
 
       expect(events.size).to eq(0)
       expect(messages.size).to eq(0)
-      expect(Jobs::PushNotification.jobs.size).to eq(0)
+      expect(Jobs::DeliverPushNotification.jobs.size).to eq(0)
     end
 
     it "does not publish to MessageBus /notification-alert if the user has not been seen for > 30 days, but still sends a push notification" do
       evil_trout.update_columns(last_seen_at: 31.days.ago)
 
       SiteSetting.allowed_user_api_push_urls = "https://site2.com/push"
-      UserApiKey.create!(
-        user_id: evil_trout.id,
-        client_id: "xxx#1",
-        application_name: "iPhone1",
+      Fabricate(
+        :user_api_key,
+        user: evil_trout,
         scopes: ["notifications"].map { |name| UserApiKeyScope.new(name: name) },
         push_url: "https://site2.com/push",
       )
@@ -1503,7 +1559,7 @@ RSpec.describe PostAlerter do
         :post_notification_alert,
       )
       expect(messages.size).to eq(0)
-      expect(Jobs::PushNotification.jobs.size).to eq(1)
+      expect(Jobs::DeliverPushNotification.jobs.size).to eq(1)
     end
   end
 
@@ -1889,6 +1945,26 @@ RSpec.describe PostAlerter do
         ).and not_add_notification(staged_non_member, :watching_category_or_tag)
       end
 
+      it "notifies even if the user has disabled link notifications" do
+        linked_post = Fabricate(:post, user: user)
+        topic = Fabricate(:topic, category: category)
+
+        CategoryUser.set_notification_level_for_category(
+          user,
+          CategoryUser.notification_levels[:watching],
+          category.id,
+        )
+        user.user_option.update!(notify_on_linked_posts: false)
+
+        post = create_post(topic:, raw: "Check this out: #{linked_post.full_url}")
+
+        expect(post.topic_links.first.link_post_id).to eq(linked_post.id)
+        expect { PostAlerter.post_created(post) }.to add_notification(
+          user,
+          :watching_category_or_tag,
+        ).and not_add_notification(user, :linked)
+      end
+
       it "does not update existing unread notification" do
         CategoryUser.set_notification_level_for_category(
           user,
@@ -1992,6 +2068,23 @@ RSpec.describe PostAlerter do
 
         expect { PostAlerter.post_created(post) }.to change { Notification.count }.by(1)
       end
+
+      it "notifies even if the user has disabled link notifications" do
+        linked_post = Fabricate(:post, user: user)
+        tag = Fabricate(:tag)
+        topic = Fabricate(:topic, tags: [tag])
+
+        TagUser.change(user.id, tag.id, TagUser.notification_levels[:watching])
+        user.user_option.update!(notify_on_linked_posts: false)
+
+        post = create_post(topic:, raw: "Check this out: #{linked_post.full_url}")
+
+        expect(post.topic_links.first.link_post_id).to eq(linked_post.id)
+        expect { PostAlerter.post_created(post) }.to add_notification(
+          user,
+          :watching_category_or_tag,
+        ).and not_add_notification(user, :linked)
+      end
     end
 
     context "with category and tags" do
@@ -2053,51 +2146,7 @@ RSpec.describe PostAlerter do
         )
       end
 
-      it "adds notification when watched_precedence_over_muted setting is true" do
-        SiteSetting.watched_precedence_over_muted = true
-        expect {
-          PostAlerter.post_created(topic_with_muted_tag_and_watched_category.posts.first)
-        }.to change { Notification.count }.by(1)
-        expect {
-          PostAlerter.post_created(topic_with_muted_category_and_watched_tag.posts.first)
-        }.to change { Notification.count }.by(1)
-        expect { PostAlerter.post_created(directly_watched_topic.posts.first) }.to change {
-          Notification.count
-        }.by(1)
-      end
-
-      it "respects user option even if watched_precedence_over_muted site setting is true" do
-        SiteSetting.watched_precedence_over_muted = true
-        user.user_option.update!(watched_precedence_over_muted: false)
-        expect {
-          PostAlerter.post_created(topic_with_muted_tag_and_watched_category.posts.first)
-        }.not_to change { Notification.count }
-        expect {
-          PostAlerter.post_created(topic_with_muted_category_and_watched_tag.posts.first)
-        }.not_to change { Notification.count }
-        expect { PostAlerter.post_created(directly_watched_topic.posts.first) }.to change {
-          Notification.count
-        }.by(1)
-      end
-
-      it "does not add notification when watched_precedence_over_muted setting is false" do
-        SiteSetting.watched_precedence_over_muted = false
-        expect {
-          PostAlerter.post_created(topic_with_muted_tag_and_watched_category.posts.first)
-        }.not_to change { Notification.count }
-        expect {
-          PostAlerter.post_created(topic_with_muted_category_and_watched_tag.posts.first)
-        }.not_to change { Notification.count }
-        expect { PostAlerter.post_created(topic_with_watched_category.posts.first) }.to change {
-          Notification.count
-        }.by(1)
-        expect { PostAlerter.post_created(directly_watched_topic.posts.first) }.to change {
-          Notification.count
-        }.by(1)
-      end
-
-      it "respects user option even if watched_precedence_over_muted site setting is false" do
-        SiteSetting.watched_precedence_over_muted = false
+      it "adds notification when watched_precedence_over_muted preference is true" do
         user.user_option.update!(watched_precedence_over_muted: true)
         expect {
           PostAlerter.post_created(topic_with_muted_tag_and_watched_category.posts.first)
@@ -2109,12 +2158,25 @@ RSpec.describe PostAlerter do
           Notification.count
         }.by(1)
       end
+
+      it "does not add notifcation when watched_precedence_over_muted preference is false" do
+        user.user_option.update!(watched_precedence_over_muted: false)
+        expect {
+          PostAlerter.post_created(topic_with_muted_tag_and_watched_category.posts.first)
+        }.not_to change { Notification.count }
+        expect {
+          PostAlerter.post_created(topic_with_muted_category_and_watched_tag.posts.first)
+        }.not_to change { Notification.count }
+        expect { PostAlerter.post_created(directly_watched_topic.posts.first) }.to change {
+          Notification.count
+        }.by(1)
+      end
     end
 
     context "with on change" do
       fab!(:user)
-      fab!(:other_tag) { Fabricate(:tag) }
-      fab!(:watched_tag) { Fabricate(:tag) }
+      fab!(:other_tag, :tag)
+      fab!(:watched_tag, :tag)
 
       before do
         SiteSetting.tagging_enabled = true
@@ -2163,6 +2225,22 @@ RSpec.describe PostAlerter do
         ).to eq(1)
       end
 
+      it "triggers a watching_first_post notification even when tag edit notifications are disabled" do
+        SiteSetting.disable_tags_edit_notifications = true
+
+        expect {
+          PostRevisor.new(post).revise!(
+            Fabricate(:user, refresh_auto_groups: true),
+            tags: [other_tag.name, watched_tag.name],
+          )
+        }.to change {
+          user
+            .notifications
+            .where(notification_type: Notification.types[:watching_first_post])
+            .count
+        }.by(1)
+      end
+
       it "doesn't trigger a notification if topic is unlisted" do
         post.topic.update_column(:visible, false)
 
@@ -2184,10 +2262,10 @@ RSpec.describe PostAlerter do
     end
 
     context "with private message" do
-      fab!(:post) { Fabricate(:private_message_post) }
-      fab!(:other_tag) { Fabricate(:tag) }
-      fab!(:other_tag2) { Fabricate(:tag) }
-      fab!(:other_tag3) { Fabricate(:tag) }
+      fab!(:post, :private_message_post)
+      fab!(:other_tag, :tag)
+      fab!(:other_tag2, :tag)
+      fab!(:other_tag3, :tag)
       fab!(:user)
       fab!(:staged)
 
@@ -2322,7 +2400,7 @@ RSpec.describe PostAlerter do
 
   describe "#extract_linked_users" do
     fab!(:post) { Fabricate(:post, topic: topic) }
-    fab!(:post2) { Fabricate(:post) }
+    fab!(:post2, :post)
 
     describe "when linked post has been deleted" do
       let(:topic_link) do
@@ -2346,7 +2424,7 @@ RSpec.describe PostAlerter do
 
   describe "#notify_post_users" do
     fab!(:post) { Fabricate(:post, topic: topic) }
-    fab!(:last_editor) { Fabricate(:user) }
+    fab!(:last_editor, :user)
     fab!(:tag)
     fab!(:category)
 
@@ -2408,14 +2486,10 @@ RSpec.describe PostAlerter do
         :group,
         smtp_server: "smtp.gmail.com",
         smtp_port: 587,
-        smtp_ssl: true,
-        imap_server: "imap.gmail.com",
-        imap_port: 993,
-        imap_ssl: true,
+        smtp_ssl_mode: Group.smtp_ssl_modes[:starttls],
         email_username: "discourse@example.com",
         email_password: "password",
         smtp_enabled: true,
-        imap_enabled: true,
       )
     end
 
@@ -2551,6 +2625,8 @@ RSpec.describe PostAlerter do
     it "skips sending a notification email to the group and all other email addresses that are _not_ members of the group,
     sends a group_smtp_email instead" do
       NotificationEmailer.enable
+      SiteSetting.simple_email_subject = true
+      SiteSetting.email_subject = "%{site_name}: %{topic_title}"
 
       incoming_email_post = create_post_with_incoming
       topic = incoming_email_post.topic
@@ -2584,7 +2660,30 @@ RSpec.describe PostAlerter do
       expect(email.from).to eq([SiteSetting.notification_email])
       expect(email.to).to contain_exactly(group_user1.user.email)
       expect(email.cc).to eq(nil)
-      expect(email.subject).to eq("[Discourse] [PM] #{topic.title}")
+      expect(email.subject).to eq("Discourse: #{topic.title}")
+    end
+
+    it "excludes users with email_messages_level set to never from group SMTP emails" do
+      NotificationEmailer.enable
+
+      incoming_email_post = create_post_with_incoming
+      topic = incoming_email_post.topic
+
+      # Get one of the topic allowed users and set their email preference to never
+      topic_allowed_user = topic.topic_allowed_users.first
+      topic_allowed_user.user.user_option.update!(
+        email_messages_level: UserOption.email_level_types[:never],
+      )
+
+      post = Fabricate(:post, topic: topic.reload)
+
+      PostAlerter.new.after_save_post(post, true)
+
+      # The group SMTP email should not include the user who has email disabled
+      email = ActionMailer::Base.deliveries.last
+      expect(email.from).to eq([group.email_username])
+      expect(email.to).not_to include(topic_allowed_user.user.email)
+      expect(email.cc).not_to include(topic_allowed_user.user.email)
     end
 
     it "skips sending a notification email to the cc address that was added on the same post with an incoming email" do

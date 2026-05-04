@@ -2,9 +2,9 @@
 
 RSpec.describe Report do
   let(:user) { Fabricate(:user) }
-  let(:c0) { Fabricate(:category, user: user) }
-  let(:c1) { Fabricate(:category, parent_category: c0, user: user) } # id: 2
-  let(:c2) { Fabricate(:category, user: user) }
+  let(:category_1) { Fabricate(:category, user: user) }
+  let(:category_2) { Fabricate(:category, parent_category: category_1, user: user) } # id: 2
+  let(:category_3) { Fabricate(:category, user: user) }
 
   shared_examples "no data" do
     context "with no data" do
@@ -158,6 +158,47 @@ RSpec.describe Report do
         expect(report.prev30Days).to eq(2)
       end
     end
+
+    context "when reporting_improvements is enabled" do
+      before { SiteSetting.reporting_improvements = true }
+
+      fab!(:user)
+      fab!(:user_2, :user)
+
+      it "returns a stacked chart with desktop and mobile series" do
+        freeze_time_safe
+        user.user_visits.create!(visited_at: 1.day.ago, mobile: false)
+        user_2.user_visits.create!(visited_at: 1.day.ago, mobile: true)
+        user.user_visits.create!(visited_at: 2.days.ago, mobile: false)
+
+        expect(report.modes).to eq([Report::MODES[:stacked_chart]])
+        expect(report.default_group_by).to eq("weekly")
+        expect(report.data.length).to eq(2)
+        expect(report.data[0][:req]).to eq("desktop")
+        expect(report.data[1][:req]).to eq("mobile")
+        expect(report.data[0][:data].length).to eq(2)
+        expect(report.data[1][:data].length).to eq(1)
+        expect(report.total).to eq(3)
+        expect(report.prev30Days).to eq(0)
+      end
+
+      it "filters by group" do
+        freeze_time_safe
+        group = Fabricate(:group)
+        group.add(user)
+
+        user.user_visits.create!(visited_at: 1.day.ago, mobile: false)
+        user_2.user_visits.create!(visited_at: 1.day.ago, mobile: true)
+
+        filtered_report = Report.find("visits", filters: { group: group.id })
+
+        desktop_data = filtered_report.data[0][:data]
+        mobile_data = filtered_report.data[1][:data]
+
+        expect(desktop_data.length).to eq(1)
+        expect(mobile_data.length).to eq(0)
+      end
+    end
   end
 
   describe "mobile visits report" do
@@ -307,6 +348,114 @@ RSpec.describe Report do
 
           #previous 30 days of data
           expect(report.prev30Days).to eq 35
+        end
+      end
+    end
+  end
+
+  describe "page_view_legacy_total_reqs" do
+    before do
+      freeze_time(Time.now.at_midnight)
+      Theme.clear_default!
+    end
+
+    let(:report) { Report.find("page_view_legacy_total_reqs") }
+
+    context "with no data" do
+      it "works" do
+        expect(report.data).to be_empty
+      end
+    end
+
+    context "with data" do
+      before do
+        CachedCounting.reset
+        CachedCounting.enable
+        ApplicationRequest.enable
+      end
+
+      after do
+        CachedCounting.reset
+        ApplicationRequest.disable
+        CachedCounting.disable
+      end
+
+      it "works and does not count browser or mobile pageviews" do
+        3.times { ApplicationRequest.increment!(:page_view_crawler) }
+        8.times { ApplicationRequest.increment!(:page_view_logged_in) }
+        6.times { ApplicationRequest.increment!(:page_view_logged_in_browser) }
+        2.times { ApplicationRequest.increment!(:page_view_logged_in_mobile) }
+        2.times { ApplicationRequest.increment!(:page_view_anon) }
+        1.times { ApplicationRequest.increment!(:page_view_anon_browser) }
+        4.times { ApplicationRequest.increment!(:page_view_anon_mobile) }
+
+        CachedCounting.flush
+
+        expect(report.data.sum { |r| r[:y] }).to eq(13)
+      end
+    end
+  end
+
+  describe "page_view_total_reqs" do
+    before do
+      freeze_time(Time.now.at_midnight)
+      Theme.clear_default!
+    end
+
+    let(:report) { Report.find("page_view_total_reqs") }
+
+    context "with no data" do
+      it "works" do
+        expect(report.data).to be_empty
+      end
+    end
+
+    context "with data" do
+      before do
+        CachedCounting.reset
+        CachedCounting.enable
+        ApplicationRequest.enable
+      end
+
+      after do
+        CachedCounting.reset
+        ApplicationRequest.disable
+        CachedCounting.disable
+      end
+
+      context "when use_legacy_pageviews is true" do
+        before { SiteSetting.use_legacy_pageviews = true }
+
+        it "works and does not count browser or mobile pageviews" do
+          3.times { ApplicationRequest.increment!(:page_view_crawler) }
+          8.times { ApplicationRequest.increment!(:page_view_logged_in) }
+          6.times { ApplicationRequest.increment!(:page_view_logged_in_browser) }
+          2.times { ApplicationRequest.increment!(:page_view_logged_in_mobile) }
+          2.times { ApplicationRequest.increment!(:page_view_anon) }
+          1.times { ApplicationRequest.increment!(:page_view_anon_browser) }
+          4.times { ApplicationRequest.increment!(:page_view_anon_mobile) }
+
+          CachedCounting.flush
+
+          expect(report.data.sum { |r| r[:y] }).to eq(13)
+        end
+      end
+
+      context "when use_legacy_pageviews is false" do
+        before { SiteSetting.use_legacy_pageviews = false }
+
+        it "works and does not count mobile pageviews, and only counts browser pageviews" do
+          3.times { ApplicationRequest.increment!(:page_view_crawler) }
+          8.times { ApplicationRequest.increment!(:page_view_logged_in) }
+          6.times { ApplicationRequest.increment!(:page_view_logged_in_browser) }
+          2.times { ApplicationRequest.increment!(:page_view_logged_in_mobile) }
+          2.times { ApplicationRequest.increment!(:page_view_anon) }
+          1.times { ApplicationRequest.increment!(:page_view_anon_browser) }
+          4.times { ApplicationRequest.increment!(:page_view_anon_mobile) }
+
+          CachedCounting.flush
+
+          expect(report.data.sum { |r| r[:y] }).to eq(7)
         end
       end
     end
@@ -591,7 +740,7 @@ RSpec.describe Report do
 
     context "with flags" do
       let(:flagger) { Fabricate(:user, refresh_auto_groups: true) }
-      let(:post) { Fabricate(:post, user: flagger) }
+      let(:post) { Fabricate(:post, user: Fabricate(:user)) }
 
       before { freeze_time }
 
@@ -614,6 +763,26 @@ RSpec.describe Report do
         expect(row[:flagger_avatar_template]).to be_present
         expect(row[:resolution]).to eq("No action")
         expect(row[:response_time]).to eq(nil)
+      end
+
+      it "exports the CSV of the report correctly" do
+        result =
+          PostActionCreator.new(flagger, post, PostActionType.types[:spam], message: "bad").perform
+
+        result.reviewable.perform(flagger, :agree_and_hide)
+        expect(result.success).to eq(true)
+        expect(report.data).to be_present
+
+        exporter = Jobs::ExportCsvFile.new
+        exporter.entity = "report"
+        exporter.extra = ActiveSupport::HashWithIndifferentAccess.new(name: "flags_status")
+        exporter.current_user = flagger
+        exported_csv = []
+        exporter.report_export { |entry| exported_csv << entry }
+        expect(exported_csv[0]).to eq(["Type", "Assigned", "Poster", "Flagger", "Resolution time"])
+        expect(exported_csv[1]).to eq(
+          ["spam", flagger.username, post.user.username, flagger.username, "0.0"],
+        )
       end
     end
   end
@@ -680,6 +849,63 @@ RSpec.describe Report do
       it "returns a report for a given editor" do
         expect(report_with_one_edit.data.count).to be(1)
         expect(report_with_two_edits.data.count).to be(2)
+      end
+    end
+
+    context "with private message edits" do
+      fab!(:admin)
+      fab!(:moderator)
+      fab!(:editor, :user)
+      fab!(:pm_post, :private_message_post)
+
+      before { pm_post.revise(editor, { raw: "updated private message body" }) }
+
+      it "excludes PM edits for moderators" do
+        report = Report.find("post_edits", current_user: moderator)
+        expect(report.data).to be_empty
+      end
+
+      it "excludes PM edits when current_user is nil" do
+        report = Report.find("post_edits")
+        expect(report.data).to be_empty
+      end
+
+      it "includes PM edits for admins" do
+        report = Report.find("post_edits", current_user: admin)
+        expect(report.data.count).to eq(1)
+      end
+    end
+
+    context "with secure category edits" do
+      fab!(:admin)
+      fab!(:moderator)
+      fab!(:editor, :user)
+      fab!(:group)
+      fab!(:secure_category) do
+        category = Fabricate(:category)
+        category.set_permissions(group => :full)
+        category.save!
+        category
+      end
+      fab!(:secure_topic) { Fabricate(:topic, category: secure_category) }
+      fab!(:secure_post) { Fabricate(:post, topic: secure_topic) }
+
+      before { secure_post.revise(editor, { raw: "updated secure post body" }) }
+
+      it "excludes secure category edits for moderators without access" do
+        report = Report.find("post_edits", current_user: moderator)
+        expect(report.data).to be_empty
+      end
+
+      it "includes secure category edits for admins" do
+        report = Report.find("post_edits", current_user: admin)
+        expect(report.data.count).to eq(1)
+      end
+
+      it "includes secure category edits for moderators with group access" do
+        group.add(moderator)
+        report = Report.find("post_edits", current_user: moderator)
+        expect(report.data.count).to eq(1)
       end
     end
   end
@@ -851,7 +1077,8 @@ RSpec.describe Report do
         user = Fabricate(:user, refresh_auto_groups: true)
         topic = Fabricate(:topic, user: user)
         post0 = Fabricate(:post, topic: topic, user: user)
-        post1 = Fabricate(:post, topic: Fabricate(:topic, category: c1, user: user), user: user)
+        post1 =
+          Fabricate(:post, topic: Fabricate(:topic, category: category_2, user: user), user: user)
         post2 = Fabricate(:post, topic: topic, user: user)
         post3 = Fabricate(:post, topic: topic, user: user)
         PostActionCreator.off_topic(user, post0)
@@ -861,13 +1088,13 @@ RSpec.describe Report do
       end
 
       context "with category filtering" do
-        let(:report) { Report.find("flags", filters: { category: c1.id }) }
+        let(:report) { Report.find("flags", filters: { category: category_2.id }) }
 
         include_examples "category filtering"
 
         context "with subcategories" do
           let(:report) do
-            Report.find("flags", filters: { category: c0.id, include_subcategories: true })
+            Report.find("flags", filters: { category: category_1.id, include_subcategories: true })
           end
 
           include_examples "category filtering on subcategories"
@@ -887,19 +1114,19 @@ RSpec.describe Report do
       before(:each) do
         user = Fabricate(:user)
         Fabricate(:topic, user: user)
-        Fabricate(:topic, category: c1, user: user)
+        Fabricate(:topic, category: category_2, user: user)
         Fabricate(:topic, user: user)
         Fabricate(:topic, created_at: 45.days.ago, user: user)
       end
 
       context "with category filtering" do
-        let(:report) { Report.find("topics", filters: { category: c1.id }) }
+        let(:report) { Report.find("topics", filters: { category: category_2.id }) }
 
         include_examples "category filtering"
 
         context "with subcategories" do
           let(:report) do
-            Report.find("topics", filters: { category: c0.id, include_subcategories: true })
+            Report.find("topics", filters: { category: category_1.id, include_subcategories: true })
           end
 
           include_examples "category filtering on subcategories"
@@ -909,13 +1136,7 @@ RSpec.describe Report do
   end
 
   describe "exception report" do
-    before(:each) do
-      class Report
-        def self.report_exception_test(report)
-          report.data = x
-        end
-      end
-    end
+    before(:each) { Report.stubs(:report_exception_test).raises(Exception) }
 
     it "returns a report with an exception error" do
       report = Report.find("exception_test", wrap_exceptions_in_test: true)
@@ -924,16 +1145,7 @@ RSpec.describe Report do
   end
 
   describe "timeout report" do
-    before(:each) do
-      freeze_time
-
-      class Report
-        def self.report_timeout_test(report)
-          report.error =
-            wrap_slow_query(1) { ActiveRecord::Base.connection.execute("SELECT pg_sleep(5)") }
-        end
-      end
-    end
+    before(:each) { Report.stubs(:report_timeout_test).raises(ActiveRecord::QueryCanceled) }
 
     it "returns a report with a timeout error" do
       report = Report.find("timeout_test")
@@ -942,12 +1154,11 @@ RSpec.describe Report do
   end
 
   describe "unexpected error on report initialization" do
-    before do
-      @orig_logger = Rails.logger
-      Rails.logger = @fake_logger = FakeLogger.new
-    end
+    let(:fake_logger) { FakeLogger.new }
 
-    after { Rails.logger = @orig_logger }
+    before { Rails.logger.broadcast_to(fake_logger) }
+
+    after { Rails.logger.stop_broadcasting_to(fake_logger) }
 
     it "returns no report" do
       class ReportInitError < StandardError
@@ -959,7 +1170,7 @@ RSpec.describe Report do
 
       expect(report).to be_nil
 
-      expect(@fake_logger.errors).to eq(["Couldn’t create report `signups`: <ReportInitError x>"])
+      expect(fake_logger.errors).to eq(["Couldn’t create report `signups`: <ReportInitError x>"])
     end
   end
 
@@ -974,7 +1185,7 @@ RSpec.describe Report do
       before(:each) do
         user = Fabricate(:user)
         topic = Fabricate(:topic, user: user)
-        topic_with_category_id = Fabricate(:topic, category: c1, user: user)
+        topic_with_category_id = Fabricate(:topic, category: category_2, user: user)
         Fabricate(:post, topic: topic, user: user)
         Fabricate(:post, topic: topic_with_category_id, user: user)
         Fabricate(:post, topic: topic, user: user)
@@ -982,13 +1193,13 @@ RSpec.describe Report do
       end
 
       context "with category filtering" do
-        let(:report) { Report.find("posts", filters: { category: c1.id }) }
+        let(:report) { Report.find("posts", filters: { category: category_2.id }) }
 
         include_examples "category filtering"
 
         context "with subcategories" do
           let(:report) do
-            Report.find("posts", filters: { category: c0.id, include_subcategories: true })
+            Report.find("posts", filters: { category: category_1.id, include_subcategories: true })
           end
 
           include_examples "category filtering on subcategories"
@@ -1009,14 +1220,16 @@ RSpec.describe Report do
 
       before(:each) do
         user = Fabricate(:user)
-        Fabricate(:topic, category: c1, user: user)
+        Fabricate(:topic, category: category_2, user: user)
         Fabricate(:post, topic: Fabricate(:topic, user: user), user: user)
         Fabricate(:topic, user: user)
         Fabricate(:topic, created_at: 45.days.ago, user: user)
       end
 
       context "with category filtering" do
-        let(:report) { Report.find("topics_with_no_response", filters: { category: c1.id }) }
+        let(:report) do
+          Report.find("topics_with_no_response", filters: { category: category_2.id })
+        end
 
         include_examples "category filtering"
 
@@ -1025,7 +1238,7 @@ RSpec.describe Report do
             Report.find(
               "topics_with_no_response",
               filters: {
-                category: c0.id,
+                category: category_1.id,
                 include_subcategories: true,
               },
             )
@@ -1046,11 +1259,11 @@ RSpec.describe Report do
       include_examples "with data x/y"
 
       before(:each) do
-        topic = Fabricate(:topic, category: c1)
+        topic = Fabricate(:topic, category: category_2)
         post = Fabricate(:post, topic: topic)
         PostActionCreator.like(Fabricate(:user), post)
 
-        topic = Fabricate(:topic, category: c2)
+        topic = Fabricate(:topic, category: category_3)
         post = Fabricate(:post, topic: topic)
         PostActionCreator.like(Fabricate(:user), post)
         PostActionCreator.like(Fabricate(:user), post)
@@ -1062,13 +1275,13 @@ RSpec.describe Report do
       end
 
       context "with category filtering" do
-        let(:report) { Report.find("likes", filters: { category: c1.id }) }
+        let(:report) { Report.find("likes", filters: { category: category_2.id }) }
 
         include_examples "category filtering"
 
         context "with subcategories" do
           let(:report) do
-            Report.find("likes", filters: { category: c0.id, include_subcategories: true })
+            Report.find("likes", filters: { category: category_1.id, include_subcategories: true })
           end
 
           include_examples "category filtering on subcategories"
@@ -1283,6 +1496,118 @@ RSpec.describe Report do
     include_examples "no data"
   end
 
+  describe "consolidated_page_views_browser_detection" do
+    before do
+      freeze_time(Time.now.at_midnight)
+      Theme.clear_default!
+    end
+
+    let(:reports) { Report.find("consolidated_page_views_browser_detection") }
+
+    context "with no data" do
+      it "works" do
+        reports.data.each { |report| expect(report[:data]).to be_empty }
+      end
+    end
+
+    context "with data" do
+      before do
+        CachedCounting.reset
+        CachedCounting.enable
+        ApplicationRequest.enable
+        SiteSetting.use_legacy_pageviews = true
+      end
+
+      after do
+        CachedCounting.reset
+        ApplicationRequest.disable
+        CachedCounting.disable
+      end
+
+      it "works" do
+        3.times { ApplicationRequest.increment!(:page_view_crawler) }
+        8.times { ApplicationRequest.increment!(:page_view_logged_in) }
+        6.times { ApplicationRequest.increment!(:page_view_logged_in_browser) }
+        2.times { ApplicationRequest.increment!(:page_view_anon) }
+        1.times { ApplicationRequest.increment!(:page_view_anon_browser) }
+
+        CachedCounting.flush
+
+        page_view_crawler_report = reports.data.find { |r| r[:req] == "page_view_crawler" }
+        page_view_logged_in_browser_report =
+          reports.data.find { |r| r[:req] == "page_view_logged_in_browser" }
+        page_view_anon_browser_report =
+          reports.data.find { |r| r[:req] == "page_view_anon_browser" }
+        page_view_other_report = reports.data.find { |r| r[:req] == "page_view_other" }
+
+        expect(page_view_crawler_report[:data][0][:y]).to eql(3)
+        expect(page_view_logged_in_browser_report[:data][0][:y]).to eql(6)
+        expect(page_view_anon_browser_report[:data][0][:y]).to eql(1)
+        expect(page_view_other_report[:data][0][:y]).to eql(3)
+      end
+
+      it "gives the same total as page_view_total_reqs" do
+        3.times { ApplicationRequest.increment!(:page_view_crawler) }
+        8.times { ApplicationRequest.increment!(:page_view_logged_in) }
+        6.times { ApplicationRequest.increment!(:page_view_logged_in_browser) }
+        2.times { ApplicationRequest.increment!(:page_view_anon) }
+        1.times { ApplicationRequest.increment!(:page_view_anon_browser) }
+
+        CachedCounting.flush
+
+        total_consolidated = reports.data.sum { |r| r[:data][0][:y] }
+        total_page_views = Report.find("page_view_total_reqs").data[0][:y]
+
+        expect(total_consolidated).to eq(total_page_views)
+      end
+
+      it "does not include any data before the first recorded browser page view (anon or logged in)" do
+        freeze_time DateTime.parse("2024-02-10")
+
+        3.times { ApplicationRequest.increment!(:page_view_logged_in) }
+        2.times { ApplicationRequest.increment!(:page_view_anon) }
+
+        CachedCounting.flush
+
+        freeze_time DateTime.parse("2024-03-10")
+
+        3.times { ApplicationRequest.increment!(:page_view_logged_in) }
+        2.times { ApplicationRequest.increment!(:page_view_anon) }
+
+        CachedCounting.flush
+
+        freeze_time DateTime.parse("2024-04-10")
+
+        3.times { ApplicationRequest.increment!(:page_view_crawler) }
+        8.times { ApplicationRequest.increment!(:page_view_logged_in) }
+        6.times { ApplicationRequest.increment!(:page_view_logged_in_browser) }
+        2.times { ApplicationRequest.increment!(:page_view_anon) }
+        1.times { ApplicationRequest.increment!(:page_view_anon_browser) }
+
+        CachedCounting.flush
+
+        report_in_range =
+          Report.find(
+            "consolidated_page_views_browser_detection",
+            start_date: DateTime.parse("2024-02-10").beginning_of_day,
+            end_date: DateTime.parse("2024-04-11").beginning_of_day,
+          )
+
+        page_view_crawler_report = report_in_range.data.find { |r| r[:req] == "page_view_crawler" }
+        page_view_logged_in_browser_report =
+          report_in_range.data.find { |r| r[:req] == "page_view_logged_in_browser" }
+        page_view_anon_browser_report =
+          report_in_range.data.find { |r| r[:req] == "page_view_anon_browser" }
+        page_view_other_report = report_in_range.data.find { |r| r[:req] == "page_view_other" }
+
+        expect(page_view_crawler_report[:data].sum { |d| d[:y] }).to eql(3)
+        expect(page_view_logged_in_browser_report[:data].sum { |d| d[:y] }).to eql(6)
+        expect(page_view_anon_browser_report[:data].sum { |d| d[:y] }).to eql(1)
+        expect(page_view_other_report[:data].sum { |d| d[:y] }).to eql(3)
+      end
+    end
+  end
+
   describe "consolidated_page_views" do
     before do
       freeze_time(Time.now.at_midnight)
@@ -1392,8 +1717,8 @@ RSpec.describe Report do
     end
 
     context "with data" do
-      fab!(:gwen) { Fabricate(:user) }
-      fab!(:martin) { Fabricate(:user) }
+      fab!(:gwen, :user)
+      fab!(:martin, :user)
 
       before do
         UserHistory.create(
@@ -1416,10 +1741,31 @@ RSpec.describe Report do
         tl3_reached = reports.data.find { |r| r[:req] == "tl3_reached" }
         tl4_reached = reports.data.find { |r| r[:req] == "tl4_reached" }
 
-        expect(tl1_reached[:data][0][:y]).to eql(0)
-        expect(tl2_reached[:data][0][:y]).to eql(1)
-        expect(tl3_reached[:data][0][:y]).to eql(0)
-        expect(tl4_reached[:data][0][:y]).to eql(1)
+        x = Time.now.at_midnight.strftime("%Y-%m-%d")
+        expect(tl1_reached).to eq(
+          color: Report::COLORS[:lime],
+          data: [{ x:, y: 0 }],
+          req: "tl1_reached",
+          label: I18n.t("reports.trust_level_growth.xaxis.tl1_reached"),
+        )
+        expect(tl2_reached).to eq(
+          color: Report::COLORS[:magenta],
+          data: [{ x:, y: 1 }],
+          req: "tl2_reached",
+          label: I18n.t("reports.trust_level_growth.xaxis.tl2_reached"),
+        )
+        expect(tl3_reached).to eq(
+          color: Report::COLORS[:yellow],
+          data: [{ x:, y: 0 }],
+          req: "tl3_reached",
+          label: I18n.t("reports.trust_level_growth.xaxis.tl3_reached"),
+        )
+        expect(tl4_reached).to eq(
+          color: Report::COLORS[:purple],
+          data: [{ x:, y: 1 }],
+          req: "tl4_reached",
+          label: I18n.t("reports.trust_level_growth.xaxis.tl4_reached"),
+        )
       end
     end
   end
@@ -1429,15 +1775,8 @@ RSpec.describe Report do
     let(:valid_report) { Report.find("valid_test", wrap_exceptions_in_test: true) }
 
     before(:each) do
-      class Report
-        def self.report_exception_test(report)
-          report.data = x
-        end
-
-        def self.report_valid_test(report)
-          report.data = "success!"
-        end
-      end
+      Report.stubs(:report_exception_test).raises(Exception)
+      Report.stubs(:report_valid_test)
     end
 
     it "caches exception reports for 1 minute" do
@@ -1620,6 +1959,150 @@ RSpec.describe Report do
         expect(report.data.length).to eq(2)
         expect(report.data[0][:username]).to eq("jake")
         expect(report.data[1][:username]).to eq("jonah")
+      end
+    end
+  end
+
+  describe "topic_view_stats" do
+    let(:report) { Report.find("topic_view_stats") }
+
+    fab!(:topic_1, :topic)
+    fab!(:topic_2, :topic)
+
+    include_examples "no data"
+
+    context "with data" do
+      before do
+        freeze_time_safe
+
+        Fabricate(
+          :topic_view_stat,
+          topic: topic_1,
+          anonymous_views: 4,
+          logged_in_views: 2,
+          viewed_at: 5.days.ago,
+        )
+        Fabricate(
+          :topic_view_stat,
+          topic: topic_1,
+          anonymous_views: 5,
+          logged_in_views: 18,
+          viewed_at: 3.days.ago,
+        )
+        Fabricate(
+          :topic_view_stat,
+          topic: topic_2,
+          anonymous_views: 14,
+          logged_in_views: 21,
+          viewed_at: 5.days.ago,
+        )
+        Fabricate(
+          :topic_view_stat,
+          topic: topic_2,
+          anonymous_views: 9,
+          logged_in_views: 13,
+          viewed_at: 1.day.ago,
+        )
+        Fabricate(
+          :topic_view_stat,
+          topic: Fabricate(:topic),
+          anonymous_views: 1,
+          logged_in_views: 34,
+          viewed_at: 40.days.ago,
+        )
+      end
+
+      it "works" do
+        expect(report.data.length).to eq(2)
+        expect(report.data[0]).to include(
+          topic_id: topic_2.id,
+          topic_title: topic_2.title,
+          total_anonymous_views: 23,
+          total_logged_in_views: 34,
+          total_views: 57,
+        )
+        expect(report.data[1]).to include(
+          topic_id: topic_1.id,
+          topic_title: topic_1.title,
+          total_anonymous_views: 9,
+          total_logged_in_views: 20,
+          total_views: 29,
+        )
+      end
+
+      context "with category filtering" do
+        let(:report) { Report.find("topic_view_stats", filters: { category: category_1.id }) }
+
+        before { topic_1.update!(category: category_1) }
+
+        it "filters topics to that category" do
+          expect(report.data.length).to eq(1)
+          expect(report.data[0]).to include(
+            topic_id: topic_1.id,
+            topic_title: topic_1.title,
+            total_anonymous_views: 9,
+            total_logged_in_views: 20,
+            total_views: 29,
+          )
+        end
+      end
+    end
+  end
+
+  describe ".hidden?" do
+    context "when admin is true" do
+      it "returns false for regular reports" do
+        expect(Report.hidden?("topics", admin: true)).to eq(false)
+      end
+
+      it "returns false for admin-only reports" do
+        Report::ADMIN_ONLY_REPORTS.each do |report_type|
+          expect(Report.hidden?(report_type, admin: true)).to eq(false)
+        end
+      end
+    end
+
+    context "when admin is false" do
+      it "returns false for regular reports" do
+        expect(Report.hidden?("topics", admin: false)).to eq(false)
+      end
+
+      it "returns true for admin-only reports" do
+        Report::ADMIN_ONLY_REPORTS.each do |report_type|
+          expect(Report.hidden?(report_type, admin: false)).to eq(true)
+        end
+      end
+    end
+
+    context "when use_legacy_pageviews is true" do
+      before { SiteSetting.use_legacy_pageviews = true }
+
+      it "hides pageview reports" do
+        Report::HIDDEN_PAGEVIEW_REPORTS.each do |report_type|
+          expect(Report.hidden?(report_type, admin: true)).to eq(true)
+        end
+      end
+
+      it "does not hide legacy pageview reports" do
+        Report::HIDDEN_LEGACY_PAGEVIEW_REPORTS.each do |report_type|
+          expect(Report.hidden?(report_type, admin: true)).to eq(false)
+        end
+      end
+    end
+
+    context "when use_legacy_pageviews is false" do
+      before { SiteSetting.use_legacy_pageviews = false }
+
+      it "does not hide pageview reports" do
+        Report::HIDDEN_PAGEVIEW_REPORTS.each do |report_type|
+          expect(Report.hidden?(report_type, admin: true)).to eq(false)
+        end
+      end
+
+      it "hides legacy pageview reports" do
+        Report::HIDDEN_LEGACY_PAGEVIEW_REPORTS.each do |report_type|
+          expect(Report.hidden?(report_type, admin: true)).to eq(true)
+        end
       end
     end
   end

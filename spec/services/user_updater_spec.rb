@@ -2,9 +2,9 @@
 
 RSpec.describe UserUpdater do
   fab!(:user)
-  fab!(:u1) { Fabricate(:user) }
-  fab!(:u2) { Fabricate(:user) }
-  fab!(:u3) { Fabricate(:user) }
+  fab!(:u1, :user)
+  fab!(:u2, :user)
+  fab!(:u3, :user)
 
   let(:acting_user) { Fabricate.build(:user) }
 
@@ -35,7 +35,7 @@ RSpec.describe UserUpdater do
   describe "#update" do
     fab!(:category)
     fab!(:tag)
-    fab!(:tag2) { Fabricate(:tag) }
+    fab!(:tag2, :tag)
 
     it "saves user" do
       user = Fabricate(:user, name: "Billy Bob")
@@ -602,40 +602,61 @@ RSpec.describe UserUpdater do
       end
     end
 
-    it "logs the action" do
-      user = Fabricate(:user, name: "Billy Bob")
+    context "when updating the name" do
+      it "logs the action" do
+        user = Fabricate(:user, name: "Billy Bob")
 
-      expect do UserUpdater.new(user, user).update(name: "Jim Tom") end.to change {
-        UserHistory.count
-      }.by(1)
+        expect do UserUpdater.new(user, user).update(name: "Jim Tom") end.to change {
+          UserHistory.count
+        }.by(1)
 
-      expect(UserHistory.last.action).to eq(UserHistory.actions[:change_name])
+        expect(UserHistory.last.action).to eq(UserHistory.actions[:change_name])
 
-      expect do UserUpdater.new(user, user).update(name: "JiM TOm") end.to_not change {
-        UserHistory.count
-      }
+        expect do UserUpdater.new(user, user).update(name: "JiM TOm") end.to_not change {
+          UserHistory.count
+        }
 
-      expect do UserUpdater.new(user, user).update(bio_raw: "foo bar") end.to_not change {
-        UserHistory.count
-      }
+        expect do UserUpdater.new(user, user).update(bio_raw: "foo bar") end.to_not change {
+          UserHistory.count
+        }
 
-      user_without_name = Fabricate(:user, name: nil)
+        user_without_name = Fabricate(:user, name: nil)
 
-      expect do
-        UserUpdater.new(user_without_name, user_without_name).update(bio_raw: "foo bar")
-      end.to_not change { UserHistory.count }
+        expect do
+          UserUpdater.new(user_without_name, user_without_name).update(bio_raw: "foo bar")
+        end.to_not change { UserHistory.count }
 
-      expect do
-        UserUpdater.new(user_without_name, user_without_name).update(name: "Jim Tom")
-      end.to change { UserHistory.count }.by(1)
+        expect do
+          UserUpdater.new(user_without_name, user_without_name).update(name: "Jim Tom")
+        end.to change { UserHistory.count }.by(1)
 
-      expect(UserHistory.last.action).to eq(UserHistory.actions[:change_name])
+        expect(UserHistory.last.action).to eq(UserHistory.actions[:change_name])
 
-      expect do UserUpdater.new(user, user).update(name: "") end.to change { UserHistory.count }.by(
-        1,
-      )
+        expect do UserUpdater.new(user, user).update(name: "") end.to change {
+          UserHistory.count
+        }.by(1)
 
-      expect(UserHistory.last.action).to eq(UserHistory.actions[:change_name])
+        expect(UserHistory.last.action).to eq(UserHistory.actions[:change_name])
+      end
+    end
+
+    context "when updating required fields" do
+      it "logs the action" do
+        user = Fabricate(:user)
+        Fabricate(:user_field, name: "favorite_pokemon", requirement: "for_all_users")
+
+        UserRequiredFieldsVersion.create!
+
+        expect do
+          UserUpdater.new(user, user).update(custom_fields: { "favorite_pokemon" => "Mudkip" })
+        end.to change { UserHistory.count }.by(1)
+
+        user.bump_required_fields_version
+
+        expect do
+          UserUpdater.new(user, user).update(custom_fields: { "favorite_pokemon" => "Mudkip" })
+        end.not_to change { UserHistory.count }
+      end
     end
 
     it "clears the homepage_id when the special 'custom' id is chosen" do

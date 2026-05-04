@@ -23,27 +23,22 @@ permissions:
 jobs:
   tests:
     if: github.event_name == 'pull_request' || github.repository != 'discourse/discourse-private-mirror'
-    name: Tests with Ruby ${{ matrix.ruby }}
-    runs-on: 'ubuntu-latest'
-    container: discourse/discourse_test:slim
+    name: Tests
+    runs-on: ${{ (github.repository_owner == 'discourse' && 'cdck-linux-8-core') || 'ubuntu-latest' }}
+    container: discourse/discourse_test:release
     timeout-minutes: 20
 
     env:
       RAILS_ENV: test
       PGUSER: discourse
       PGPASSWORD: discourse
-
-    strategy:
-      fail-fast: false
-
-      matrix:
-        ruby: ["3.2"]
+      LOAD_PLUGINS: 1
 
     steps:
       - name: Set working directory owner
         run: chown root:root .
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
@@ -62,55 +57,34 @@ jobs:
           sudo -E -u postgres script/start_test_db.rb
           sudo -u postgres psql -c "CREATE ROLE $PGUSER LOGIN SUPERUSER PASSWORD '$PGPASSWORD';"
 
-      - name: Container envs
-        id: container-envs
+      - name: Symlink vendor/bundle from image
         run: |
-          echo "ruby_version=$RUBY_VERSION" >> $GITHUB_OUTPUT
-          echo "debian_release=$DEBIAN_RELEASE" >> $GITHUB_OUTPUT
-        shell: bash
-
-      - name: Bundler cache
-        uses: actions/cache@v4
-        with:
-          path: vendor/bundle
-          key: >-
-            ${{ runner.os }}-
-            ${{ steps.container-envs.outputs.ruby_version }}-
-            ${{ steps.container-envs.outputs.debian_release }}-
-            ${{ hashFiles('**/Gemfile.lock') }}-
-            ${{ hashFiles('migrations/config/gemfiles/**/Gemfile') }}
+          ln -s /var/www/discourse/vendor/bundle vendor/bundle
 
       - name: Setup gems
         run: |
-          gem install bundler --conservative -v $(awk '/BUNDLED WITH/ { getline; gsub(/ /,""); print $0 }' Gemfile.lock)
           bundle config --local path vendor/bundle
           bundle config --local deployment true
           bundle config --local without development
+          bundle config --local with migrations
           bundle install --jobs $(($(nproc) - 1))
-          # don't call `bundle clean` clean, we need the gems for the migrations
 
-      - name: Get yarn cache directory
-        id: yarn-cache-dir
-        run: echo "dir=$(yarn cache dir)" >> $GITHUB_OUTPUT
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
 
-      - name: Yarn cache
-        uses: actions/cache@v4
-        id: yarn-cache
-        with:
-          path: ${{ steps.yarn-cache-dir.outputs.dir }}
-          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
-
-      - name: Yarn install
-        run: yarn install --frozen-lockfile
+      - name: Get CPU cores
+        id: cpu-info
+        run: echo "cpu-cores=$(nproc)" >> $GITHUB_OUTPUT
 
       - name: Fetch app state cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         id: app-cache
         with:
           path: tmp/app-cache
           key: >-
             ${{ runner.os }}-
-            ${{ hashFiles('.github/workflows/tests.yml') }}-
+            ${{ steps.cpu-info.outputs.cpu-cores }}-
+            ${{ hashFiles('.github/workflows/migration-tests.yml') }}-
             ${{ hashFiles('db/**/*', 'plugins/**/db/**/*') }}-
             ${{ hashFiles('config/environments/test.rb') }}
 
@@ -136,44 +110,39 @@ jobs:
         if: steps.app-cache.outputs.cache-hit != 'true'
         run: rm -rf tmp/app-cache/uploads && cp -r public/uploads tmp/app-cache/uploads
 
-#      - name: Check core database drift
-#        run: |
-#          mkdir /tmp/intermediate_db
-#          ./migrations/scripts/schema_generator /tmp/intermediate_db/base_migration.sql
-#          diff -u migrations/common/intermediate_db_schema/000_base_schema.sql /tmp/intermediate_db/base_migration.sql
+      - name: Validate IntermediateDB schema
+        run: |
+          # Show structured differences between DSL config and database
+          migrations/bin/cli schema diff --db=intermediate_db || true
+
+          # Regenerate schema from DSL config
+          migrations/bin/cli schema generate --db=intermediate_db
+
+          # Check if generated output matches what's committed
+          if [ ! -z "$(git status --porcelain migrations/db/intermediate_db_schema/ migrations/lib/database/intermediate_db/ migrations/lib/database/intermediate_db/enums/)" ]; then
+            echo ""
+            echo "=========================================="
+            echo "IntermediateDB schema is not up to date."
+            echo "=========================================="
+            echo ""
+            echo "The generated schema files differ from what is committed."
+            echo "This usually means the schema DSL config or the database"
+            echo "structure changed without regenerating."
+            echo ""
+            echo "To fix:"
+            echo "  1. Run: migrations/bin/cli schema diff"
+            echo "     to see what changed between config and database"
+            echo "  2. Update config files in migrations/config/schema/intermediate_db/"
+            echo "     - New tables: migrations/bin/cli schema add <table>"
+            echo "     - Ignore tables: migrations/bin/cli schema ignore <table> --reason '...'"
+            echo "     - New columns: add to the table's include list or ignore with reason"
+            echo "  3. Run: migrations/bin/cli schema generate"
+            echo "  4. Commit the updated config and generated files"
+            echo ""
+            echo "Generated file diff:"
+            git -c color.ui=always diff -- migrations/db/intermediate_db_schema/ migrations/lib/database/intermediate_db/ migrations/lib/database/intermediate_db/enums/
+            exit 1
+          fi
 
       - name: RSpec
         run: bin/rspec --default-path migrations/spec
-
-  runtime:
-    if: github.event_name == 'pull_request' || github.repository != 'discourse/discourse-private-mirror'
-    name: Runs on ${{ matrix.os }}, Ruby ${{ matrix.ruby }}
-    timeout-minutes: 20
-
-    strategy:
-      fail-fast: false
-
-      matrix:
-        os: ["ubuntu-latest", "macos-latest"]
-        ruby: ["3.2", "3.3"]
-
-    runs-on: ${{ matrix.os }}
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Modify path for libpq
-        if: matrix.os == 'macos-latest'
-        run: echo "/opt/homebrew/opt/libpq/bin" >> $GITHUB_PATH
-
-      - name: Setup Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: ${{ matrix.ruby }}
-          bundler-cache: true
-
-      - name: Run converter
-        working-directory: migrations
-        run: bin/convert version

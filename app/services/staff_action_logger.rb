@@ -3,7 +3,17 @@
 # Responsible for logging the actions of admins and moderators.
 class StaffActionLogger
   def self.base_attrs
-    %i[topic_id post_id context subject ip_address previous_value new_value]
+    %i[
+      topic_id
+      post_id
+      category_id
+      context
+      subject
+      ip_address
+      previous_value
+      new_value
+      reviewable_id
+    ]
   end
 
   def initialize(admin)
@@ -11,7 +21,7 @@ class StaffActionLogger
     raise Discourse::InvalidParameters.new(:admin) unless @admin && @admin.is_a?(User)
   end
 
-  USER_FIELDS ||= %i[id username name created_at trust_level last_seen_at last_emailed_at]
+  USER_FIELDS = %i[id username name created_at trust_level last_seen_at last_emailed_at]
 
   def log_user_deletion(deleted_user, opts = {})
     unless deleted_user && deleted_user.is_a?(User)
@@ -74,18 +84,22 @@ class StaffActionLogger
     name = deleted_post.user.try(:name) || I18n.t("staff_action_logs.unknown")
     topic_title = topic.try(:title) || I18n.t("staff_action_logs.not_found")
 
-    details = [
-      "id: #{deleted_post.id}",
-      "created_at: #{deleted_post.created_at}",
-      "user: #{username} (#{name})",
-      "topic: #{topic_title}",
-      "post_number: #{deleted_post.post_number}",
-      "raw: #{truncate(deleted_post.raw)}",
-    ]
+    if opts[:permanent]
+      details = []
+    else
+      details = [
+        "id: #{deleted_post.id}",
+        "created_at: #{deleted_post.created_at}",
+        "user: #{username} (#{name})",
+        "topic: #{topic_title}",
+        "post_number: #{deleted_post.post_number}",
+        "raw: #{truncate(deleted_post.raw)}",
+      ]
+    end
 
     UserHistory.create!(
       params(opts).merge(
-        action: UserHistory.actions[:delete_post],
+        action: UserHistory.actions[opts[:permanent] ? :delete_post_permanently : :delete_post],
         post_id: deleted_post.id,
         details: details.join("\n"),
       ),
@@ -97,15 +111,19 @@ class StaffActionLogger
 
     user = topic.user ? "#{topic.user.username} (#{topic.user.name})" : "(deleted user)"
 
-    details = [
-      "id: #{topic.id}",
-      "created_at: #{topic.created_at}",
-      "user: #{user}",
-      "title: #{topic.title}",
-    ]
+    if action == "delete_topic_permanently"
+      details = []
+    else
+      details = [
+        "id: #{topic.id}",
+        "created_at: #{topic.created_at}",
+        "user: #{user}",
+        "title: #{topic.title}",
+      ]
 
-    if first_post = topic.ordered_posts.with_deleted.first
-      details << "raw: #{truncate(first_post.raw)}"
+      if first_post = topic.ordered_posts.with_deleted.first
+        details << "raw: #{truncate(first_post.raw)}"
+      end
     end
 
     UserHistory.create!(
@@ -204,6 +222,21 @@ class StaffActionLogger
     )
   end
 
+  def log_topic_slow_mode(topic, opts = {})
+    raise Discourse::InvalidParameters.new(:topic) unless topic && topic.is_a?(Topic)
+
+    details = opts[:enabled] ? ["interval: #{opts[:seconds]}", "until: #{opts[:until]}"] : []
+
+    UserHistory.create!(
+      params(opts).merge(
+        action:
+          UserHistory.actions[opts[:enabled] ? :topic_slow_mode_set : :topic_slow_mode_removed],
+        topic_id: topic.id,
+        details: details.join("\n"),
+      ),
+    )
+  end
+
   def log_post_staff_note(post, opts = {})
     raise Discourse::InvalidParameters.new(:post) unless post && post.is_a?(Post)
 
@@ -228,6 +261,48 @@ class StaffActionLogger
     UserHistory.create!(
       params(opts).merge(
         action: UserHistory.actions[:change_site_setting],
+        subject: setting_name,
+        previous_value: previous_value&.to_s,
+        new_value: new_value&.to_s,
+      ),
+    )
+  end
+
+  # This is different from site settings because, even though an upcoming change
+  # is a site setting, we want to be able to distinguish it from the other hundreds
+  # of other site setting change events, so we need a unique distinguishing type
+  def log_upcoming_change_toggle(setting_name, previous_value, new_value, opts = {})
+    unless setting_name.present? && SiteSetting.respond_to?(setting_name)
+      raise Discourse::InvalidParameters.new(:setting_name)
+    end
+    UserHistory.create!(
+      params(opts).merge(
+        action: UserHistory.actions[:upcoming_change_toggled],
+        subject: setting_name,
+        previous_value: previous_value ? "true" : "false",
+        new_value: new_value ? "true" : "false",
+      ),
+    )
+  end
+
+  def log_upcoming_change_available(setting_name, opts = {})
+    raise Discourse::InvalidParameters.new(:setting_name) if setting_name.blank?
+    UserHistory.create!(
+      params(opts).merge(
+        action: UserHistory.actions[:upcoming_change_available],
+        subject: setting_name,
+        details: SiteSetting.humanized_name(setting_name),
+      ),
+    )
+  end
+
+  def log_site_setting_groups_change(setting_name, previous_value, new_value, opts = {})
+    unless setting_name.present? && SiteSetting.respond_to?(setting_name)
+      raise Discourse::InvalidParameters.new(:setting_name)
+    end
+    UserHistory.create!(
+      params(opts).merge(
+        action: UserHistory.actions[:change_site_setting_groups],
         subject: setting_name,
         previous_value: previous_value&.to_s,
         new_value: new_value&.to_s,
@@ -317,6 +392,19 @@ class StaffActionLogger
     )
   end
 
+  def log_theme_site_setting_change(setting_name, previous_value, new_value, theme, opts = {})
+    raise Discourse::InvalidParameters.new(:theme) if !theme
+
+    UserHistory.create!(
+      params(opts).merge(
+        action: UserHistory.actions[:change_theme_site_setting],
+        subject: "#{theme.name}: #{setting_name}",
+        previous_value: previous_value,
+        new_value: new_value,
+      ),
+    )
+  end
+
   def log_site_text_change(subject, new_text = nil, old_text = nil, opts = {})
     raise Discourse::InvalidParameters.new(:subject) if subject.blank?
     UserHistory.create!(
@@ -387,7 +475,7 @@ class StaffActionLogger
     )
   end
 
-  BADGE_FIELDS ||= %i[
+  BADGE_FIELDS = %i[
     id
     name
     description
@@ -527,6 +615,12 @@ class StaffActionLogger
     raise Discourse::InvalidParameters.new(:user) unless user
     UserHistory.create!(
       params(opts).merge(action: UserHistory.actions[:impersonate], target_user_id: user.id),
+    )
+  end
+
+  def log_stop_impersonation(user, opts = {})
+    UserHistory.create!(
+      params(opts).merge(action: UserHistory.actions[:stop_impersonating], target_user_id: user.id),
     )
   end
 
@@ -804,7 +898,13 @@ class StaffActionLogger
     ]
 
     UserHistory.create!(
-      params(opts).merge(action: UserHistory.actions[:post_rejected], details: details.join("\n")),
+      params(opts).merge(
+        action: UserHistory.actions[:post_rejected],
+        details: details.join("\n"),
+        topic_id: topic&.id,
+        category_id: reviewable.category_id,
+        reviewable_id: reviewable.id,
+      ),
     )
   end
 
@@ -1015,6 +1115,58 @@ class StaffActionLogger
     )
   end
 
+  def log_custom_emoji_create(name, opts = {})
+    opts[:details] = "Group: #{opts[:group]}" if opts[:group].present?
+
+    UserHistory.create!(
+      params(opts).merge(action: UserHistory.actions[:custom_emoji_create], new_value: name),
+    )
+  end
+
+  def log_custom_emoji_destroy(name, opts = {})
+    UserHistory.create!(
+      params(opts).merge(action: UserHistory.actions[:custom_emoji_destroy], previous_value: name),
+    )
+  end
+
+  def log_tag_group_create(name, new_value, opts = {})
+    UserHistory.create!(
+      params(opts).merge(json_params(nil, new_value)).merge(
+        action: UserHistory.actions[:tag_group_create],
+        subject: name,
+      ),
+    )
+  end
+
+  def log_tag_group_destroy(name, old_value, opts = {})
+    UserHistory.create!(
+      params(opts).merge(json_params(old_value, nil)).merge(
+        action: UserHistory.actions[:tag_group_destroy],
+        subject: name,
+      ),
+    )
+  end
+
+  def log_tag_group_change(name, old_data, new_data)
+    UserHistory.create!(
+      params.merge(json_params(old_data, new_data)).merge(
+        action: UserHistory.actions[:tag_group_change],
+        subject: name,
+      ),
+    )
+  end
+
+  def log_delete_associated_accounts(user, previous_value:, context:)
+    UserHistory.create!(
+      params.merge(
+        action: UserHistory.actions[:delete_associated_accounts],
+        target_user_id: user.id,
+        previous_value:,
+        context:,
+      ),
+    )
+  end
+
   private
 
   def json_params(previous_value, new_value)
@@ -1044,7 +1196,12 @@ class StaffActionLogger
 
   def params(opts = nil)
     opts ||= {}
-    { acting_user_id: @admin.id, context: opts[:context], details: opts[:details] }
+    {
+      acting_user_id: @admin.id,
+      context: opts[:context],
+      details: opts[:details],
+      reviewable_id: opts[:reviewable_id],
+    }
   end
 
   def validate_category(category)

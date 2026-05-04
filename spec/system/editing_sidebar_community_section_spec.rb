@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-RSpec.describe "Editing Sidebar Community Section", type: :system do
+RSpec.describe "Editing Sidebar Community Section" do
   fab!(:admin)
   fab!(:user)
 
@@ -23,7 +23,7 @@ RSpec.describe "Editing Sidebar Community Section", type: :system do
     visit("/latest")
 
     expect(sidebar.primary_section_icons("community")).to eq(
-      %w[layer-group user flag wrench ellipsis-v],
+      %w[layer-group user inbox flag wrench paper-plane ellipsis-vertical],
     )
 
     modal = sidebar.click_community_section_more_button.click_customize_community_section_button
@@ -32,12 +32,14 @@ RSpec.describe "Editing Sidebar Community Section", type: :system do
     modal.save
     modal.confirm_update
 
+    page.refresh
+
     expect(sidebar.primary_section_links("community")).to eq(
-      ["My Posts", "Topics", "Review", "Admin", "More"],
+      ["My posts", "My messages", "Topics", "Review", "Admin", "Invite", "More"],
     )
 
     expect(sidebar.primary_section_icons("community")).to eq(
-      %w[user paper-plane flag wrench ellipsis-v],
+      %w[user inbox paper-plane flag wrench paper-plane ellipsis-vertical],
     )
 
     modal = sidebar.click_community_section_more_button.click_customize_community_section_button
@@ -46,11 +48,11 @@ RSpec.describe "Editing Sidebar Community Section", type: :system do
     expect(sidebar).to have_section("Community")
 
     expect(sidebar.primary_section_links("community")).to eq(
-      ["Topics", "My Posts", "Review", "Admin", "More"],
+      ["Topics", "My posts", "My messages", "Review", "Admin", "Invite", "More"],
     )
 
     expect(sidebar.primary_section_icons("community")).to eq(
-      %w[layer-group user flag wrench ellipsis-v],
+      %w[layer-group user inbox flag wrench paper-plane ellipsis-vertical],
     )
   end
 

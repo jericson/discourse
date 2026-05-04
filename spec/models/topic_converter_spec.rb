@@ -3,7 +3,7 @@
 RSpec.describe TopicConverter do
   describe "convert_to_public_topic" do
     fab!(:admin)
-    fab!(:author) { Fabricate(:user) }
+    fab!(:author, :user)
     fab!(:category) { Fabricate(:category, topic_count: 1) }
     fab!(:private_message) { Fabricate(:private_message_topic, user: author) } # creates a topic without a first post
     let(:first_post) do
@@ -114,6 +114,37 @@ RSpec.describe TopicConverter do
         end
       end
 
+      it "creates small action and revision when not silent" do
+        Jobs.run_immediately!
+        first_post
+
+        expect do
+          TopicConverter.new(private_message, admin).convert_to_public_topic(category.id)
+        end.to change { PostRevision.count }.by(1)
+
+        expect(
+          private_message.posts.where(
+            post_type: Post.types[:small_action],
+            action_code: "public_topic",
+          ),
+        ).to be_present
+      end
+
+      it "skips small action, revision, and bump when silent" do
+        Jobs.run_immediately!
+        first_post
+        bumped_at = private_message.reload.bumped_at
+
+        expect do
+          TopicConverter.new(private_message, admin, silent: true).convert_to_public_topic(
+            category.id,
+          )
+        end.to not_change { PostRevision.count }
+
+        expect(private_message.posts.where(post_type: Post.types[:small_action])).to be_empty
+        expect(private_message.reload.bumped_at).to be_within(1.second).of(bumped_at)
+      end
+
       it "deletes notifications for users not allowed to see the topic" do
         staff_category = Fabricate(:private_category, group: Group[:staff])
         user_notification =
@@ -132,7 +163,7 @@ RSpec.describe TopicConverter do
 
   describe "convert_to_private_message" do
     fab!(:admin)
-    fab!(:author) { Fabricate(:user) }
+    fab!(:author, :user)
     fab!(:category)
     fab!(:topic) { Fabricate(:topic, user: author, category_id: category.id) }
     fab!(:post) { Fabricate(:post, topic: topic, user: topic.user) }
@@ -216,15 +247,39 @@ RSpec.describe TopicConverter do
         expect(Notification.exists?(admin_notification.id)).to eq(true)
       end
 
-      it "limits PM participants" do
+      it "fails with an error when posters exceed max_allowed_message_recipients" do
         SiteSetting.max_allowed_message_recipients = 2
         Fabricate(:post, topic: topic)
         Fabricate(:post, topic: topic)
 
-        private_message = topic.convert_to_private_message(post.user)
+        result = TopicConverter.new(topic, admin).convert_to_private_message
 
-        # Skips posters and just adds the acting user
-        expect(private_message.topic_allowed_users.count).to eq(1)
+        expect(result.errors[:base]).to be_present
+        expect(topic.reload.archetype).to eq(Archetype.default)
+      end
+
+      it "creates small action and revision when not silent" do
+        Jobs.run_immediately!
+
+        expect do TopicConverter.new(topic, admin).convert_to_private_message end.to change {
+          PostRevision.count
+        }.by(1)
+
+        expect(
+          topic.posts.where(post_type: Post.types[:small_action], action_code: "private_topic"),
+        ).to be_present
+      end
+
+      it "skips small action, revision, and bump when silent" do
+        Jobs.run_immediately!
+        bumped_at = topic.bumped_at
+
+        expect do
+          TopicConverter.new(topic, admin, silent: true).convert_to_private_message
+        end.to not_change { PostRevision.count }
+
+        expect(topic.posts.where(post_type: Post.types[:small_action])).to be_empty
+        expect(topic.reload.bumped_at).to be_within(1.second).of(bumped_at)
       end
 
       it "includes the poster of a single-post topic" do
@@ -235,16 +290,17 @@ RSpec.describe TopicConverter do
     end
 
     context "when topic has replies" do
+      let(:replied_user) { Fabricate(:coding_horror) }
+
       before do
-        @replied_user = Fabricate(:coding_horror)
-        create_post(topic: topic, user: @replied_user)
+        create_post(topic: topic, user: replied_user)
         topic.reload
       end
 
       it "adds users who replied to topic in Private Message" do
         topic.convert_to_private_message(admin)
 
-        expect(topic.reload.topic_allowed_users.where(user_id: @replied_user.id).count).to eq(1)
+        expect(topic.reload.topic_allowed_users.where(user_id: replied_user.id).count).to eq(1)
         expect(topic.reload.user.user_stat.post_count).to eq(0)
       end
     end

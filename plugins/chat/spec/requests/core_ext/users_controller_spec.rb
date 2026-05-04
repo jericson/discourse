@@ -12,7 +12,7 @@ describe UsersController do
     end
 
     it "triggers the auto-join process" do
-      user = Fabricate(:user, last_seen_at: 1.minute.ago, active: false)
+      user = Fabricate(:user, last_seen_at: 1.minute.ago, active: false, trust_level: 1)
       email_token = Fabricate(:email_token, user: user)
 
       put "/u/activate-account/#{email_token.token}"
@@ -24,14 +24,14 @@ describe UsersController do
   end
 
   describe "#user_menu_bookmarks" do
-    fab!(:chatters) { Fabricate(:group) }
+    fab!(:chatters, :group)
     let(:current_user) { Fabricate(:user, group_ids: [chatters.id]) }
     let(:bookmark_message) { Fabricate(:chat_message) }
     let(:bookmark_user) { current_user }
 
     before do
       register_test_bookmarkable(Chat::MessageBookmarkable)
-      SiteSetting.chat_allowed_groups = [chatters]
+      SiteSetting.chat_allowed_groups = chatters
       sign_in(current_user)
     end
 
@@ -55,15 +55,39 @@ describe UsersController do
   end
 
   describe "#show_card" do
-    fab!(:user) { Fabricate(:user) }
-    fab!(:another_user) { Fabricate(:user) }
+    fab!(:user)
+    fab!(:another_user, :user)
+
+    before do
+      SiteSetting.chat_enabled = true
+      SiteSetting.chat_allowed_groups = Group::AUTO_GROUPS[:everyone]
+      SiteSetting.direct_message_enabled_groups = Group::AUTO_GROUPS[:everyone]
+    end
+
+    context "when the card belongs to the current user" do
+      before { sign_in(user) }
+
+      it "returns that the user can message themselves" do
+        user.user_option.update!(hide_profile: false)
+        user.user_option.update!(chat_enabled: true)
+        get "/u/#{user.username}/card.json"
+        expect(response).to be_successful
+        expect(response.parsed_body["user"]["can_chat_user"]).to eq(true)
+      end
+
+      it "returns that the user can message themselves when the profile is hidden" do
+        user.user_option.update!(hide_profile: true)
+        user.user_option.update!(chat_enabled: true)
+        get "/u/#{user.username}/card.json"
+        expect(response).to be_successful
+        expect(response.parsed_body["user"]["can_chat_user"]).to eq(true)
+      end
+    end
+
     context "when hidden users" do
       before do
         sign_in(another_user)
-        SiteSetting.chat_enabled = true
-        SiteSetting.chat_allowed_groups = Group::AUTO_GROUPS[:everyone]
-        SiteSetting.direct_message_enabled_groups = Group::AUTO_GROUPS[:everyone]
-        user.user_option.update!(hide_profile_and_presence: true)
+        user.user_option.update!(hide_profile: true)
       end
 
       it "returns the correct partial response when the user has chat enabled" do

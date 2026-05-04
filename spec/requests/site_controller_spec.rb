@@ -26,8 +26,8 @@ RSpec.describe SiteController do
       expect(json["apple_touch_icon_url"]).to eq(expected_url)
       expect(json["logo_small_url"]).to eq(expected_url)
       expect(json["mobile_logo_url"]).to eq(expected_url)
-      expect(json["header_primary_color"]).to eq("333333")
-      expect(json["header_background_color"]).to eq("ffffff")
+      expect(json["header_primary_color"]).to eq("333")
+      expect(json["header_background_color"]).to eq("fff")
       expect(json["login_required"]).to eq(true)
       expect(json["locale"]).to eq("en")
       expect(json["include_in_discourse_discover"]).to eq(true)
@@ -45,7 +45,40 @@ RSpec.describe SiteController do
     end
   end
 
+  describe "#banner" do
+    fab!(:admin)
+    fab!(:group)
+    fab!(:private_category) { Fabricate(:private_category, group: group) }
+
+    before { ApplicationLayoutPreloader.banner_json_cache.clear }
+    after { ApplicationLayoutPreloader.banner_json_cache.clear }
+
+    it "does not expose banner content from a read-restricted category to anonymous users" do
+      topic = Fabricate(:topic, category: private_category, archetype: Archetype.banner)
+      Fabricate(:post, topic: topic, raw: "secret banner content")
+
+      get "/site/banner.json"
+      expect(response.status).to eq(200)
+      json = response.parsed_body
+      expect(json).to eq({})
+    end
+
+    it "does not expose banner content from a read-restricted category to regular users" do
+      user = Fabricate(:user)
+      topic = Fabricate(:topic, category: private_category, archetype: Archetype.banner)
+      Fabricate(:post, topic: topic, raw: "secret banner content")
+
+      sign_in(user)
+      get "/site/banner.json"
+      expect(response.status).to eq(200)
+      json = response.parsed_body
+      expect(json).to eq({})
+    end
+  end
+
   describe "#statistics" do
+    after { DiscoursePluginRegistry.reset! }
+
     it "is visible for sites requiring login" do
       SiteSetting.login_required = true
       SiteSetting.share_anonymized_statistics = true
@@ -68,6 +101,8 @@ RSpec.describe SiteController do
       expect(json["likes_count"]).to be_present
       expect(json["likes_7_days"]).to be_present
       expect(json["likes_30_days"]).to be_present
+      expect(json["participating_users_7_days"]).to be_present
+      expect(json["participating_users_30_days"]).to be_present
     end
 
     it "is not visible if site setting share_anonymized_statistics is disabled" do

@@ -5,17 +5,28 @@
 
 .chat-message-actions-container {
   @include unselectable;
+  position: fixed;
+  width: max-content;
+  top: 0;
+  left: 0;
   z-index: z("composer", "content");
+
+  // dynamically overridden by the component
+  visibility: hidden;
+  pointer-events: none;
+
+  &.is-size-full {
+    padding-left: 60px !important; /* for easier mouse movement to the element */
+  }
+
+  &.is-size-reduced {
+    padding-left: 20px !important; /* for easier mouse movement to the element */
+  }
 }
 
 .chat-message-actions {
   border-radius: var(--d-border-radius);
   display: flex;
-
-  .emoji-picker-anchor {
-    position: absolute;
-    height: 34px;
-  }
 
   .link-to-message-btn {
     .d-icon {
@@ -79,8 +90,8 @@
       width: 2.5em;
       transition: var(--d-button-transition);
       border-radius: var(--d-border-radius);
-      border-top-left-radius: 0px;
-      border-bottom-left-radius: 0px;
+      border-top-left-radius: 0;
+      border-bottom-left-radius: 0;
 
       &:focus {
         border-color: var(--primary-300);
@@ -112,12 +123,6 @@
       }
     }
 
-    .select-kit-body {
-      padding: 0.5rem;
-      box-shadow: var(--shadow-card);
-      border: 1px solid var(--primary-300);
-    }
-
     .select-kit-row {
       .texts .name {
         font-size: var(--font-0);
@@ -133,7 +138,6 @@
 
   .chat-message-reaction {
     @include chat-reaction;
-
     align-items: center;
     border-radius: 0;
     border-left-color: transparent;

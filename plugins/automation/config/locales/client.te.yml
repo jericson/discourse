@@ -7,8 +7,8 @@
 te:
   js:
     discourse_automation:
-      create: సృష్టించండి
-      update: నవీకరించండి
+      back: వెనుకకు
+      edit: సవరించండి
       fields:
         user:
           label: సభ్యుడు
@@ -27,6 +27,12 @@ te:
         text:
           label: వచనం
       triggerables:
+        post_flag_created:
+          fields:
+            categories:
+              label: వర్గాలు
+            tags:
+              label: ట్యాగులు
         user_badge_granted:
           fields:
             badge:
@@ -57,11 +63,15 @@ te:
               label: విషయపు ఐడీ
         post_created_edited:
           fields:
-            restricted_category:
-              label: వర్గం
-            restricted_group:
-              label: సమూహం
+            restricted_tags:
+              label: ట్యాగులు
+            restricted_categories:
+              label: వర్గాలు
           created: సృష్టించిన
+          with_images: చిత్రాలు
+          with_links: లింకులు
+          with_code: కోడ్
+          with_uploads: అప్‌లోడ్‌లు
         category_created_edited:
           fields:
             restricted_category:
@@ -125,6 +135,8 @@ te:
               label: విషయపు ఐడీ
             user:
               label: సభ్యుడు
+        set_topic_timer:
+          title: టాపిక్ టైమర్ ని సెట్ చేయండి
       models:
         trigger:
           name:
@@ -136,7 +148,7 @@ te:
             label: ట్రిగ్గర్
           version:
             label: సంస్కరణ
-          enabled:
-            label: ప్రారంభించబడింది
+          status:
+            label: స్థితి
           disabled:
             label: నిలిపివేయబడింది

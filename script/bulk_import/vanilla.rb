@@ -14,7 +14,7 @@ class BulkImport::Vanilla < BulkImport::Base
   BATCH_SIZE = 1000
   CONVERT_HTML = true
 
-  SUSPENDED_TILL ||= Date.new(3000, 1, 1)
+  SUSPENDED_TILL = Date.new(3000, 1, 1)
 
   def initialize
     super
@@ -63,7 +63,7 @@ class BulkImport::Vanilla < BulkImport::Base
 
     # SiteSetting.port = 3000
     # SiteSetting.permalink_normalizations = "/discussion\/(\d+)\/.*/discussion/\1"
-    # SiteSetting.automatic_backups_enabled = false
+    # SiteSetting.backup_frequency = 0
     # SiteSetting.disable_emails = "non-staff"
     # SiteSetting.authorized_extensions = '*'
     # SiteSetting.max_image_size_kb = 102400

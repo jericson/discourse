@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-describe "Admin Customize Form Templates", type: :system do
+describe "Admin Customize Form Templates" do
   let(:form_template_page) { PageObjects::Pages::FormTemplate.new }
   let(:ace_editor) { PageObjects::Components::AceEditor.new }
 
@@ -9,7 +9,7 @@ describe "Admin Customize Form Templates", type: :system do
   fab!(:category)
 
   before do
-    SiteSetting.experimental_form_templates = true
+    SiteSetting.enable_form_templates = true
     sign_in(admin)
   end
 
@@ -69,7 +69,7 @@ describe "Admin Customize Form Templates", type: :system do
     it "should prefill form data" do
       visit("/admin/customize/form-templates/#{form_template.id}")
       expect(form_template_page).to have_name_value(form_template.name)
-      # TODO(@keegan) difficult to test the ace editor content, todo later
+      expect(ace_editor).to have_content(form_template.template)
     end
   end
 
@@ -117,6 +117,25 @@ describe "Admin Customize Form Templates", type: :system do
       expect(form_template_page).to have_validations_modal
     end
 
+    it "allows previewing, closing the modal, and then saving the template" do
+      form_template_page.visit_new
+
+      sample_name = "Preview Close Save Template"
+      sample_template = "- type: input\n  id: name"
+
+      form_template_page.type_in_template_name(sample_name)
+      ace_editor.type_input(sample_template)
+
+      form_template_page.click_preview_button
+      expect(form_template_page).to have_preview_modal
+
+      find(".modal-close").click
+      expect(form_template_page).to have_no_preview_modal
+
+      form_template_page.click_save_button
+      expect(form_template_page).to have_form_template(sample_name)
+    end
+
     it "should show a preview of the template in a modal when clicking the preview button" do
       form_template_page.visit_new
       form_template_page.type_in_template_name("New Template")
@@ -128,23 +147,40 @@ describe "Admin Customize Form Templates", type: :system do
     end
 
     it "should render all the input field types in the preview" do
+      tag1 = Fabricate(:tag)
+      tag2 = Fabricate(:tag)
+      tag3 = Fabricate(:tag)
+      tag_group = Fabricate(:tag_group, tags: [tag1, tag2, tag3])
       form_template_page.visit_new
       form_template_page.type_in_template_name("New Template")
-      ace_editor.type_input(
-        "- type: input\n  id: name
-\b\b- type: textarea\n  id: description
-\b\b- type: checkbox\n  id: checkbox
-\b\b- type: dropdown\n  id: dropdown
-\b\b- type: upload\n  id: upload
-\b\b- type: multi-select\n  id: multi-select",
-      )
+      template = <<~YAML
+        - type: input
+          id: i1
+        - type: textarea
+          id: t2
+        - type: checkbox
+          id: checkbox
+        - type: dropdown
+          id: dropdown
+        - type: upload
+          id: upload
+        - type: multi-select
+          id: multi-select
+        - type: tag-chooser
+          id: tag-chooser
+          tag_group: "#{tag_group.name}"
+      YAML
+
+      ace_editor.type_input(template)
       form_template_page.click_preview_button
-      expect(form_template_page).to have_input_field("input")
-      expect(form_template_page).to have_input_field("textarea")
-      expect(form_template_page).to have_input_field("checkbox")
-      expect(form_template_page).to have_input_field("dropdown")
-      expect(form_template_page).to have_input_field("upload")
-      expect(form_template_page).to have_input_field("multi-select")
+
+      YAML
+        .safe_load(template)
+        .each do |field|
+          expect(form_template_page).to have_input_field_with_name(field["type"], field["id"])
+        end
+
+      tag_group.tags.each { |tag| expect(form_template_page).to have_tag_chooser_tag(tag) }
     end
 
     it "should allow quick insertion of checkbox field" do

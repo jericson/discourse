@@ -2,7 +2,7 @@
 
 module BackupRestore
   class S3BackupStore < BackupStore
-    UPLOAD_URL_EXPIRES_AFTER_SECONDS ||= 6.hours.to_i
+    UPLOAD_URL_EXPIRES_AFTER_SECONDS = 6.hours.to_i
 
     delegate :abort_multipart,
              :presign_multipart_part,
@@ -53,9 +53,6 @@ module BackupRestore
       obj = s3_helper.object(filename)
       raise BackupFileExists.new if obj.exists?
 
-      # TODO (martin) We can remove this at a later date when we move this
-      # ensure CORS for backups and direct uploads to a post-site-setting
-      # change event, so the rake task doesn't have to be run manually.
       @s3_helper.ensure_cors!([S3CorsRulesets::BACKUP_DIRECT_UPLOAD])
 
       presigned_url(obj, :put, UPLOAD_URL_EXPIRES_AFTER_SECONDS)
@@ -64,25 +61,6 @@ module BackupRestore
         "Failed to generate upload URL for S3: #{e.message.presence || e.class.name}",
       )
       raise StorageError.new(e.message.presence || e.class.name)
-    end
-
-    def signed_url_for_temporary_upload(
-      file_name,
-      expires_in: S3Helper::UPLOAD_URL_EXPIRES_AFTER_SECONDS,
-      metadata: {}
-    )
-      obj = object_from_path(file_name)
-      raise BackupFileExists.new if obj.exists?
-      key = temporary_upload_path(file_name)
-      s3_helper.presigned_url(
-        key,
-        method: :put_object,
-        expires_in: expires_in,
-        opts: {
-          metadata: metadata,
-          acl: SiteSetting.s3_use_acls ? "private" : nil,
-        },
-      )
     end
 
     def temporary_upload_path(file_name)
@@ -103,7 +81,13 @@ module BackupRestore
       obj = object_from_path(file_name)
       raise BackupFileExists.new if obj.exists?
       key = temporary_upload_path(file_name)
-      s3_helper.create_multipart(key, content_type, metadata: metadata)
+
+      s3_helper.create_multipart(
+        key,
+        content_type,
+        metadata: metadata,
+        **FileStore::S3Store.default_s3_options(secure: true),
+      )
     end
 
     def move_existing_stored_upload(
@@ -114,11 +98,11 @@ module BackupRestore
       s3_helper.copy(
         existing_external_upload_key,
         File.join(s3_helper.s3_bucket_folder_path, original_filename),
-        options: {
-          acl: SiteSetting.s3_use_acls ? "private" : nil,
-          apply_metadata_to_destination: true,
-        },
+        options: { apply_metadata_to_destination: true }.merge(
+          FileStore::S3Store.default_s3_options(secure: true),
+        ),
       )
+
       s3_helper.delete_object(existing_external_upload_key)
     end
 

@@ -12,14 +12,20 @@ be:
           always: "заўсёды"
           never: "ніколі"
     chat:
+      edit_category:
+        description: "Апісанне"
+        actions: "Дзеянні"
+        settings: "Налады"
       deleted_chat_username: аддалены
       dates:
         yesterday: "учора"
       create: "стварыць"
       cancel: "адмяніць"
+      pinned: "замацаваныя"
       channel_settings:
         edit: "рэдагаваць"
         add: "дадаць"
+        notification_settings_context: "Апавяшчэнні"
       close: "зачыніць"
       remove: "выдаліць"
       delete: "выдаляць"
@@ -35,7 +41,6 @@ be:
       edit: "рэдагаваць"
       bookmark_message: "закладка"
       save: "захаваць"
-      exit: "назад"
       channel_status:
         closed: "Закрыта"
       browse:
@@ -45,6 +50,8 @@ be:
       chat_message_separator:
         today: сёння
         yesterday: учора
+      search_view:
+        filter_placeholder: Пошук паведамленняў
       about_view:
         title: Загаловак
         name: імя
@@ -54,6 +61,8 @@ be:
         tabs:
           members: Удзельнікі
           settings: Налады
+          search: Пошук
+        remove_member: "выдаліць"
       new_message_modal:
         filter: "Filter"
       direct_message_creator:
@@ -82,6 +91,11 @@ be:
         category_label: "катэгорыя"
         history_label: "гісторыя"
         members_label: "Удзельнікі"
+      search:
+        short_title: Пошук
+        no_results: "Няма вынікаў"
+        sort:
+          latest: "апошняя"
       incoming_webhooks:
         back: "Назад"
         description: "Апісанне"
@@ -108,6 +122,8 @@ be:
         last_reply: "апошні адказ"
         notifications:
           tracking:
+            title: "Сачыць"
+          watching:
             title: "Сачыць"
       draft_channel_screen:
         header: "новае паведамленне"

@@ -1,13 +1,12 @@
 # frozen_string_literal: true
 
-describe "Admin Revamp | Sidebar Navigation | Plugin Links", type: :system do
+describe "Admin Revamp | Sidebar Navigation | Plugin Links" do
   fab!(:admin)
   let(:sidebar) { PageObjects::Components::NavigationMenu::Sidebar.new }
   let(:chat_page) { PageObjects::Pages::Chat.new }
 
   before do
     chat_system_bootstrap
-    SiteSetting.admin_sidebar_enabled_groups = Group::AUTO_GROUPS[:admins]
     sign_in(admin)
   end
 
@@ -43,7 +42,7 @@ describe "Admin Revamp | Sidebar Navigation | Plugin Links", type: :system do
       expect(sidebar).to have_switch_button("chat")
       sidebar.click_link_in_section("community", "admin")
       expect(sidebar).to have_no_switch_button("chat")
-      find("#site-logo").click
+      click_logo
       expect(sidebar).to have_switch_button("chat")
     end
 
@@ -56,7 +55,7 @@ describe "Admin Revamp | Sidebar Navigation | Plugin Links", type: :system do
       expect(sidebar).to have_no_switch_button("chat")
       sidebar.click_link_in_section("community", "admin")
       expect(sidebar).to have_no_section("chat-channels")
-      find("#site-logo").click
+      click_logo
       expect(sidebar).to have_section("chat-channels")
     end
 

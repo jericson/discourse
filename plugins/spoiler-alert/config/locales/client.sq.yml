@@ -5,3 +5,9 @@
 # https://translate.discourse.org/
 
 sq:
+  js:
+    spoiler:
+      label:
+        show: "Shfaq përmbajtjen e fshehur"
+    composer:
+      spoiler_text: "Ky tekst do të fshihet"

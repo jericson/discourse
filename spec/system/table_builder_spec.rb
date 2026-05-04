@@ -1,17 +1,24 @@
 # frozen_string_literal: true
 
-describe "Table Builder", type: :system do
+describe "Table Builder" do
   fab!(:user) { Fabricate(:user, refresh_auto_groups: true) }
   let(:composer) { PageObjects::Components::Composer.new }
   let(:insert_table_modal) { PageObjects::Modals::InsertTable.new }
   fab!(:topic) { Fabricate(:topic, user: user) }
+  fab!(:topic2) { Fabricate(:topic, user: user) }
   fab!(:post1) { create_post(user: user, topic: topic, raw: <<~RAW) }
-        |Make   | Model   | Year|
-        |--- | --- | ---|
-        |Toyota | Supra   | 1998|
-        |Nissan | Skyline | 1999|
-        |Honda  | S2000  | 2001|
-        RAW
+    |Make   | Model   | Year|
+    |--- | --- | ---|
+    |Toyota | Supra   | 1998|
+    |Nissan | Skyline | 1999|
+    |Honda  | S2000  | 2001|
+  RAW
+  fab!(:post2) { create_post(user: user, topic: topic2, raw: <<~RAW) }
+    | |  | |
+    |--- | --- | ---|
+    |Some | content | here|
+    |1 | 2 | 3|
+  RAW
 
   let(:topic_page) { PageObjects::Pages::Topic.new }
 
@@ -25,8 +32,8 @@ describe "Table Builder", type: :system do
     it "should add table items created in spreadsheet to composer input" do
       visit("/latest")
       page.find("#create-topic").click
-      page.find(".toolbar-popup-menu-options").click
-      page.find(".select-kit-row[data-name='Insert Table']").click
+      find(".toolbar-menu__options-trigger").click
+      page.find("button[data-name='toggle-spreadsheet']").click
       insert_table_modal.type_in_cell(0, 0, "Item 1")
       insert_table_modal.type_in_cell(0, 1, "Item 2")
       insert_table_modal.type_in_cell(0, 2, "Item 3")
@@ -34,15 +41,15 @@ describe "Table Builder", type: :system do
       insert_table_modal.click_insert_table
 
       created_table = <<~TABLE
-      |Column 1 | Column 2 | Column 3 | Column 4|
-      |--- | --- | --- | ---|
-      |Item 1 | Item 2 | Item 3 | Item 4|
-      | |  |  | |
-      | |  |  | |
-      | |  |  | |
-      | |  |  | |
-      | |  |  | |
-      TABLE
+            |Column 1 | Column 2 | Column 3 | Column 4|
+            |--- | --- | --- | ---|
+            |Item 1 | Item 2 | Item 3 | Item 4|
+            | |  |  | |
+            | |  |  | |
+            | |  |  | |
+            | |  |  | |
+            | |  |  | |
+          TABLE
 
       expect(normalize_value(composer.composer_input.value)).to eq(normalize_value(created_table))
     end
@@ -51,8 +58,8 @@ describe "Table Builder", type: :system do
       it "should close the modal if there are no changes made" do
         visit("/latest")
         page.find("#create-topic").click
-        page.find(".toolbar-popup-menu-options").click
-        page.find(".select-kit-row[data-name='Insert Table']").click
+        find(".toolbar-menu__options-trigger").click
+        page.find("button[data-name='toggle-spreadsheet']").click
         insert_table_modal.cancel
         expect(page).to have_no_css(".insert-table-modal")
       end
@@ -60,8 +67,8 @@ describe "Table Builder", type: :system do
       it "should show a warning popup if there are unsaved changes" do
         visit("/latest")
         page.find("#create-topic").click
-        page.find(".toolbar-popup-menu-options").click
-        page.find(".select-kit-row[data-name='Insert Table']").click
+        find(".toolbar-menu__options-trigger").click
+        page.find("button[data-name='toggle-spreadsheet']").click
         insert_table_modal.type_in_cell(0, 0, "Item 1")
         insert_table_modal.cancel
         expect(page).to have_css(".dialog-container .dialog-content")
@@ -96,16 +103,31 @@ describe "Table Builder", type: :system do
       insert_table_modal.click_insert_table
 
       updated_post = <<~RAW
-      |Make | Model | Year|
-      |--- | --- | ---|
-      |Toyota | Supra | 1998|
-      |Nissan | Skyline GTR | 1999|
-      |Honda | S2000 | 2001|
-      RAW
+            |Make | Model | Year|
+            |--- | --- | ---|
+            |Toyota | Supra | 1998|
+            |Nissan | Skyline GTR | 1999|
+            |Honda | S2000 | 2001|
+          RAW
 
-      try_until_success do
-        expect(normalize_value(post1.reload.raw)).to eq(normalize_value(updated_post))
-      end
+      expect(normalize_value(post1.reload.raw)).to eq(normalize_value(updated_post))
+    end
+
+    it "should respect the original empty header" do
+      topic_page.visit_topic(topic2)
+      topic_page.find(".btn-edit-table", visible: :all).click
+      expect(page).to have_selector(".insert-table-modal")
+      insert_table_modal.type_in_cell(0, 0, " updated")
+      insert_table_modal.click_insert_table
+
+      updated_post = <<~RAW
+            | |  | |
+            |--- | --- | ---|
+            |Some updated | content | here|
+            |1 | 2 | 3|
+          RAW
+
+      expect(normalize_value(post2.reload.raw)).to eq(normalize_value(updated_post))
     end
 
     context "when adding an edit reason" do
@@ -133,6 +155,14 @@ describe "Table Builder", type: :system do
         expect(page).to have_no_css(".insert-table-modal")
       end
 
+      it "closes the modal if there are no changes in a table with empty headers" do
+        topic_page.visit_topic(topic2)
+        topic_page.find(".btn-edit-table", visible: :all).click
+        insert_table_modal.cancel
+
+        expect(page).to have_no_css(".insert-table-modal")
+      end
+
       it "should show a warning popup if there are unsaved changes" do
         topic_page.visit_topic(topic)
         topic_page.find(".btn-edit-table", visible: :all).click
@@ -144,15 +174,29 @@ describe "Table Builder", type: :system do
     end
 
     it "should not accept default Discourse keyboard shortcuts" do
-      # Some default keyboard shortcuts like Shift + S bring up a modal overriding
-      # the table builder modal and therefore should not be accepted
-
       topic_page.visit_topic(topic)
       topic_page.find(".btn-edit-table", visible: :all).click
       insert_table_modal.find_cell(0, 0)
       insert_table_modal.send_keys(:shift, "s")
       expect(page).to have_css(".insert-table-modal")
       expect(page).to have_no_css(".share-topic-modal")
+    end
+
+    it "does not show duplicate edit buttons on quoted tables" do
+      raw = <<~MD
+        [quote="#{user.username}, post:#{post1.post_number}, topic:#{topic.id}"]
+        |Make | Model | Year|
+        | - | - | - |
+        | Toyota | Supra | 1998 |
+        [/quote]
+      MD
+
+      quoting_post = create_post(user:, topic:, raw:)
+      topic_page.visit_topic(topic)
+
+      within "#post_#{quoting_post.post_number}" do
+        expect(page).to have_css(".btn-edit-table", count: 1, visible: :all)
+      end
     end
   end
 end

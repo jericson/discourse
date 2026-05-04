@@ -133,7 +133,7 @@ pl_PL:
           Obecnie wiem, jak zrobić następujące rzeczy:
 
           `@%{discobot_username} %{reset_trigger} {name-of-tutorial}`
-          > Uruchamia interaktywny samouczek tylko dla Ciebie, w osobistej wiadomości. `{name-of-tutorial}` może być jednym z: `%{tracks}`.
+          > Uruchamia interaktywny samouczek tylko dla Ciebie, w prywatnej wiadomości. `{name-of-tutorial}` może być jednym z: `%{tracks}`.
         bot_actions: |-
           `@ %{discobot_username} %{dice_trigger} 2d6`
           > :game_die: 3, 6
@@ -172,22 +172,21 @@ pl_PL:
           - Wierzymy w [cywilizowane zachowanie członków](%{base_uri}/guidelines) społeczności w każdej sytuacji.
       onebox:
         instructions: |-
-          Następnie, czy możesz udostępnić mi jeden z poniższych linków? Odpowiedz przy użyciu **linku w osobnej linii**, a automatycznie zostanie dodane jego sprytne podsumowanie.
+          Następnie, czy możesz podzielić się ze mną jednym z tych linków? Odpowiedz **linkiem w osobnym wierszu**, a zostanie on automatycznie rozwinięty i będzie zawierał ciekawe podsumowanie.
 
-          Aby skopiować link, naciśnij i przytrzymaj na urządzeniu przenośnym lub kliknij prawym przyciskiem myszy:
+          Aby skopiować dowolny link, dotknij i przytrzymaj na telefonie komórkowym lub kliknij prawym przyciskiem myszy urządzenie wskazujące:
 
-          <https://en.wikipedia.org/wiki/Inherently_funny_word>
-          <https://en.wikipedia.org/wiki/Death_by_coconut>
-          <https://en.wikipedia.org/wiki/Calculator_spelling>
+          [https://en.wikipedia.org/wiki/Inherently_funny_word](https://en.wikipedia.org/wiki/Inherently_funny_word)
+          [https://en.wikipedia.org/wiki/Death_by_coconut](https://en.wikipedia.org/wiki/Death_by_coconut)
+          [https://en.wikipedia.org/wiki/Calculator_spelling](https://en.wikipedia.org/wiki/Calculator_spelling)
         reply: |-
           Super! To zadziała dla większości <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-link.png" width="16" height="16"> linków. Pamiętaj, żeby umieszczać link w _osobnej linii_, z pustym miejscem przed nim i za nim.
         not_found: |-
-          Przepraszam, nie mogłem znaleźć linku w twojej odpowiedzi!
-          :cry:
+          Przepraszam, nie mogłem znaleźć linku w Twojej odpowiedzi! :cry:
 
-          Czy możesz spróbować dodać następujący link, w osobnej linii, w następnej odpowiedzi?
+          Czy możesz spróbować dodać poniższy link, w osobnym wierszu, w następnej odpowiedzi?
 
-          <https://en.wikipedia.org/wiki/Exotic_Shorthair>
+          [https://en.wikipedia.org/wiki/Exotic_Shorthair](https://en.wikipedia.org/wiki/Exotic_Shorthair)
       images:
         instructions: |-
           To jest obrazek jednorożca:
@@ -254,7 +253,7 @@ pl_PL:
         instructions: |-
           Jeśli chcesz dowiedzieć się więcej, wybierz <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-ellipsis.png" width="16" height="16">poniżej i <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-bookmark.png" width="16" height="16"> **dodaj tę wiadomość prywatną do zakładek**. Jeśli to zrobisz, możesz otrzymać :gift: w przyszłości!
         reply: |-
-          Doskonały! Teraz możesz łatwo znaleźć drogę do naszej prywatnej rozmowy w dowolnym momencie, bezpośrednio z [zakładki zakładek w swoim profilu] (%{bookmark_url}). Wystarczy wybrać zdjęcie profilowe w prawym górnym rogu ↗
+          Doskonale! Teraz możesz łatwo wrócić do naszej rozmowy w dowolnym momencie, bezpośrednio z [menu zakładek na swoim profilu](%{bookmark_url}). Wystarczy wybrać swoje zdjęcie profilowe w prawym górnym rogu &#8599;.
         not_found: |-
           Ups, nie widzę żadnych zakładek w tym temacie. Czy widzisz przycisk zakładki pod każdym wpisem? Użyj przycisku „pokaż więcej” <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-ellipsis.png" width="16" height="16">, żeby wyświetlić więcej akcji, jeśli to potrzebne.
       emoji:
@@ -290,13 +289,13 @@ pl_PL:
           (https://www.youtube.com/watch?v=B_wGI3_sGf8) :dancer:)
       flag:
         instructions: |-
-          Lubimy, gdy nasze dyskusje są przyjazne i potrzebujemy Twojej pomocy, aby [zachować cywilizowane wypowiedzi](%{guidelines_url}). Jeśli zauważysz problem, zgłoś go w prywatnej wiadomości autorowi lub [naszemu pomocnemu personelowi](%{about_url}). Istnieje wiele powodów, dla których chcesz oznaczyć post, począwszy od nieszkodliwej sugestii dotyczącej podziału tematów aż po wyraźne naruszenie standardów społeczności. Jeśli wybierzesz **coś innego**, rozpoczniesz prywatną dyskusję z moderatorami, gdzie możesz zadawać dodatkowe pytania.
+          Lubimy przyjazne dyskusje i potrzebujemy Twojej pomocy, aby [utrzymać kulturę](%{guidelines_url}). Jeśli zauważysz problem, zgłoś go, aby autor lub [nasz pomocny personel](%{about_url}) dowiedzieli się o tym. Istnieje wiele powodów, dla których możesz chcieć zgłosić post, od niewinnej sugestii podziału tematu po wyraźne naruszenie standardów społeczności. Jeśli wybierzesz **coś innego**, rozpoczniesz prywatną rozmowę z moderatorami, w której możesz zadać dalsze pytania.
 
-          > :imp: napisałem tutaj coś nieprzyjemnego
+          > :imp: Napisałem tutaj coś paskudnego
 
-          Idąc dalej, **oflaguj ten post** <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-flag.png" width="16" height="16"> i wybierz **to niewłaściwe** jako powód!
+          Śmiało, **zgłoś ten post** <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-flag.png" width="16" height="16"> i wybierz jako powód **Jest niewłaściwy**!
         reply: |-
-          [Nasz zespół](%{base_uri}/groups/staff) zostanie prywatnie poinformowany o Twojej fladze. W przypadku, gdy wystarczająca liczba członków społeczności oflaguje ten sam wpis, zostanie on automatycznie ukryty ze względów ostrożności (Jako żę tak naprawdę nie napisałem niczego nieodpowiedniego :angel:, po prostu usunąłem flagę ze swojego wpisu),
+          [Nasz personel](%{group_url}) zostanie prywatnie powiadomiony o Twoim zgłoszeniu. Jeśli wystarczająca liczba członków społeczności zgłosi post, zostanie on również automatycznie ukryty jako środek ostrożności. (Ponieważ faktycznie nie napisałem złośliwego posta :angel:, na razie usunąłem zgłoszenie.)
         not_found: |-
           O nie, mój nieodpowiedni wpis nie został jeszcze oflagowany. :worried: Czy możesz oznaczyć post jako nieodpowiedni, używając flagi <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-flag.png" width="16" height="16">? Nie zapomnij użyć przycisku „pokaż więcej” <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-ellipsis.png" width="16" height="16">, by wyświetlić więcej opcji przy dla danego wpisu.
       search:
@@ -391,11 +390,11 @@ pl_PL:
           Wspaniale! Pamiętaj, że działa to zarówno dla kategorii _i_ tagów, jeśli taka możliwość jest dostępna.
       change_topic_notification_level:
         instructions: |-
-          Każdy wątek ma swój poziom powiadomień. Zaczyna z poziomem „normalnym”, co oznacza, że zostaniesz powiadomiony tylko wówczas, gdy ktoś odezwie się bezpośrednio do Ciebie.
+          Każdy temat ma poziom powiadomień. Zaczyna się od "normalnego", co oznacza, że zazwyczaj otrzymasz powiadomienie tylko wtedy, gdy ktoś mówi bezpośrednio do Ciebie.
 
-          Domyślnie, poziom powiadomień prywatnych wiadomości ustawiony jest na najwyższy możliwy – „obserwowanie”. Możesz zmienić poziom powiadomień dla _każdego_ wątku na „obserwowanie”, „śledzenie” lub „wyciszenie”.
+          Domyślnie poziom powiadomień dla wiadomości osobistej jest ustawiony na najwyższy poziom "obserwowania", co oznacza, że będziesz otrzymywać powiadomienia o każdej nowej odpowiedzi. Możesz jednak zmienić poziom powiadomień dla _dowolnego_ tematu na "obserwowanie", "śledzenie" lub "wyciszenie".
 
-          Spróbujmy zmienić poziom powiadomień w tym wątku. Na dole znajdziesz przycisk, który mówi o tym, że **obserwujesz** wątek. Czy mógłbyś zmienić poziom powiadomień na **śledzenie***?
+          Spróbujmy zmienić poziom powiadomień dla tego tematu. Na dole tematu znajdziesz przycisk, który pokazuje, że **obserwujesz** ten temat. Czy możesz zmienić poziom powiadomień na **śledzenie**?
         not_found: |-
           Wygląda na to, że ciągle obserwujesz :eyes: ten temat! Jeśli masz problem w znalezieniu, przycisk poziomu notyfikacji znajduję się na dole tego tematu.
         reply: |-
@@ -404,7 +403,7 @@ pl_PL:
           Zauważ, że gdy odpowiadasz w temacie lub czytasz temat przez dłużej niż kilka minut, poziom powiadomień automatycznie zmienia się na "śledzenie". Możesz zmienić to zachowanie w [ustawieniach użytkownika](%{base_uri}/my/preferences).
       poll:
         instructions: |-
-          Wiesz, że możesz dodać ankietę do każdego posta? Spróbuj użyć <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-gear.png" width="16" height="16"> zębatki w edytorze, by **utworzyć ankietę**.
+          Czy wiesz, że możesz dodać ankietę do dowolnego posta? Spróbuj użyć ikony <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-plus.png" width="16" height="16"> w edytorze, aby **zbudować ankietę**.
         not_found: |-
           Ups! Nie było żadnej ankiety w Twojej odpowiedzi.
 
@@ -412,8 +411,8 @@ pl_PL:
 
           ```text
           [poll]
-          * :kot:
-          * :pies:
+          * :cat:
+          * :dog:
           [/poll]
           ```
         reply: |-
@@ -425,23 +424,23 @@ pl_PL:
           [/poll]
       details:
         instructions: |-
-          Czasami możesz chcieć **ukryć szczegóły** w Twoich odpowiedziach:
+          Czasami możesz chcieć **ukryć szczegóły** w swoich odpowiedziach:
 
-          - Kiedy dyskutujesz o wątkach fabuły w filmie lub serialu, które mogą zostać uznane za spoiler.
+          - Kiedy omawiasz punkty fabuły filmu lub serialu telewizyjnego, które mogą być uznane za spoiler.
 
-          - Kiedy Twój wpis zawiera wiele opcjonalnych informacji, które mogą być przytłaczające, gdy ktoś przeczyta je od razu.
+          - Kiedy Twój post wymaga wielu opcjonalnych szczegółów, które mogą być przytłaczające, gdy są czytane na raz.
 
-          [details=Wybierz, by zobaczyć, jak to działa!]
-          1. Naciśnij przycisk <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-gear.png" width="16" height="16"> koła zębatego w edytorze.
-          2. Wybierz „ukryj szczegóły”.
-          3. Edytuj podsumowanie i dodaj zawartość szczegółów.
+          [details=Wybierz tę opcję, aby zobaczyć, jak to działa!]
+          1. Wybierz ikonę <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-plus.png" width="16" height="16"> w edytorze.
+          2. Wybierz „Ukryj szczegóły”.
+          3. Edytuj podsumowanie szczegółów i dodaj swoją treść.
           [/details]
 
-          Czy możesz użyć <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-gear.png" width="16" height="16"> koła zębatego w edytorze, by dodać sekcję detali do swojej kolejnej odpowiedzi?
+          Czy możesz użyć ikony <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-plus.png" width="16" height="16"> w edytorze, aby dodać sekcję szczegółów do swojej następnej odpowiedzi?
         not_found: |-
           Czy masz problem przy tworzeniu widgetu szczegółów? Spróbuj dołączyć następujący tekst w twojej odpowiedzi.
 
-          ```tekst
+          ``` text
           [details=Pokaż szczegóły]
           Tutaj są szczegóły
           [/details]

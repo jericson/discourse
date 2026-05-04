@@ -9,7 +9,7 @@ export default class ChatNavbarThreadSettingsButton extends Component {
   @service modal;
 
   get canChangeThreadSettings() {
-    if (!this.args.thread) {
+    if (!this.args.thread?.originalMessage) {
       return false;
     }
 
@@ -28,7 +28,7 @@ export default class ChatNavbarThreadSettingsButton extends Component {
     {{#if this.canChangeThreadSettings}}
       <DButton
         @action={{this.openThreadSettings}}
-        @icon="cog"
+        @icon="gear"
         @title="chat.thread.settings"
         class="btn-transparent c-navbar__thread-settings-button"
       />

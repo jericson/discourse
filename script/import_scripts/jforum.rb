@@ -5,7 +5,7 @@ require_relative "base"
 
 class ImportScripts::JForum < ImportScripts::Base
   BATCH_SIZE = 1000
-  REMOTE_AVATAR_REGEX ||= %r{\Ahttps?://}i
+  REMOTE_AVATAR_REGEX = %r{\Ahttps?://}i
 
   def initialize
     super
@@ -89,7 +89,7 @@ class ImportScripts::JForum < ImportScripts::Base
   def user_fields
     @user_fields ||=
       begin
-        Hash[UserField.all.map { |field| [field.name, field] }]
+        UserField.all.index_by(&:name)
       end
   end
 

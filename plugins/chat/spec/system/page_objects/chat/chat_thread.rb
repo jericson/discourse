@@ -3,6 +3,10 @@
 module PageObjects
   module Pages
     class ChatThread < PageObjects::Pages::Base
+      def open?
+        has_css?(".chat-thread.--loaded")
+      end
+
       def composer
         @composer ||= PageObjects::Components::Chat::Composer.new(".chat-thread")
       end
@@ -17,28 +21,24 @@ module PageObjects
       end
 
       def header
-        @header ||= PageObjects::Components::Chat::ThreadHeader.new(".c-routes-channel-thread")
+        @header ||= PageObjects::Components::Chat::ThreadHeader.new(".c-routes.--channel-thread")
       end
 
       def notifications_button
         @notifications_button ||=
-          PageObjects::Components::SelectKit.new(".thread-notifications-button")
+          PageObjects::Components::NotificationsTracking.new(".thread-notifications-tracking")
       end
 
       def notification_level=(level)
-        notifications_button.expand
-        notifications_button.select_row_by_value(
+        notifications_button.toggle
+        notifications_button.select_level_id(
           ::Chat::UserChatThreadMembership.notification_levels[level.to_sym],
         )
-        notifications_button.has_selected_value?(
-          ::Chat::UserChatThreadMembership.notification_levels[level.to_sym],
-        )
+        has_notification_level?(level)
       end
 
       def has_notification_level?(level)
-        select_kit =
-          PageObjects::Components::SelectKit.new(".c-navbar__thread-tracking-dropdown.-persisted")
-        select_kit.has_selected_value?(
+        notifications_button.has_selected_level_id?(
           ::Chat::UserChatThreadMembership.notification_levels[level.to_sym],
         )
       end
@@ -68,6 +68,14 @@ module PageObjects
         header.find(".c-navbar__back-button").click
       end
 
+      def back_to_thread_list(channel)
+        header.find(".c-navbar__back-button[href='#{channel.relative_url}/t']").click
+      end
+
+      def back_to_channel(channel)
+        header.find(".c-navbar__back-button[href='#{channel.relative_url}']").click
+      end
+
       def has_no_unread_list_indicator?
         has_no_css?(".c-navbar__back-button .chat-thread-header-unread-indicator")
       end
@@ -80,7 +88,7 @@ module PageObjects
       end
 
       def has_no_loading_skeleton?
-        has_no_css?(".chat-thread__messages .chat-skeleton")
+        has_no_css?(".chat-thread .chat-skeleton")
       end
 
       def type_in_composer(input)
@@ -94,13 +102,15 @@ module PageObjects
       end
 
       def click_composer
-        find(".chat-thread .chat-composer__input").click # ensures autocomplete is closed and not masking anything
+        if has_no_css?(".dialog-overlay", wait: 0) # we can't click composer if a dialog is open, in case of error for exampel
+          find(".chat-thread .chat-composer__input").click # ensures autocomplete is closed and not masking anything
+        end
       end
 
       def send_message(text = nil)
-        text ||= Faker::Lorem.characters(number: SiteSetting.chat_minimum_message_length)
+        text ||= fake_chat_message
         text = text.chomp if text.present? # having \n on the end of the string counts as an Enter keypress
-        composer.fill_in(with: text)
+        fill_composer(text)
         click_send_message
         expect(page).to have_no_css(".chat-message.-not-processed")
         click_composer
@@ -125,7 +135,31 @@ module PageObjects
       end
 
       def hover_message(message)
-        message_by_id(message.id).hover
+        message = message_by_id(message.id)
+        # Scroll to top of message so that the actions are not hidden
+        page.scroll_to(message, align: :top)
+        message.hover
+        message
+      end
+
+      def react_to_message(message, emoji_name = nil)
+        message = hover_message(message)
+
+        if emoji_name
+          message.find(".react-btn").click
+        else
+          message.find(".chat-message-actions [data-emoji-name=\"#{emoji_name}\"]").click
+        end
+      end
+
+      def has_reaction?(message, emoji, text = nil)
+        within(message_reactions_list(message)) do
+          has_css?("[data-emoji-name=\"#{emoji}\"]", text: text)
+        end
+      end
+
+      def message_reactions_list(message)
+        within(message_by_id(message.id)) { find(".chat-message-reaction-list") }
       end
 
       def message_by_id(id)

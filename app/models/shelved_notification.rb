@@ -13,7 +13,7 @@ end
 # Table name: shelved_notifications
 #
 #  id              :bigint           not null, primary key
-#  notification_id :integer          not null
+#  notification_id :bigint           not null
 #
 # Indexes
 #

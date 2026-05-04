@@ -46,7 +46,7 @@
     }
 
     .d-icon-lock {
-      background-color: var(--primary-low);
+      background-color: var(--primary-very-low);
     }
   }
 
@@ -75,11 +75,30 @@
     overflow: hidden;
   }
 
+  &__name-container {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    overflow: hidden;
+  }
+
+  &__starred-icon {
+    display: flex;
+    align-items: center;
+    color: var(--primary-low-mid);
+    flex-shrink: 0;
+
+    .d-icon {
+      font-size: var(--font-down-2);
+    }
+  }
+
   .chat-channel {
     &__user-info,
     &__channel-info {
       white-space: nowrap;
       overflow: hidden;
+
       @include ellipsis;
       display: flex;
       align-items: center;
@@ -90,22 +109,6 @@
       align-items: flex-end;
       flex-direction: column;
       margin-left: 0.5em;
-
-      .chat-channel-unread-indicator {
-        @include chat-unread-indicator;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 8px;
-        height: 8px;
-
-        &.-urgent {
-          width: auto;
-          height: auto;
-          min-width: 0.6em;
-          padding: 0.3em 0.5em;
-        }
-      }
     }
 
     &__metadata-date {

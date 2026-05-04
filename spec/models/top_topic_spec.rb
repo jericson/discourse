@@ -3,14 +3,12 @@
 RSpec.describe TopTopic do
   describe "#sorted_periods" do
     context "when verifying enum sequence" do
-      before { @sorted_periods = TopTopic.sorted_periods }
-
       it "'daily' should be at 1st position" do
-        expect(@sorted_periods[:daily]).to eq(1)
+        expect(described_class.sorted_periods[:daily]).to eq(1)
       end
 
       it "'all' should be at 6th position" do
-        expect(@sorted_periods[:all]).to eq(6)
+        expect(described_class.sorted_periods[:all]).to eq(6)
       end
     end
   end
@@ -18,8 +16,8 @@ RSpec.describe TopTopic do
   it { is_expected.to belong_to :topic }
 
   describe ".refresh!" do
-    fab!(:t1) { Fabricate(:topic) }
-    fab!(:t2) { Fabricate(:topic) }
+    fab!(:t1, :topic)
+    fab!(:t2, :topic)
 
     it "begins blank" do
       expect(TopTopic.all).to be_blank
@@ -30,6 +28,36 @@ RSpec.describe TopTopic do
 
       it "should have top topics" do
         expect(TopTopic.pluck(:topic_id)).to match_array([t1.id, t2.id])
+      end
+    end
+  end
+
+  describe ".validate_period" do
+    context "when passing a valid period" do
+      it do
+        expect { described_class.validate_period(described_class.periods.first) }.not_to raise_error
+      end
+    end
+
+    context "when passing a blank value" do
+      it do
+        expect { described_class.validate_period(nil) }.to raise_error(Discourse::InvalidParameters)
+      end
+    end
+
+    context "when passing an invalid period" do
+      it do
+        expect { described_class.validate_period("bi-weekly") }.to raise_error(
+          Discourse::InvalidParameters,
+        )
+      end
+    end
+
+    context "when passing a non-string value" do
+      it do
+        expect { described_class.validate_period(ActionController::Parameters) }.to raise_error(
+          Discourse::InvalidParameters,
+        )
       end
     end
   end
@@ -151,6 +179,13 @@ RSpec.describe TopTopic do
       expect(top_topics.where(topic_id: topic_3.id).pick(:yearly_score)).to be_within(
         0.0000000001,
       ).of(10.602059991328)
+    end
+
+    it "triggers a DiscourseEvent for each refreshed period" do
+      events = DiscourseEvent.track_events(:top_score_computed) { TopTopic.refresh! }
+      periods = events.map { |e| e[:params].first[:period] }
+
+      expect(periods).to match_array(%i[daily weekly monthly quarterly yearly all])
     end
   end
 end

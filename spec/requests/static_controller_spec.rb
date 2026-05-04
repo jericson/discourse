@@ -70,7 +70,7 @@ RSpec.describe StaticController do
 
     it "can serve assets" do
       begin
-        assets_path = Rails.root.join("public/assets")
+        assets_path = Rails.public_path.join("assets")
 
         FileUtils.mkdir_p(assets_path)
 
@@ -83,6 +83,69 @@ RSpec.describe StaticController do
         expect(response.headers["Cache-Control"]).to match(/public/)
       ensure
         File.delete(file_path)
+      end
+    end
+
+    it "does not serve files outside the assets directory via path traversal" do
+      begin
+        secret_dir = Rails.public_path.join("assets-secret")
+        FileUtils.mkdir_p(secret_dir)
+        secret_file = secret_dir.join("leak.txt")
+        File.write(secret_file, "secret content")
+
+        get "/cdn_asset/#{site}/../assets-secret/leak.txt"
+
+        expect(response.status).to eq(404)
+      ensure
+        File.delete(secret_file) if secret_file && File.exist?(secret_file)
+        FileUtils.rm_rf(secret_dir) if secret_dir && Dir.exist?(secret_dir)
+      end
+    end
+
+    context "with fallback_assets_path" do
+      it "serves files from the fallback assets directory" do
+        Dir.mktmpdir do |tmpdir|
+          fallback_dir = File.join(tmpdir, "fallback_assets")
+          FileUtils.mkdir_p(fallback_dir)
+
+          File.write(File.join(fallback_dir, "test-asset.js"), "fallback js content")
+
+          GlobalSetting.stubs(:fallback_assets_path).returns(fallback_dir)
+
+          get "/cdn_asset/#{site}/test-asset.js"
+
+          expect(response.status).to eq(200)
+          expect(response.headers["Cache-Control"]).to match(/public/)
+          expect(response.body).to eq("fallback js content")
+        end
+      end
+
+      it "returns 404 for files not in primary or fallback" do
+        Dir.mktmpdir do |tmpdir|
+          fallback_dir = File.join(tmpdir, "fallback_assets")
+          FileUtils.mkdir_p(fallback_dir)
+
+          GlobalSetting.stubs(:fallback_assets_path).returns(fallback_dir)
+
+          get "/cdn_asset/#{site}/nonexistent.js"
+
+          expect(response.status).to eq(404)
+        end
+      end
+      it "rejects fallback paths that traverse outside the fallback directory" do
+        Dir.mktmpdir do |tmpdir|
+          fallback_dir = File.join(tmpdir, "fallback_assets")
+          FileUtils.mkdir_p(fallback_dir)
+
+          File.write(File.join(fallback_dir, "test-asset.js"), "fallback js content")
+
+          GlobalSetting.stubs(:fallback_assets_path).returns(fallback_dir)
+
+          get "/cdn_asset/#{site}/../test-asset.js"
+
+          expect(response.status).to eq(404)
+          expect(response.body).not_to eq("fallback js content")
+        end
       end
     end
   end
@@ -99,9 +162,13 @@ RSpec.describe StaticController do
       it "should return the right response for /faq" do
         get "/faq"
 
+        expect(response).to redirect_to("/guidelines")
+
+        get "/guidelines"
+
         expect(response.status).to eq(200)
-        expect(response.body).to include(I18n.t("js.faq"))
-        expect(response.body).to include("<title>FAQ - Discourse</title>")
+        expect(response.body).to include(I18n.t("js.guidelines"))
+        expect(response.body).to include("<title>Guidelines - Discourse</title>")
       end
     end
 
@@ -150,7 +217,7 @@ RSpec.describe StaticController do
       end
     end
 
-    it "should redirect to / when logged in and path is /login" do
+    it "should redirect to / when logged in and path is /login without redirect" do
       sign_in(Fabricate(:user))
       get "/login"
       expect(response).to redirect_to("/")
@@ -176,23 +243,33 @@ RSpec.describe StaticController do
           get "/#{page_name}"
           expect(response).to redirect_to "/login"
         end
+      end
 
-        it "#{page_name} page loads for logged in user" do
+      it "guidelines page loads for logged in user" do
+        sign_in(Fabricate(:user))
+
+        get "/guidelines"
+
+        expect(response.status).to eq(200)
+        expect(response.body).to include(I18n.t("js.guidelines"))
+      end
+
+      %w[faq rules conduct].each do |page_name|
+        it "#{page_name} page redirects to guidelines for logged in user" do
           sign_in(Fabricate(:user))
 
           get "/#{page_name}"
 
-          expect(response.status).to eq(200)
-          expect(response.body).to include(I18n.t("js.guidelines"))
+          expect(response).to redirect_to("/guidelines")
         end
       end
     end
 
     context "with crawler view" do
       it "should include correct title" do
-        get "/faq", headers: { "HTTP_USER_AGENT" => "Googlebot" }
+        get "/guidelines", headers: { "HTTP_USER_AGENT" => "Googlebot" }
         expect(response.status).to eq(200)
-        expect(response.body).to include("<title>FAQ - Discourse</title>")
+        expect(response.body).to include("<title>Guidelines - Discourse</title>")
       end
     end
 
@@ -230,13 +307,13 @@ RSpec.describe StaticController do
             current_user&.locale == "pl" ? "test_some_other_topic_id" : "test_some_topic_id"
           end
 
-        get "/faq"
+        get "/guidelines"
 
         expect(response.status).to eq(200)
         expect(response.body).to include("Regular FAQ")
 
         sign_in(Fabricate(:user, locale: "pl"))
-        get "/faq"
+        get "/guidelines"
 
         expect(response.status).to eq(200)
         expect(response.body).to include("Polish FAQ")
@@ -251,6 +328,72 @@ RSpec.describe StaticController do
         get "/login"
         get "/login"
       end.to_not change { SiteSetting.title }
+    end
+
+    context "without a subfolder" do
+      it "redirects as requested when logged in and path is /login with valid redirect param" do
+        sign_in(Fabricate(:user))
+        get "/login", params: { redirect: "/foo" }
+        expect(response).to redirect_to("/foo")
+      end
+
+      it "redirects to / when logged in and path is /login with invalid redirect param" do
+        sign_in(Fabricate(:user))
+        get "/login", params: { redirect: "//foo" }
+        expect(response).to redirect_to("/")
+        get "/login", params: { redirect: "foo" }
+        expect(response).to redirect_to("/")
+        get "/login", params: { redirect: "http://foo" }
+        expect(response).to redirect_to("/")
+        get "/login", params: { redirect: "www.foo.bar" }
+        expect(response).to redirect_to("/")
+      end
+
+      context "when setting the destination_url cookie" do
+        it "respects the redirect parameter in the cookie" do
+          get "/login", params: { redirect: "/foo" }
+          expect(response.cookies["destination_url"]).to eq("/foo")
+        end
+
+        it "respects the redirect parameter including the query params" do
+          get "/login", params: { redirect: "/foo?filter=test" }
+          expect(response.cookies["destination_url"]).to eq("/foo?filter=test")
+        end
+      end
+    end
+
+    context "with a subfolder" do
+      before { set_subfolder "/sub_test" }
+
+      it "redirects as requested when logged in and path is /login with valid redirect param" do
+        sign_in(Fabricate(:user))
+        get "/login", params: { redirect: "/foo" }
+        expect(response).to redirect_to("/sub_test/foo")
+      end
+
+      it "redirects to / when logged in and path is /login with invalid redirect param" do
+        sign_in(Fabricate(:user))
+        get "/login", params: { redirect: "//foo" }
+        expect(response).to redirect_to("/sub_test/")
+        get "/login", params: { redirect: "foo" }
+        expect(response).to redirect_to("/sub_test/")
+        get "/login", params: { redirect: "http://foo" }
+        expect(response).to redirect_to("/sub_test/")
+        get "/login", params: { redirect: "www.foo.bar" }
+        expect(response).to redirect_to("/sub_test/")
+      end
+
+      context "when sets the destination_url cookie" do
+        it "respects the redirect parameter in the cookie" do
+          get "/login", params: { redirect: "/foo" }
+          expect(response.cookies["destination_url"]).to eq("/sub_test/foo")
+        end
+
+        it "respects the redirect parameter including the query params" do
+          get "/login", params: { redirect: "/foo?filter=test" }
+          expect(response.cookies["destination_url"]).to eq("/sub_test/foo?filter=test")
+        end
+      end
     end
   end
 
@@ -290,7 +433,7 @@ RSpec.describe StaticController do
       end
     end
 
-    context "with a full url to someone else" do
+    context "with a full url to an external host" do
       it "redirects to the root path" do
         post "/login.json", params: { redirect: "http://eviltrout.com/foo" }
         expect(response).to redirect_to("/")
@@ -307,10 +450,7 @@ RSpec.describe StaticController do
     context "with an array" do
       it "redirects to the root" do
         post "/login.json", params: { redirect: ["/foo"] }
-        expect(response.status).to eq(400)
-        json = response.parsed_body
-        expect(json["errors"]).to be_present
-        expect(json["errors"]).to include(I18n.t("invalid_params", message: "redirect"))
+        expect(response).to redirect_to("/")
       end
     end
 
@@ -320,48 +460,150 @@ RSpec.describe StaticController do
         expect(response).to redirect_to("/")
       end
     end
+
+    context "when the redirect path contains the '/login' string" do
+      it "redirects to the requested path" do
+        post "/login.json", params: { redirect: "/page/login/1" }
+        expect(response).to redirect_to("/page/login/1")
+      end
+    end
+    context "when the redirect path is invalid" do
+      it "redirects to the root URL" do
+        post "/login.json", params: { redirect: "test" }
+        expect(response).to redirect_to("/")
+      end
+    end
+
+    context "with a subfolder" do
+      before { set_subfolder "/sub_test" }
+
+      context "without a redirect path" do
+        it "redirects to the subfolder root" do
+          post "/login.json"
+          expect(response).to redirect_to("/sub_test/")
+        end
+      end
+
+      context "when the redirect path is the login page" do
+        it "redirects to the subfolder root" do
+          post "/login.json", params: { redirect: "#{Discourse.base_path}/login" }
+          expect(response).to redirect_to("/sub_test/")
+        end
+      end
+
+      context "when the redirect path is invalid" do
+        it "redirects to the subfolder root" do
+          post "/login.json", params: { redirect: "test" }
+          expect(response).to redirect_to("/sub_test/")
+        end
+      end
+    end
+
+    context "with sso_destination_url cookie" do
+      before { SiteSetting.enable_discourse_connect_provider = true }
+
+      it "redirects to valid SSO destination URL when provider is configured" do
+        SiteSetting.discourse_connect_provider_secrets = "allowed-site.com|secret123"
+        cookies[:sso_destination_url] = "https://allowed-site.com/sso?token=abc"
+
+        post "/login.json"
+
+        expect(response).to redirect_to("https://allowed-site.com/sso?token=abc")
+        expect(response.cookies["sso_destination_url"]).to be_nil
+      end
+
+      it "redirects to valid SSO destination URL with wildcard domain" do
+        SiteSetting.discourse_connect_provider_secrets = "*.allowed-domain.com|secret123"
+        cookies[:sso_destination_url] = "https://sub.allowed-domain.com/sso?token=abc"
+
+        post "/login.json"
+
+        expect(response).to redirect_to("https://sub.allowed-domain.com/sso?token=abc")
+      end
+
+      it "ignores SSO destination URL when domain is not in provider secrets" do
+        SiteSetting.discourse_connect_provider_secrets = "allowed-site.com|secret123"
+        cookies[:sso_destination_url] = "https://evil-site.com/phishing"
+
+        post "/login.json"
+
+        expect(response).to redirect_to("/")
+        expect(response.cookies["sso_destination_url"]).to be_nil
+      end
+
+      it "ignores SSO destination URL when provider secrets is empty" do
+        SiteSetting.discourse_connect_provider_secrets = ""
+        cookies[:sso_destination_url] = "https://some-site.com/sso"
+
+        post "/login.json"
+
+        expect(response).to redirect_to("/")
+      end
+
+      it "ignores malformed SSO destination URL" do
+        SiteSetting.discourse_connect_provider_secrets = "allowed-site.com|secret123"
+        cookies[:sso_destination_url] = "not a valid url"
+
+        post "/login.json"
+
+        expect(response).to redirect_to("/")
+      end
+
+      it "ignores SSO destination URL when discourse_connect_provider is disabled" do
+        SiteSetting.enable_discourse_connect_provider = false
+        SiteSetting.discourse_connect_provider_secrets = "allowed-site.com|secret123"
+        cookies[:sso_destination_url] = "https://allowed-site.com/sso"
+
+        post "/login.json"
+
+        expect(response).to redirect_to("/")
+      end
+
+      it "deletes sso_destination_url cookie regardless of validity" do
+        SiteSetting.discourse_connect_provider_secrets = "allowed-site.com|secret123"
+        cookies[:sso_destination_url] = "https://evil-site.com/phishing"
+
+        post "/login.json"
+
+        expect(response.cookies["sso_destination_url"]).to be_nil
+      end
+    end
   end
 
   describe "#service_worker_asset" do
     it "works" do
       get "/service-worker.js"
       expect(response.status).to eq(200)
-      expect(response.content_type).to start_with("application/javascript")
+      expect(response.content_type).to start_with("text/javascript")
       expect(response.body).to include("addEventListener")
     end
+  end
 
-    it "replaces sourcemap URL" do
-      Rails
-        .application
-        .assets_manifest
-        .stubs(:find_sources)
-        .with("service-worker.js")
-        .returns([<<~JS])
-          someFakeServiceWorkerSource();
-          //# sourceMappingURL=service-worker-abcde.js.map
-        JS
+  describe "#llms_txt" do
+    it "returns 404 when no upload is set" do
+      get "/llms.txt"
+      expect(response.status).to eq(404)
+    end
 
-      {
-        "/assets/service-worker.js" => "/assets/service-worker-abcde.js.map",
-        "/assets/service-worker.js.br" => "/assets/service-worker-abcde.js.map",
-        "/assets/service-worker.br.js" => "/assets/service-worker-abcde.js.map",
-        "/assets/service-worker.js.gz" => "/assets/service-worker-abcde.js.map",
-        "/assets/service-worker.gz.js" => "/assets/service-worker-abcde.js.map",
-        "https://example.com/assets/service-worker.js" =>
-          "https://example.com/assets/service-worker-abcde.js.map",
-        "https://example.com/subfolder/assets/service-worker.js" =>
-          "https://example.com/subfolder/assets/service-worker-abcde.js.map",
-      }.each do |asset_path, expected_map_url|
-        ActionController::Base
-          .helpers
-          .stubs(:asset_path)
-          .with("service-worker.js")
-          .returns(asset_path)
+    context "with local store" do
+      it "returns content as plain text" do
+        SiteSetting.authorized_extensions = "txt"
 
-        get "/service-worker.js"
+        file = Tempfile.new(%w[llms .txt])
+        file.write("# Test LLMs Content")
+        file.rewind
+
+        upload = UploadCreator.new(file, "llms.txt").create_for(Discourse.system_user.id)
+        SiteSetting.llms_txt = upload
+
+        get "/llms.txt"
+
         expect(response.status).to eq(200)
-        expect(response.content_type).to start_with("application/javascript")
-        expect(response.body).to include("sourceMappingURL=#{expected_map_url}\n")
+        expect(response.content_type).to start_with("text/plain")
+        expect(response.body).to eq("# Test LLMs Content")
+      ensure
+        file.close
+        file.unlink
       end
     end
   end

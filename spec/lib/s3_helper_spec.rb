@@ -41,10 +41,10 @@ RSpec.describe "S3Helper" do
 
     stub_request(
       :get,
-      "https://bob.s3.#{SiteSetting.s3_region}.amazonaws.com/?lifecycle",
+      "https://bob.s3.dualstack.#{SiteSetting.s3_region}.amazonaws.com/?lifecycle",
     ).to_return(status: 200, body: @lifecycle, headers: {})
 
-    stub_request(:put, "https://bob.s3.#{SiteSetting.s3_region}.amazonaws.com/?lifecycle")
+    stub_request(:put, "https://bob.s3.dualstack.#{SiteSetting.s3_region}.amazonaws.com/?lifecycle")
       .with do |req|
         hash = Hash.from_xml(req.body.to_s)
         rules = hash["LifecycleConfiguration"]["Rule"]
@@ -246,6 +246,257 @@ RSpec.describe "S3Helper" do
       # The S3::Client with `stub_responses: true` includes validation of requests.
       # If the request were invalid, this spec would raise an error
       s3_helper.delete_objects(%w[object/one.txt object/two.txt])
+    end
+
+    it "does nothing when given empty array" do
+      expect { s3_helper.delete_objects([]) }.not_to raise_error
+    end
+
+    it "raises error with summary and sample when deletions fail" do
+      client.stub_responses(
+        :delete_objects,
+        {
+          deleted: [{ key: "object/one.txt" }],
+          errors: [{ key: "object/two.txt", code: "AccessDenied", message: "Access Denied" }],
+        },
+      )
+
+      expect { s3_helper.delete_objects(%w[object/one.txt object/two.txt]) }.to raise_error(
+        RuntimeError,
+      ) do |error|
+        expect(error.message).to include("Failed to delete 1 S3 objects: AccessDenied (1)")
+        expect(error.message).to include("object/two.txt: AccessDenied - Access Denied")
+      end
+    end
+
+    it "tallies error codes and caps sample at 5" do
+      client.stub_responses(
+        :delete_objects,
+        {
+          deleted: [],
+          errors: [
+            { key: "object/one.txt", code: "AccessDenied", message: "Access Denied" },
+            {
+              key: "object/two.txt",
+              code: "NoSuchKey",
+              message: "The specified key does not exist",
+            },
+          ],
+        },
+      )
+
+      expect { s3_helper.delete_objects(%w[object/one.txt object/two.txt]) }.to raise_error(
+        RuntimeError,
+      ) do |error|
+        expect(error.message).to include("Failed to delete 2 S3 objects")
+        expect(error.message).to include("AccessDenied (1)")
+        expect(error.message).to include("NoSuchKey (1)")
+        expect(error.message).to include("object/one.txt: AccessDenied")
+        expect(error.message).to include("object/two.txt: NoSuchKey")
+      end
+    end
+  end
+
+  describe "#presigned_url" do
+    let(:s3_helper) { S3Helper.new("test-bucket", "", client: client) }
+
+    it "uses the S3 dualstack endpoint" do
+      expect(s3_helper.presigned_url("test/key.jpeg", method: :get_object)).to include("dualstack")
+    end
+
+    context "for a China S3 region" do
+      before { SiteSetting.s3_region = "cn-northwest-1" }
+
+      it "does not use the S3 dualstack endpoint" do
+        expect(s3_helper.presigned_url("test/key.jpeg", method: :get_object)).not_to include(
+          "dualstack",
+        )
+      end
+    end
+  end
+
+  describe "#presigned_request" do
+    let(:s3_helper) { S3Helper.new("test-bucket", "", client: client) }
+
+    it "uses the S3 dualstack endpoint" do
+      expect(s3_helper.presigned_request("test/key.jpeg", method: :get_object)[0]).to include(
+        "dualstack",
+      )
+    end
+
+    context "for a China S3 region" do
+      before { SiteSetting.s3_region = "cn-northwest-1" }
+
+      it "does not use the S3 dualstack endpoint" do
+        expect(s3_helper.presigned_request("test/key.jpeg", method: :get_object)[0]).not_to include(
+          "dualstack",
+        )
+      end
+    end
+  end
+
+  describe "#create_multipart" do
+    it "creates a multipart upload with the right ACL parameters when `acl` kwarg is set" do
+      s3_helper = S3Helper.new("some-bucket", "", client: client)
+
+      s3_helper.create_multipart(
+        "test_file.tar.gz",
+        "application/gzip",
+        metadata: {
+        },
+        acl: FileStore::S3Store::CANNED_ACL_PUBLIC_READ,
+      )
+
+      create_multipart_upload_request =
+        client.api_requests.find do |api_request|
+          api_request[:operation_name] == :create_multipart_upload
+        end
+
+      expect(create_multipart_upload_request[:context].params[:acl]).to eq(
+        FileStore::S3Store::CANNED_ACL_PUBLIC_READ,
+      )
+    end
+
+    it "creates a multipart upload without ACL parameters when only the `tagging` kwarg is set" do
+      s3_helper = S3Helper.new("some-bucket", "", client: client)
+
+      s3_helper.create_multipart(
+        "test_file.tar.gz",
+        "application/gzip",
+        metadata: {
+        },
+        acl: nil,
+        tagging: "some:tag",
+      )
+
+      create_multipart_upload_request =
+        client.api_requests.find do |api_request|
+          api_request[:operation_name] == :create_multipart_upload
+        end
+
+      expect(create_multipart_upload_request[:context].params[:acl]).to be_nil
+      expect(create_multipart_upload_request[:context].params[:tagging]).to eq("some:tag")
+    end
+  end
+
+  describe "#upsert_tag" do
+    it "correctly updates an existing tag" do
+      s3_helper = S3Helper.new("some-bucket/some-path", "", client: client)
+
+      s3_helper.s3_client.stub_responses(
+        :get_object_tagging,
+        Aws::S3::Types::GetObjectTaggingOutput.new(
+          { tag_set: [{ key: "tag1", value: "value1" }, { key: "tag2", value: "value2" }] },
+        ),
+      )
+
+      s3_helper.upsert_tag("some/key", tag_key: "tag1", tag_value: "newvalue")
+
+      get_object_tagging_request =
+        s3_helper.s3_client.api_requests.find do |api_request|
+          api_request[:operation_name] == :get_object_tagging
+        end
+
+      put_object_tagging_request =
+        s3_helper.s3_client.api_requests.find do |api_request|
+          api_request[:operation_name] == :put_object_tagging
+        end
+
+      expect(get_object_tagging_request[:context].params[:bucket]).to eq("some-bucket")
+      expect(get_object_tagging_request[:context].params[:key]).to eq("some-path/some/key")
+      expect(put_object_tagging_request[:context].params[:bucket]).to eq("some-bucket")
+      expect(put_object_tagging_request[:context].params[:key]).to eq("some-path/some/key")
+
+      expect(put_object_tagging_request[:context].params[:tagging][:tag_set].map(&:to_h)).to eq(
+        [{ key: "tag1", value: "newvalue" }, { key: "tag2", value: "value2" }],
+      )
+    end
+
+    it "correctly adds a new tag" do
+      s3_helper = S3Helper.new("some-bucket/some-path", "", client: client)
+
+      s3_helper.s3_client.stub_responses(
+        :get_object_tagging,
+        Aws::S3::Types::GetObjectTaggingOutput.new(
+          { tag_set: [{ key: "tag1", value: "value1" }, { key: "tag2", value: "value2" }] },
+        ),
+      )
+
+      s3_helper.upsert_tag("some/key", tag_key: "mytag", tag_value: "myvalue")
+
+      get_object_tagging_request =
+        s3_helper.s3_client.api_requests.find do |api_request|
+          api_request[:operation_name] == :get_object_tagging
+        end
+
+      put_object_tagging_request =
+        s3_helper.s3_client.api_requests.find do |api_request|
+          api_request[:operation_name] == :put_object_tagging
+        end
+
+      expect(get_object_tagging_request[:context].params[:bucket]).to eq("some-bucket")
+      expect(get_object_tagging_request[:context].params[:key]).to eq("some-path/some/key")
+      expect(put_object_tagging_request[:context].params[:bucket]).to eq("some-bucket")
+      expect(put_object_tagging_request[:context].params[:key]).to eq("some-path/some/key")
+
+      expect(put_object_tagging_request[:context].params[:tagging][:tag_set].map(&:to_h)).to eq(
+        [
+          { key: "tag1", value: "value1" },
+          { key: "tag2", value: "value2" },
+          { key: "mytag", value: "myvalue" },
+        ],
+      )
+    end
+  end
+
+  describe ".s3_credentials" do
+    it "returns AssumeRoleCredentials when s3_role_arn is configured" do
+      SiteSetting.s3_region = "us-east-1"
+      SiteSetting.s3_access_key_id = "some-key"
+      SiteSetting.s3_secret_access_key = "some-secret"
+      SiteSetting.s3_role_arn = "arn:aws:iam::123456789012:role/some-role"
+      SiteSetting.s3_role_session_name = "some-session"
+
+      creds = S3Helper.s3_credentials(SiteSetting, stub_responses: true)
+
+      expect(creds).to be_a(Aws::AssumeRoleCredentials)
+      expect(creds.assume_role_params[:role_arn]).to eq("arn:aws:iam::123456789012:role/some-role")
+      expect(creds.assume_role_params[:role_session_name]).to eq("some-session")
+      expect(creds.client.config.access_key_id).to eq("some-key")
+      expect(creds.client.config.secret_access_key).to eq("some-secret")
+    end
+
+    it "returns static Aws::Credentials when s3_role_arn is blank" do
+      SiteSetting.s3_region = "us-east-1"
+      SiteSetting.s3_access_key_id = "some-key"
+      SiteSetting.s3_secret_access_key = "some-secret"
+      SiteSetting.s3_role_arn = ""
+
+      creds = S3Helper.s3_credentials(SiteSetting)
+
+      expect(creds).to be_a(Aws::Credentials)
+      expect(creds.access_key_id).to eq("some-key")
+      expect(creds.secret_access_key).to eq("some-secret")
+    end
+
+    it "returns nil when s3_use_iam_profile is true" do
+      SiteSetting.s3_use_iam_profile = true
+      SiteSetting.s3_role_arn = "arn:aws:iam::123456789012:role/some-role"
+
+      expect(S3Helper.s3_credentials(SiteSetting)).to be_nil
+    end
+
+    it "falls back to Discourse.os_hostname when s3_role_session_name is blank" do
+      SiteSetting.s3_region = "us-east-1"
+      SiteSetting.s3_access_key_id = "some-key"
+      SiteSetting.s3_secret_access_key = "some-secret"
+      SiteSetting.s3_role_arn = "arn:aws:iam::123456789012:role/some-role"
+      SiteSetting.s3_role_session_name = ""
+      Discourse.stubs(:os_hostname).returns("some-host")
+
+      creds = S3Helper.s3_credentials(SiteSetting, stub_responses: true)
+
+      expect(creds.assume_role_params[:role_session_name]).to eq("some-host")
     end
   end
 end

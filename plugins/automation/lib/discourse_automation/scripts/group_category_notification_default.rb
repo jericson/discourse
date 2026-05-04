@@ -17,7 +17,7 @@ DiscourseAutomation::Scriptable.add(
     notification_level = fields.dig("notification_level", "value")
 
     unless group = Group.find_by(id: group_id)
-      Rails.logger.warn "[discourse-automation] Couldn’t find group with id #{group_id}"
+      DiscourseAutomation::Logger.warn("Couldn't find group with id #{group_id}")
       next
     end
 
@@ -37,9 +37,7 @@ DiscourseAutomation::Scriptable.add(
 
           category_users = []
           existing_users =
-            CategoryUser.where(category_id: category_id, user_id: user_ids).where(
-              "notification_level IS NOT NULL",
-            )
+            CategoryUser.where(category_id:, user_id: user_ids).where.not(notification_level: nil)
           skip_user_ids = existing_users.pluck(:user_id)
 
           batch.each do |group_user|

@@ -2,7 +2,8 @@
 
 RSpec.describe DiscoursePoll::Poll do
   fab!(:user) { Fabricate(:user, refresh_auto_groups: true) }
-  fab!(:user_2) { Fabricate(:user) }
+  fab!(:user_2, :user)
+  fab!(:user_3, :user)
 
   fab!(:post_with_regular_poll) { Fabricate(:post, raw: <<~RAW) }
       [poll]
@@ -21,6 +22,14 @@ RSpec.describe DiscoursePoll::Poll do
       [/poll]
     RAW
 
+  fab!(:post_with_ranked_choice_poll) { Fabricate(:post, raw: <<~RAW) }
+    [poll type=ranked_choice public=true]
+    * Red
+    * Blue
+    * Yellow
+    [/poll]
+    RAW
+
   describe ".vote" do
     it "should only allow one vote per user for a regular poll" do
       poll = post_with_regular_poll.polls.first
@@ -33,6 +42,36 @@ RSpec.describe DiscoursePoll::Poll do
           poll.poll_options.map(&:digest),
         )
       end.to raise_error(DiscoursePoll::Error, I18n.t("poll.one_vote_per_user"))
+    end
+
+    it "should not allow a ranked vote with all abstentions" do
+      poll = post_with_ranked_choice_poll.polls.first
+      poll_options = poll.poll_options
+
+      expect do
+        DiscoursePoll::Poll.vote(
+          user,
+          post_with_ranked_choice_poll.id,
+          "poll",
+          {
+            "0": {
+              digest: poll_options.first.digest,
+              rank: "0",
+            },
+            "1": {
+              digest: poll_options.second.digest,
+              rank: "0",
+            },
+            "2": {
+              digest: poll_options.third.digest,
+              rank: "0",
+            },
+          },
+        )
+      end.to raise_error(
+        DiscoursePoll::Error,
+        I18n.t("poll.requires_that_at_least_one_option_is_ranked"),
+      )
     end
 
     it "should clean up bad votes for a regular poll" do
@@ -159,6 +198,85 @@ RSpec.describe DiscoursePoll::Poll do
         poll.poll_options.second.id,
       )
     end
+
+    it "allows user to vote on options correctly for a ranked choice poll and to vote again" do
+      poll = post_with_ranked_choice_poll.polls.first
+      poll_options = poll.poll_options
+
+      DiscoursePoll::Poll.vote(
+        user,
+        post_with_ranked_choice_poll.id,
+        "poll",
+        {
+          "0": {
+            digest: poll_options.first.digest,
+            rank: "2",
+          },
+          "1": {
+            digest: poll_options.second.digest,
+            rank: "1",
+          },
+          "2": {
+            digest: poll_options.third.digest,
+            rank: "0",
+          },
+        },
+      )
+
+      DiscoursePoll::Poll.vote(
+        user_2,
+        post_with_ranked_choice_poll.id,
+        "poll",
+        {
+          "0": {
+            digest: poll_options.first.digest,
+            rank: "0",
+          },
+          "1": {
+            digest: poll_options.second.digest,
+            rank: "2",
+          },
+          "2": {
+            digest: poll_options.third.digest,
+            rank: "1",
+          },
+        },
+      )
+
+      DiscoursePoll::Poll.vote(
+        user,
+        post_with_ranked_choice_poll.id,
+        "poll",
+        {
+          "0": {
+            digest: poll_options.first.digest,
+            rank: "1",
+          },
+          "1": {
+            digest: poll_options.second.digest,
+            rank: "2",
+          },
+          "2": {
+            digest: poll_options.third.digest,
+            rank: "0",
+          },
+        },
+      )
+
+      expect(PollVote.count).to eq(6)
+
+      expect(PollVote.where(poll: poll, user: user).pluck(:poll_option_id)).to contain_exactly(
+        poll_options.first.id,
+        poll_options.second.id,
+        poll_options.third.id,
+      )
+
+      expect(PollVote.where(poll: poll, user: user_2).pluck(:poll_option_id)).to contain_exactly(
+        poll_options.first.id,
+        poll_options.second.id,
+        poll_options.third.id,
+      )
+    end
   end
 
   describe "post_created" do
@@ -218,6 +336,277 @@ RSpec.describe DiscoursePoll::Poll do
           "type" => "regular",
         },
       )
+    end
+
+    it "extracts poll when there are multiple quotes in the post" do
+      raw = <<~RAW
+      [quote="user1, post:1, topic:123"]
+      First quote content
+      [/quote]
+
+      [poll type=regular results=always]
+      * Option A
+      * Option B
+      [/poll]
+
+      [quote="user2, post:2, topic:123"]
+      Second quote content
+      [/quote]
+
+      Some text after.
+      RAW
+
+      polls = DiscoursePoll::Poll.extract(raw, 2)
+      expect(polls.size).to eq(1)
+      expect(polls.first["name"]).to eq("poll")
+      expect(polls.first["type"]).to eq("regular")
+      expect(polls.first["results"]).to eq("always")
+      expect(polls.first["options"].map { |o| o["html"] }).to contain_exactly(
+        "Option A",
+        "Option B",
+      )
+    end
+  end
+
+  describe ".serialized_voters" do
+    context "with a regular poll" do
+      let(:post) { post_with_regular_poll }
+      let(:poll) { post.polls.first }
+      let(:poll_options) { poll.poll_options }
+      let(:votes) do
+        {
+          user => [poll_options.first.digest],
+          user_2 => [poll_options.second.digest],
+          user_3 => [poll_options.first.digest],
+        }
+      end
+
+      before do
+        votes.each_pair { |user, options| DiscoursePoll::Poll.vote(user, post.id, "poll", options) }
+      end
+
+      it "returns all serialized voters" do
+        voters = DiscoursePoll::Poll.serialized_voters(poll)
+        expect(voters).to eq(
+          {
+            poll_options.first.digest => [
+              UserNameSerializer.new(user).serializable_hash,
+              UserNameSerializer.new(user_3).serializable_hash,
+            ],
+            poll_options.second.digest => [UserNameSerializer.new(user_2).serializable_hash],
+          },
+        )
+      end
+
+      it "correctly paginates voters" do
+        opts = { page: 1, limit: 2 }.with_indifferent_access
+        voters = DiscoursePoll::Poll.serialized_voters(poll, opts)
+        expect(voters).to eq(
+          {
+            poll_options.first.digest => [
+              UserNameSerializer.new(user).serializable_hash,
+              UserNameSerializer.new(user_3).serializable_hash,
+            ],
+            poll_options.second.digest => [UserNameSerializer.new(user_2).serializable_hash],
+          },
+        )
+
+        opts = { page: 2, limit: 2 }.with_indifferent_access
+        voters = DiscoursePoll::Poll.serialized_voters(poll, opts)
+        expect(voters).to be_nil
+      end
+    end
+
+    context "with a multi-choice poll" do
+      let(:post) { post_with_multiple_poll }
+      let(:poll) { post.polls.first }
+      let(:poll_options) { poll.poll_options }
+      let(:votes) do
+        {
+          user => [poll_options.first.digest, poll_options.second.digest],
+          user_2 => [poll_options.second.digest, poll_options.third.digest],
+          user_3 => [
+            poll_options.second.digest,
+            poll_options.third.digest,
+            poll_options.fourth.digest,
+          ],
+        }
+      end
+
+      before do
+        votes.each_pair { |user, options| DiscoursePoll::Poll.vote(user, post.id, "poll", options) }
+      end
+
+      it "returns all serialized voters" do
+        voters = DiscoursePoll::Poll.serialized_voters(poll)
+        expect(voters).to eq(
+          {
+            poll_options.first.digest => [UserNameSerializer.new(user).serializable_hash],
+            poll_options.second.digest => [
+              UserNameSerializer.new(user).serializable_hash,
+              UserNameSerializer.new(user_2).serializable_hash,
+              UserNameSerializer.new(user_3).serializable_hash,
+            ],
+            poll_options.third.digest => [
+              UserNameSerializer.new(user_2).serializable_hash,
+              UserNameSerializer.new(user_3).serializable_hash,
+            ],
+            poll_options.fourth.digest => [UserNameSerializer.new(user_3).serializable_hash],
+          },
+        )
+      end
+
+      it "correctly paginates voters" do
+        opts = { page: 1, limit: 2 }.with_indifferent_access
+        voters = DiscoursePoll::Poll.serialized_voters(poll, opts)
+        expect(voters).to eq(
+          {
+            poll_options.first.digest => [UserNameSerializer.new(user).serializable_hash],
+            poll_options.second.digest => [
+              UserNameSerializer.new(user).serializable_hash,
+              UserNameSerializer.new(user_2).serializable_hash,
+            ],
+            poll_options.third.digest => [
+              UserNameSerializer.new(user_2).serializable_hash,
+              UserNameSerializer.new(user_3).serializable_hash,
+            ],
+            poll_options.fourth.digest => [UserNameSerializer.new(user_3).serializable_hash],
+          },
+        )
+
+        opts = { page: 2, limit: 2 }.with_indifferent_access
+        voters = DiscoursePoll::Poll.serialized_voters(poll, opts)
+        expect(voters).to eq(
+          { poll_options.second.digest => [UserNameSerializer.new(user_3).serializable_hash] },
+        )
+
+        opts = { page: 3, limit: 2 }.with_indifferent_access
+        voters = DiscoursePoll::Poll.serialized_voters(poll, opts)
+        expect(voters).to be_nil
+      end
+    end
+
+    context "with a ranked choice poll" do
+      let(:post) { post_with_ranked_choice_poll }
+      let(:poll) { post.polls.first }
+      let(:poll_options) { poll.poll_options }
+      let(:votes) do
+        {
+          user => {
+            "0": {
+              digest: poll_options.first.digest,
+              rank: "0",
+            },
+            "1": {
+              digest: poll_options.second.digest,
+              rank: "1",
+            },
+            "2": {
+              digest: poll_options.third.digest,
+              rank: "2",
+            },
+          },
+          user_2 => {
+            "0": {
+              digest: poll_options.second.digest,
+              rank: "0",
+            },
+            "1": {
+              digest: poll_options.third.digest,
+              rank: "1",
+            },
+            "2": {
+              digest: poll_options.first.digest,
+              rank: "2",
+            },
+          },
+          user_3 => {
+            "0": {
+              digest: poll_options.third.digest,
+              rank: "0",
+            },
+            "1": {
+              digest: poll_options.first.digest,
+              rank: "1",
+            },
+            "2": {
+              digest: poll_options.second.digest,
+              rank: "2",
+            },
+          },
+        }
+      end
+
+      before do
+        votes.each_pair { |user, options| DiscoursePoll::Poll.vote(user, post.id, "poll", options) }
+      end
+
+      it "returns all serialized voters" do
+        voters = DiscoursePoll::Poll.serialized_voters(poll)
+        voters.transform_values! { |users| users.sort_by { |ranked_u| ranked_u[:user][:id] } }
+        expect(voters).to eq(
+          {
+            poll_options.first.digest => [
+              { user: UserNameSerializer.new(user).serializable_hash, rank: "Abstain" },
+              { user: UserNameSerializer.new(user_2).serializable_hash, rank: "2" },
+              { user: UserNameSerializer.new(user_3).serializable_hash, rank: "1" },
+            ],
+            poll_options.second.digest => [
+              { user: UserNameSerializer.new(user).serializable_hash, rank: "1" },
+              { user: UserNameSerializer.new(user_2).serializable_hash, rank: "Abstain" },
+              { user: UserNameSerializer.new(user_3).serializable_hash, rank: "2" },
+            ],
+            poll_options.third.digest => [
+              { user: UserNameSerializer.new(user).serializable_hash, rank: "2" },
+              { user: UserNameSerializer.new(user_2).serializable_hash, rank: "1" },
+              { user: UserNameSerializer.new(user_3).serializable_hash, rank: "Abstain" },
+            ],
+          },
+        )
+      end
+
+      it "correctly paginates voters" do
+        opts = { page: 1, limit: 2 }.with_indifferent_access
+        voters = DiscoursePoll::Poll.serialized_voters(poll, opts)
+        voters.transform_values! { |users| users.sort_by { |ranked_u| ranked_u[:user][:id] } }
+        expect(voters).to eq(
+          {
+            poll_options.first.digest => [
+              { user: UserNameSerializer.new(user).serializable_hash, rank: "Abstain" },
+              { user: UserNameSerializer.new(user_2).serializable_hash, rank: "2" },
+            ],
+            poll_options.second.digest => [
+              { user: UserNameSerializer.new(user).serializable_hash, rank: "1" },
+              { user: UserNameSerializer.new(user_2).serializable_hash, rank: "Abstain" },
+            ],
+            poll_options.third.digest => [
+              { user: UserNameSerializer.new(user).serializable_hash, rank: "2" },
+              { user: UserNameSerializer.new(user_2).serializable_hash, rank: "1" },
+            ],
+          },
+        )
+
+        opts = { page: 2, limit: 2 }.with_indifferent_access
+        voters = DiscoursePoll::Poll.serialized_voters(poll, opts)
+        voters.transform_values! { |users| users.sort_by { |ranked_u| ranked_u[:user][:id] } }
+        expect(voters).to eq(
+          {
+            poll_options.first.digest => [
+              { user: UserNameSerializer.new(user_3).serializable_hash, rank: "1" },
+            ],
+            poll_options.second.digest => [
+              { user: UserNameSerializer.new(user_3).serializable_hash, rank: "2" },
+            ],
+            poll_options.third.digest => [
+              { user: UserNameSerializer.new(user_3).serializable_hash, rank: "Abstain" },
+            ],
+          },
+        )
+
+        opts = { page: 3, limit: 2 }.with_indifferent_access
+        voters = DiscoursePoll::Poll.serialized_voters(poll, opts)
+        expect(voters).to be_nil
+      end
     end
   end
 end

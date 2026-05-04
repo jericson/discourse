@@ -7,8 +7,12 @@ module Onebox
       include StandardEmbed
       include LayoutSupport
 
-      matches_regexp(/^https?:\/\/(?:www\.)?(?:(?:\w)+\.)?(github)\.com[\:\d]*(\/[^\/]+){2}\/tree/)
+      matches_domain("github.com", "www.github.com")
       always_https
+
+      def self.matches_path(path)
+        path.match?(%r{^/[\w\-]+/[\w\-]+/tree/})
+      end
 
       private
 
@@ -17,10 +21,10 @@ module Onebox
 
         max_length = 250
 
-        display_path = extract_path(og.url, max_length)
+        display_path, fallback_title = extract_path(max_length)
         display_description = clean_description(og.description, og.title, max_length)
 
-        title = og.title
+        title = og.title || fallback_title
 
         fragment = Addressable::URI.parse(url).fragment
         if fragment
@@ -44,13 +48,14 @@ module Onebox
         }
       end
 
-      def extract_path(root, max_length)
-        path = url.split("#")[0].split("?")[0]
-        path = path["#{root}/tree/".length..-1]
+      def extract_path(max_length)
+        clean_url = url.split("#")[0].split("?")[0]
+        match = clean_url.match(%r{github\.com/([\w\-]+/[\w\-]+)/tree/(.+)})
 
-        return unless path
+        return unless match
 
-        path.length > max_length ? path[-max_length..-1] : path
+        title, path = match.captures
+        [path.length > max_length ? path[-max_length..] : path, title]
       end
 
       def clean_description(description, title, max_length)
